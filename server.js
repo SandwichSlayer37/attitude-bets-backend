@@ -10,12 +10,11 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
 
-const WEIGHTS = { OFFENSE: 0.35, DEFENSE: 0.35, PITCHER: 0.25, MOMENTUM: 0.05 };
-const teamNameMap = { "Arizona D'Backs": "Arizona Diamondbacks", "Los Angeles Angels of Anaheim": "Los Angeles Angels" };
-const pitcherStatsCache = { data: {}, timestamp: null };
+const teamNameMap = { "St Louis Blues": "St. Louis Blues" }; // For NHL name mismatches
 
 // --- Utility Functions ---
 async function scrapeData(url) {
+    // Increased timeout to handle potentially slow sports statistics sites
     return await axios.get(url, { timeout: 30000 });
 }
 
@@ -25,19 +24,46 @@ async function getOdds(sportKey) {
         const { data } = await scrapeData(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&daysFrom=3&apiKey=${ODDS_API_KEY}`);
         return data;
     } catch (error) {
-        if (error.response && error.response.status === 422) {
-            console.log(`No upcoming games found for ${sportKey} (likely off-season).`);
-            return [];
-        }
+        if (error.response && error.response.status === 422) return []; // 422 means no games available, which is normal for off-season
         console.error(`Error fetching odds for ${sportKey}:`, error.message);
         throw new Error(`Failed to fetch odds for ${sportKey}.`);
     }
 }
 
-// --- MLB Specific Functions ---
+// --- Sport-Specific Scrapers ---
+
+async function scrapeNHLStandings() {
+    try {
+        // Using a dynamic year to ensure it works season to season.
+        const currentYear = new Date().getFullYear() + 1;
+        const { data } = await scrapeData(`https://www.hockey-reference.com/leagues/NHL_${currentYear}_standings.html`);
+        const $ = cheerio.load(data);
+        const standings = {};
+        
+        $('#all_standings tbody tr.full_table').each((index, element) => {
+            const row = $(element);
+            const teamName = row.find('th[data-stat="team_name"] a').text();
+            if (teamName) {
+                standings[teamName] = {
+                    wins: parseInt(row.find('td[data-stat="wins"]').text()) || 0,
+                    losses: parseInt(row.find('td[data-stat="losses"]').text()) || 0,
+                    goalsFor: parseInt(row.find('td[data-stat="goals"]').text()) || 0,
+                    goalsAgainst: parseInt(row.find('td[data-stat="goals_against"]').text()) || 0,
+                };
+            }
+        });
+        return standings;
+    } catch (error) {
+        console.error("Error scraping NHL standings:", error.message);
+        return {}; // Return empty object on failure so the app can report it
+    }
+}
+
+// MLB scraper is kept but will likely fail gracefully in the off-season
 async function scrapeMLBStandings() {
     try {
-        const { data } = await scrapeData('https://www.baseball-reference.com/leagues/majors/2025-standings.shtml');
+        const currentYear = new Date().getFullYear() + 1;
+        const { data } = await scrapeData(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standings.shtml`);
         const $ = cheerio.load(data);
         const standings = {};
         $('#teams_standings_overall tbody tr').each((index, element) => {
@@ -56,9 +82,10 @@ async function scrapeMLBStandings() {
         return standings;
     } catch (error) {
         console.error("Error scraping MLB standings:", error.message);
-        return {}; // Return empty object on failure
+        return {};
     }
 }
+
 
 // --- API Endpoints ---
 app.get('/', (req, res) => res.json({ status: 'online', message: 'Attitude Bets API is running!' }));
@@ -69,77 +96,70 @@ app.get('/predictions', async (req, res) => {
 
     try {
         const games = await getOdds(sport);
-
         if (!games || games.length === 0) {
             return res.json({ message: `No upcoming games found for ${sport}. The season may be over.` });
         }
         
-        // --- MLB Logic ---
-        if (sport === 'baseball_mlb') {
-            const standingsData = await scrapeMLBStandings();
-            
-            if(Object.keys(standingsData).length === 0){
-                 return res.json({ message: `Could not load standings for MLB. The source may be unavailable.` });
+        let predictions;
+
+        if (sport === 'icehockey_nhl') {
+            const standingsData = await scrapeNHLStandings();
+            if (Object.keys(standingsData).length === 0) {
+                return res.json({ message: `Could not load standings for NHL. The source may be unavailable.` });
             }
 
-            let totalRunsScored = 0, totalRunsAllowed = 0, totalGamesPlayed = 0;
+            let totalGoalsFor = 0, totalGoalsAgainst = 0, totalGamesPlayed = 0;
             Object.values(standingsData).forEach(team => {
                 const gamesPlayed = team.wins + team.losses;
                 if (gamesPlayed > 0) {
-                    totalRunsScored += team.runsScored;
-                    totalRunsAllowed += team.runsAllowed;
+                    totalGoalsFor += team.goalsFor;
+                    totalGoalsAgainst += team.goalsAgainst;
                     totalGamesPlayed += gamesPlayed;
                 }
             });
-            const leagueAvgRunsScored = totalRunsScored / totalGamesPlayed;
-            const leagueAvgRunsAllowed = totalRunsAllowed / totalGamesPlayed;
+            const leagueAvgGoalsFor = totalGoalsFor / totalGamesPlayed;
+            const leagueAvgGoalsAgainst = totalGoalsAgainst / totalGamesPlayed;
 
-            const predictions = games.map(game => {
+            predictions = games.map(game => {
                 const homeTeam = game.home_team, awayTeam = game.away_team;
                 const mappedHomeTeam = teamNameMap[homeTeam] || homeTeam;
                 const mappedAwayTeam = teamNameMap[awayTeam] || awayTeam;
                 const homeStats = standingsData[mappedHomeTeam];
                 const awayStats = standingsData[mappedAwayTeam];
 
-                if (!homeStats || !awayStats) return { game: `${awayTeam} @ ${homeTeam}`, error: "Could not find team stats." };
-                
-                const homePitcher = { name: "TBD", era: 4.5, whip: 1.4 }; // Placeholder
-                const awayPitcher = { name: "TBD", era: 4.5, whip: 1.4 }; // Placeholder
+                if (!homeStats || !awayStats) return { game, error: "Could not find team stats." };
 
                 const homeGames = homeStats.wins + homeStats.losses;
                 const awayGames = awayStats.wins + awayStats.losses;
-                const homeOffenseRating = (homeStats.runsScored / homeGames / leagueAvgRunsScored) * 100;
-                const awayOffenseRating = (awayStats.runsScored / awayGames / leagueAvgRunsScored) * 100;
-                const homeDefenseRating = (leagueAvgRunsAllowed / (homeStats.runsAllowed / homeGames)) * 100;
-                const awayDefenseRating = (leagueAvgRunsAllowed / (awayStats.runsAllowed / awayGames)) * 100;
-                const parseStreak = (s) => (s.startsWith('W') ? parseInt(s.substring(1)) : -parseInt(s.substring(1))) || 0;
-                const homeMomentum = parseStreak(homeStats.streak);
-                const awayMomentum = parseStreak(awayStats.streak);
-                const pitcherScoreH = (50 / homePitcher.era) + (50 / homePitcher.whip);
-                const pitcherScoreA = (50 / awayPitcher.era) + (50 / awayPitcher.whip);
+                const homeOffenseRating = (homeStats.goalsFor / homeGames / leagueAvgGoalsFor) * 100;
+                const awayOffenseRating = (awayStats.goalsFor / awayGames / leagueAvgGoalsFor) * 100;
+                const homeDefenseRating = (leagueAvgGoalsAgainst / (homeStats.goalsAgainst / homeGames)) * 100;
+                const awayDefenseRating = (leagueAvgGoalsAgainst / (awayStats.goalsAgainst / awayGames)) * 100;
+                const homeMomentum = (homeStats.wins / homeGames) * 100;
+                const awayMomentum = (awayStats.wins / awayGames) * 100;
 
-                const finalScoreH = (homeOffenseRating * WEIGHTS.OFFENSE) + (homeDefenseRating * WEIGHTS.DEFENSE) + (pitcherScoreH * WEIGHTS.PITCHER) + (homeMomentum * WEIGHTS.MOMENTUM);
-                const finalScoreA = (awayOffenseRating * WEIGHTS.OFFENSE) + (awayDefenseRating * WEIGHTS.DEFENSE) + (pitcherScoreA * WEIGHTS.PITCHER) + (awayMomentum * WEIGHTS.MOMENTUM);
+                const finalScoreH = (homeOffenseRating * 0.45) + (homeDefenseRating * 0.45) + (homeMomentum * 0.1);
+                const finalScoreA = (awayOffenseRating * 0.45) + (awayDefenseRating * 0.45) + (awayMomentum * 0.1);
 
                 return {
-                    game, // Send the full game object
+                    game,
                     prediction: { winner: finalScoreH > finalScoreA ? homeTeam : awayTeam, home_final_score: finalScoreH.toFixed(2), away_final_score: finalScoreA.toFixed(2) },
                     details: {
-                        home: { name: homeTeam, offense: homeOffenseRating.toFixed(1), defense: homeDefenseRating.toFixed(1), momentum: homeMomentum, pitcher: homePitcher },
-                        away: { name: awayTeam, offense: awayOffenseRating.toFixed(1), defense: awayDefenseRating.toFixed(1), momentum: awayMomentum, pitcher: awayPitcher },
+                        home: { name: homeTeam, offense: homeOffenseRating.toFixed(1), defense: homeDefenseRating.toFixed(1) },
+                        away: { name: awayTeam, offense: awayOffenseRating.toFixed(1), defense: awayDefenseRating.toFixed(1) },
                     }
                 };
-            });
-            return res.json(predictions.filter(p => p && !p.error));
-        }
+            }).filter(p => p && !p.error);
 
-        // --- Placeholder for other sports ---
-        const simplifiedPredictions = games.map(game => ({
-            game,
-            prediction: { winner: "Coming Soon", home_final_score: "N/A", away_final_score: "N/A" },
-            details: { home: { name: game.home_team }, away: { name: game.away_team } }
-        }));
-        res.json(simplifiedPredictions);
+        } else { // Fallback for MLB, NFL
+            predictions = games.map(game => ({
+                game,
+                prediction: { winner: "Prediction Engine Coming Soon", home_final_score: "N/A", away_final_score: "N/A" },
+                details: { home: { name: game.home_team }, away: { name: game.away_team } }
+            }));
+        }
+        
+        res.json(predictions);
 
     } catch (error) {
         console.error(`Prediction endpoint error for ${sport}:`, error);
