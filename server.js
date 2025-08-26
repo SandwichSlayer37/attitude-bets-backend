@@ -60,6 +60,13 @@ app.get('/predictions', async (req, res) => {
     }
 });
 
+// Add this new route for the root URL
+app.get('/', (req, res) => {
+    res.json({
+        status: 'online',
+        message: 'Attitude Bets API is running!'
+    });
+});
 
 // Start the server
 app.listen(PORT, () => {
