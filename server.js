@@ -1,11 +1,14 @@
 const express = require('express');
-const cors =require('cors');
+const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-// It's recommended to secure your app in a production environment
-// For now, this allows your frontend to connect.
-app.use(cors()); 
+// Initialize the Express app
+const app = express();
+
+// Configure CORS to only allow your frontend to connect
+app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
+
 
 // --- DATABASE & CONSTANTS ---
 // Data moved from the original HTML file to the server
