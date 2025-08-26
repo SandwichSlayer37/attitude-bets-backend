@@ -5,7 +5,14 @@ const cheerio = require('cheerio');
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 
-// Define the weights for our new multi-factor formula
+// --- THIS IS THE FIX ---
+// We are explicitly telling the server to allow requests from your app's domain.
+const corsOptions = {
+  origin: 'https://attitude-sports-bets.web.app',
+  optionsSuccessStatus: 200 // For legacy browser support
+};
+// --- END OF FIX ---
+
 const WEIGHTS = {
     OFFENSE: 0.35,
     DEFENSE: 0.35,
@@ -14,7 +21,7 @@ const WEIGHTS = {
 };
 
 const app = express();
-app.use(cors());
+app.use(cors(corsOptions)); // Apply the specific CORS options
 const PORT = process.env.PORT || 3000;
 
 const teamNameMap = {
@@ -29,7 +36,6 @@ const pitcherStatsCache = {
 
 
 // --- Data Fetching & Scraping Functions ---
-
 async function scrapeMLBStandings() {
     try {
         const url = 'https://www.baseball-reference.com/leagues/majors/2025-standings.shtml';
@@ -37,7 +43,6 @@ async function scrapeMLBStandings() {
         const $ = cheerio.load(data);
         const standings = {};
         
-        // This scraper is now grabbing more data: Runs Scored (R), Runs Allowed (RA), and Streak
         $('#teams_standings_overall tbody tr').each((index, element) => {
             const row = $(element);
             const teamName = row.find('th[data-stat="team_ID"] a').text();
@@ -59,7 +64,6 @@ async function scrapeMLBStandings() {
     }
 }
 
-// ... (getMLBOdds, scrapeProbablePitchers, and getPitcherStats functions remain exactly the same as before)
 async function getMLBOdds() {
     if (!ODDS_API_KEY) {
         throw new Error("Odds API key is missing.");
@@ -149,7 +153,6 @@ app.get('/predictions', async (req, res) => {
 
         if (!games || games.length === 0) return res.json({ message: "No upcoming MLB games found." });
 
-        // --- NEW: Calculate League Averages ---
         let totalRunsScored = 0, totalRunsAllowed = 0, totalGamesPlayed = 0;
         const teams = Object.values(standingsData);
         teams.forEach(team => {
@@ -162,7 +165,6 @@ app.get('/predictions', async (req, res) => {
         });
         const leagueAvgRunsScored = totalRunsScored / totalGamesPlayed;
         const leagueAvgRunsAllowed = totalRunsAllowed / totalGamesPlayed;
-        // --- END OF NEW LOGIC ---
 
         const predictions = await Promise.all(games.map(async (game) => {
             const homeTeam = game.home_team, awayTeam = game.away_team;
@@ -177,7 +179,6 @@ app.get('/predictions', async (req, res) => {
             const awayPitcherName = probablePitchers[mappedAwayTeam] || 'N/A';
             const [homePitcherStats, awayPitcherStats] = await Promise.all([getPitcherStats(homePitcherName), getPitcherStats(awayPitcherName)]);
 
-            // --- NEW: Multi-Factor Calculations ---
             const homeGames = homeStats.wins + homeStats.losses;
             const awayGames = awayStats.wins + awayStats.losses;
 
@@ -196,7 +197,6 @@ app.get('/predictions', async (req, res) => {
 
             const finalScoreH = (homeOffenseRating * WEIGHTS.OFFENSE) + (homeDefenseRating * WEIGHTS.DEFENSE) + (pitcherScoreH * WEIGHTS.PITCHER) + (homeMomentum * WEIGHTS.MOMENTUM);
             const finalScoreA = (awayOffenseRating * WEIGHTS.OFFENSE) + (awayDefenseRating * WEIGHTS.DEFENSE) + (pitcherScoreA * WEIGHTS.PITCHER) + (awayMomentum * WEIGHTS.MOMENTUM);
-            // --- END OF NEW LOGIC ---
 
             return {
                 game: `${awayTeam} @ ${homeTeam}`,
