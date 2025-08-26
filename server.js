@@ -5,12 +5,13 @@ const cheerio = require('cheerio');
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 
+const app = express();
+const PORT = process.env.PORT || 3000;
+
 // --- THIS IS THE FIX ---
-// We are explicitly telling the server to allow requests from your app's domain.
-const corsOptions = {
-  origin: 'https://attitude-sports-bets.web.app',
-  optionsSuccessStatus: 200 // For legacy browser support
-};
+// We enable CORS for all domains first, which is the standard way.
+// This correctly handles the browser's preflight check and prevents the 502 error.
+app.use(cors());
 // --- END OF FIX ---
 
 const WEIGHTS = {
@@ -19,10 +20,6 @@ const WEIGHTS = {
     PITCHER: 0.25,
     MOMENTUM: 0.05,
 };
-
-const app = express();
-app.use(cors(corsOptions)); // Apply the specific CORS options
-const PORT = process.env.PORT || 3000;
 
 const teamNameMap = {
     "Arizona D'Backs": "Arizona Diamondbacks",
