@@ -1,9 +1,8 @@
-// FINAL VERSION - Uses MLB API for stats, includes all previous fixes.
+// FINAL VERSION - Optimized Special Picks for free tier performance.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-// Cheerio is no longer needed
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 
@@ -42,7 +41,7 @@ const getWinPct = (rec) => { /* ... (no changes) ... */ };
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) { /* ... (no changes) ... */ }
 
-// --- DATA FETCHING & SCRAPING ---
+// --- DATA FETCHING ---
 async function fetchData(key, fetcherFn, ttl = 3600000) { /* ... (no changes) ... */ }
 
 async function getOdds(sportKey) {
@@ -59,22 +58,14 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
-// --- MODIFIED: THIS FUNCTION NOW USES THE LIVE MLB API ---
 async function getTeamStats(sportKey) {
-    // Only MLB is supported by this API endpoint
-    if (sportKey !== 'baseball_mlb') {
-        return {};
-    }
-
+    if (sportKey !== 'baseball_mlb') return {};
     return fetchData(`stats_${sportKey}`, async () => {
         try {
             console.log("Fetching live MLB stats from statsapi.mlb.com...");
             const stats = {};
-            // API endpoint for MLB standings (American League & National League)
             const url = 'https://statsapi.mlb.com/api/v1/standings?leagueId=103,104';
             const { data } = await axios.get(url);
-
-            // Loop through the data records to extract stats for each team
             for (const record of data.records) {
                 for (const team of record.teamRecords) {
                     stats[team.team.name] = {
@@ -83,21 +74,17 @@ async function getTeamStats(sportKey) {
                     };
                 }
             }
-            
             if (Object.keys(stats).length < 25) {
                 throw new Error("MLB API returned incomplete data.");
             }
-            
             console.log("Successfully fetched MLB stats.");
             return stats;
         } catch (e) {
             console.error(`Could not fetch from MLB API. Error: ${e.message}`);
-            // Return empty object on failure, prediction engine will use defaults
-            return {}; 
+            return {};
         }
-    }, 3600000); // Cache stats for 1 hour
+    }, 3600000);
 }
-
 
 async function getWeatherData(teamName) { /* ... (no changes) ... */ }
 async function fetchEspnData(sportKey) { /* ... (no changes) ... */ }
@@ -106,7 +93,53 @@ async function runPredictionEngine(game, sportKey, context) { /* ... (no changes
 
 // --- API ENDPOINTS ---
 app.get('/predictions', async (req, res) => { /* ... (no changes) ... */ });
-app.get('/special-picks', async (req, res) => { /* ... (no changes) ... */ });
+
+app.get('/special-picks', async (req, res) => {
+    try {
+        // --- THIS IS THE ONLY CHANGE ---
+        // OPTIMIZED: Only check the most active sport (MLB) to reduce server load on the free tier.
+        const sports = ['baseball_mlb']; 
+
+        let allGames = [];
+        let teamStatsBySport = {};
+
+        for (const sport of sports) {
+            const games = await getOdds(sport);
+            if (games?.length > 0) {
+                allGames.push(...games.map(g => ({ ...g, sportKey: sport })));
+                teamStatsBySport[sport] = await getTeamStats(sport);
+            }
+        }
+        
+        if (allGames.length === 0) {
+            return res.json({ pickOfTheDay: null, parlay: null });
+        }
+        
+        const bulkSentiment = await getBulkRedditSentiment(allGames);
+        let allUpcomingGames = [];
+        for (const game of allGames) {
+            const context = { teamStats: teamStatsBySport[game.sportKey], bulkSentiment };
+            const prediction = await runPredictionEngine(game, game.sportKey, context);
+            const winner = prediction.winner;
+            const winnerValue = winner === game.home_team ? prediction.homeValue : prediction.awayValue;
+            const winnerPower = winner === game.home_team ? prediction.homePower : prediction.awayPower;
+            const odds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === winner)?.price;
+            if (winnerValue && odds) {
+                allUpcomingGames.push({ game, prediction, winnerValue, winnerPower, odds, sportKey: game.sportKey });
+            }
+        }
+        
+        const potd = allUpcomingGames.filter(p => p.winnerValue > 5).sort((a, b) => b.winnerValue - a.winnerValue)[0] || null;
+        const parlayCandidates = allUpcomingGames.filter(p => p.odds > 1.4 && p.winnerPower > 55).sort((a, b) => b.winnerPower - a.winnerPower);
+        const parlay = parlayCandidates.length >= 2 ? [parlayCandidates[0], parlayCandidates[1]] : null;
+        res.json({ pickOfTheDay: potd, parlay: parlay });
+
+    } catch (error) {
+        console.error("Special Picks Error:", error);
+        res.status(500).json({ error: 'Failed to generate special picks.' });
+    }
+});
+
 app.post('/ai-analysis', (req, res) => { /* ... (no changes) ... */ });
 app.get('/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 app.get('/records', async (req, res) => { /* ... (no changes) ... */ });
