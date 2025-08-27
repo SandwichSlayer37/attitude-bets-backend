@@ -22,7 +22,8 @@ const r = new Snoowrap({
 
 const teamLocationMap = {
     'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'New York Yankees': { lat: 40.82, lon: -73.92 },
-    'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 }, 'Calgary Flames': { lat: 51.04, lon: -114.07 },
+    'New York Mets': { lat: 40.75, lon: -73.84 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 },
+    'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 },
     'Kansas City Chiefs': { lat: 39.04, lon: -94.48 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 },
 };
 
@@ -66,20 +67,27 @@ async function getOdds(sportKey) {
 
 async function getTeamStats(sportKey) {
     return fetchData(`stats_${sportKey}`, async () => {
-        if (sportKey === 'icehockey_nhl') {
-            const { data } = await axios.get(`https://www.hockey-reference.com/leagues/NHL_${new Date().getFullYear() + 1}_standings.html`);
-            const $ = cheerio.load(data);
-            const stats = {};
-            $('#all_standings tbody tr.full_table').each((i, el) => {
-                const row = $(el);
-                const teamName = row.find('th[data-stat="team_name"] a').text();
-                if (teamName) {
-                    stats[teamName] = { record: `${row.find('td[data-stat="wins"]').text()}-${row.find('td[data-stat="losses"]').text()}`, streak: 'N/A' };
-                }
-            });
-            return stats;
+        const stats = {};
+        const currentYear = new Date().getFullYear();
+        if (sportKey === 'baseball_mlb') {
+            try {
+                const { data } = await axios.get(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standings.shtml`);
+                const $ = cheerio.load(data);
+                $('#teams_standings_overall tbody tr').each((i, el) => {
+                    const row = $(el);
+                    if (row.find('th[data-stat="team_ID"] a').length > 0) {
+                        const teamName = row.find('th[data-stat="team_ID"] a').text();
+                        if (teamName) {
+                            stats[teamName] = {
+                                record: `${row.find('td[data-stat="W"]').text()}-${row.find('td[data-stat="L"]').text()}`,
+                                streak: row.find('td[data-stat="streak"]').text() || 'N/A'
+                            };
+                        }
+                    }
+                });
+            } catch (e) { console.error("Could not scrape MLB stats."); }
         }
-        return {};
+        return stats;
     });
 }
 
@@ -141,19 +149,14 @@ function runPredictionEngine(game, sportKey, context) {
     const awayStats = teamStats[away_team] || { record: '0-0', streak: 'W0' };
     let homeScore = 50, awayScore = 50;
     const factors = {};
-
     const parseRecord = (rec) => rec ? { w: parseInt(rec.split('-')[0]), l: parseInt(rec.split('-')[1]) } : { w: 0, l: 1 };
     const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
-    
     const parseStreak = (s) => (s && s.substring(1) ? (s.startsWith('W') ? parseInt(s.substring(1)) : -parseInt(s.substring(1))) : 0);
     factors['Streak'] = { value: (parseStreak(homeStats.streak) - parseStreak(awayStats.streak)) * (weights.momentum / 5), homeStat: homeStats.streak, awayStat: awayStats.streak };
-    
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
     factors['Injury Impact'] = { value: (Math.random() - 0.5) * 5, homeStat: 'N/A', awayStat: 'N/A' };
-    
     for (const factor in factors) { homeScore += factors[factor].value; awayScore -= factors[factor].value; }
-
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     if (homeOdds && awayOdds) {
@@ -163,19 +166,14 @@ function runPredictionEngine(game, sportKey, context) {
         factors['Betting Value'] = { value: homeValue * (weights.value / 5), homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${((100 - homePower) - (1 / awayOdds) * 100).toFixed(1)}%` };
         homeScore += factors['Betting Value'].value;
     }
-
     let propBet = null, totalBet = null;
     const winner = homeScore > awayScore ? home_team : away_team;
-    const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore) * 100));
-
+    const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     if (confidence > 7.5) { const spreadMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'spreads'); const winnerSpread = spreadMarket?.outcomes.find(o => o.name === winner); if (winnerSpread) { propBet = { team: winner, line: winnerSpread.point, price: winnerSpread.price, type: sportKey === 'baseball_mlb' ? 'Run Line' : sportKey === 'icehockey_nhl' ? 'Puck Line' : 'Spread' }; } }
-    
     let rawPower = homeScore + awayScore;
     if (weather && sportKey !== 'icehockey_nhl') { const weatherImpact = (50 - weather.wind) * 0.1 + (50 - Math.abs(21 - weather.temp)) * 0.05; rawPower += (weatherImpact - 50) * (weights.weather / 10); factors['Weather'] = { value: (weatherImpact - 50) * (weights.weather / 10), homeStat: `${weather.temp}°C`, awayStat: `${weather.wind.toFixed(1)} km/h` }; }
-    
     const totalsMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'totals');
     if (totalsMarket) { let prediction = null; if (rawPower > 105) prediction = 'Over'; if (rawPower < 95) prediction = 'Under'; if (prediction) { const outcome = totalsMarket.outcomes.find(o => o.name === prediction); if (outcome) totalBet = { prediction, line: outcome.point, price: outcome.price }; } }
-    
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, factors, weather, propBet, totalBet };
 }
