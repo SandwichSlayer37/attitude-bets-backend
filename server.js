@@ -1,9 +1,9 @@
-// FINAL VERSION - Includes robust fallback stats and all previous fixes.
+// FINAL VERSION - Uses MLB API for stats, includes all previous fixes.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cheerio = require('cheerio');
+// Cheerio is no longer needed
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 
@@ -28,43 +28,6 @@ const teamLocationMap = { /* ... (no changes) ... */ };
 const teamAliasMap = { /* ... (no changes) ... */ };
 const flairMap = { /* ... (no changes) ... */ };
 const FUTURES_PICKS_DB = { /* ... (no changes) ... */ };
-
-// NEW: Robust fallback data in case scraper is blocked
-const fallbackTeamStats = {
-    'baseball_mlb': {
-        'Baltimore Orioles': { record: '83-50', streak: 'W2' },
-        'Tampa Bay Rays': { record: '82-53', streak: 'W1' },
-        'Toronto Blue Jays': { record: '74-61', streak: 'W3' },
-        'Boston Red Sox': { record: '69-65', streak: 'L1' },
-        'New York Yankees': { record: '65-69', streak: 'L2' },
-        'Minnesota Twins': { record: '70-65', streak: 'W1' },
-        'Cleveland Guardians': { record: '64-71', streak: 'L2' },
-        'Detroit Tigers': { record: '60-74', streak: 'L1' },
-        'Chicago White Sox': { record: '53-81', streak: 'W1' },
-        'Kansas City Royals': { record: '42-94', streak: 'W1' },
-        'Houston Astros': { record: '77-58', streak: 'L1' },
-        'Texas Rangers': { record: '75-59', streak: 'L2' },
-        'Seattle Mariners': { record: '76-57', streak: 'W2' },
-        'Los Angeles Angels': { record: '64-70', streak: 'W1' },
-        'Oakland Athletics': { record: '39-95', streak: 'L1' },
-        'Atlanta Braves': { record: '88-45', streak: 'W4' },
-        'Philadelphia Phillies': { record: '74-59', streak: 'W2' },
-        'Miami Marlins': { record: '67-67', streak: 'W1' },
-        'Washington Nationals': { record: '62-72', streak: 'L3' },
-        'New York Mets': { record: '61-73', streak: 'W1' },
-        'Milwaukee Brewers': { record: '75-59', streak: 'W1' },
-        'Chicago Cubs': { record: '71-62', streak: 'L1' },
-        'Cincinnati Reds': { record: '69-66', streak: 'W1' },
-        'Pittsburgh Pirates': { record: '61-73', streak: 'L2' },
-        'St. Louis Cardinals': { record: '58-76', streak: 'W2' },
-        'Los Angeles Dodgers': { record: '82-50', streak: 'L1' },
-        'San Francisco Giants': { record: '69-64', streak: 'W3' },
-        'Arizona Diamondbacks': { record: '69-65', streak: 'L1' },
-        'San Diego Padres': { record: '62-72', streak: 'L3' },
-        'Colorado Rockies': { record: '50-83', streak: 'L1' }
-    }
-};
-
 const dataCache = new Map();
 
 // --- DATABASE CONNECTION ---
@@ -96,39 +59,45 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
+// --- MODIFIED: THIS FUNCTION NOW USES THE LIVE MLB API ---
 async function getTeamStats(sportKey) {
-    return fetchData(`stats_${sportKey}`, async () => {
-        if (sportKey === 'baseball_mlb') {
-            try {
-                const stats = {};
-                const currentYear = new Date().getFullYear();
-                const { data } = await axios.get(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standings.shtml`);
-                const $ = cheerio.load(data);
-                $('#teams_standings_overall tbody tr').each((i, el) => {
-                    const row = $(el);
-                    if (row.find('th[data-stat="team_ID"] a').length > 0) {
-                        const teamName = row.find('th[data-stat="team_ID"] a').text();
-                        if (teamName) {
-                            stats[teamName] = {
-                                record: `${row.find('td[data-stat="W"]').text()}-${row.find('td[data-stat="L"]').text()}`,
-                                streak: row.find('td[data-stat="streak"]').text() || 'N/A'
-                            };
-                        }
-                    }
-                });
-                if (Object.keys(stats).length < 25) { // Check for incomplete scrape
-                    console.warn("MLB scraper returned incomplete data. Using fallback stats.");
-                    return fallbackTeamStats[sportKey] || {};
-                }
-                return stats;
-            } catch (e) {
-                console.error(`Could not scrape MLB stats, using fallback. Error: ${e.message}`);
-                return fallbackTeamStats[sportKey] || {};
-            }
-        }
+    // Only MLB is supported by this API endpoint
+    if (sportKey !== 'baseball_mlb') {
         return {};
-    });
+    }
+
+    return fetchData(`stats_${sportKey}`, async () => {
+        try {
+            console.log("Fetching live MLB stats from statsapi.mlb.com...");
+            const stats = {};
+            // API endpoint for MLB standings (American League & National League)
+            const url = 'https://statsapi.mlb.com/api/v1/standings?leagueId=103,104';
+            const { data } = await axios.get(url);
+
+            // Loop through the data records to extract stats for each team
+            for (const record of data.records) {
+                for (const team of record.teamRecords) {
+                    stats[team.team.name] = {
+                        record: `${team.wins}-${team.losses}`,
+                        streak: team.streak.streakCode
+                    };
+                }
+            }
+            
+            if (Object.keys(stats).length < 25) {
+                throw new Error("MLB API returned incomplete data.");
+            }
+            
+            console.log("Successfully fetched MLB stats.");
+            return stats;
+        } catch (e) {
+            console.error(`Could not fetch from MLB API. Error: ${e.message}`);
+            // Return empty object on failure, prediction engine will use defaults
+            return {}; 
+        }
+    }, 3600000); // Cache stats for 1 hour
 }
+
 
 async function getWeatherData(teamName) { /* ... (no changes) ... */ }
 async function fetchEspnData(sportKey) { /* ... (no changes) ... */ }
