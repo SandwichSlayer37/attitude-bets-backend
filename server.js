@@ -1,10 +1,11 @@
+// FINAL AND COMPLETE VERSION - Includes all fixes.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const Snoowrap = require('snoowrap');
-const { MongoClient } = require('mongodb'); // REQUIRED FOR DATABASE
+const { MongoClient } = require('mongodb');
 
 const app = express();
 app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
@@ -12,7 +13,7 @@ app.use(express.json());
 
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const DATABASE_URL = process.env.DATABASE_URL; // REQUIRED FOR DATABASE
+const DATABASE_URL = process.env.DATABASE_URL;
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -24,21 +25,7 @@ const r = new Snoowrap({
 
 // --- DATABASES & MAPS ---
 const teamLocationMap = {
-    'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 },
-    'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 },
-    'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 },
-    'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 },
-    'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 },
-    'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 },
-    'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 },
-    'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 },
-    'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 },
-    'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 },
-    'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 },
-    'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 },
-    'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 },
-    'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 },
-    'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
+    'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 }, 'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 }, 'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 }, 'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 }, 'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 }, 'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 }, 'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 }, 'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 }, 'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 }, 'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 }, 'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 }, 'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 }, 'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
     'Arizona Cardinals': { lat: 33.52, lon: -112.26 }, 'Atlanta Falcons': { lat: 33.75, lon: -84.40 }, 'Baltimore Ravens': { lat: 39.27, lon: -76.62 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 }, 'Carolina Panthers': { lat: 35.22, lon: -80.85 }, 'Chicago Bears': { lat: 41.86, lon: -87.61 }, 'Cincinnati Bengals': { lat: 39.09, lon: -84.51 }, 'Cleveland Browns': { lat: 41.50, lon: -81.69 }, 'Dallas Cowboys': { lat: 32.74, lon: -97.09 }, 'Denver Broncos': { lat: 39.74, lon: -105.02 }, 'Detroit Lions': { lat: 42.34, lon: -83.04 }, 'Green Bay Packers': { lat: 44.50, lon: -88.06 }, 'Houston Texans': { lat: 29.68, lon: -95.41 }, 'Indianapolis Colts': { lat: 39.76, lon: -86.16 }, 'Jacksonville Jaguars': { lat: 30.32, lon: -81.63 }, 'Kansas City Chiefs': { lat: 39.04, lon: -94.48 }, 'Las Vegas Raiders': { lat: 36.09, lon: -115.18 }, 'Los Angeles Chargers': { lat: 33.95, lon: -118.33 }, 'Los Angeles Rams': { lat: 33.95, lon: -118.33 }, 'Miami Dolphins': { lat: 25.95, lon: -80.23 }, 'Minnesota Vikings': { lat: 44.97, lon: -93.25 }, 'New England Patriots': { lat: 42.09, lon: -71.26 }, 'New Orleans Saints': { lat: 29.95, lon: -90.08 }, 'New York Giants': { lat: 40.81, lon: -74.07 }, 'New York Jets': { lat: 40.81, lon: -74.07 }, 'Philadelphia Eagles': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Steelers': { lat: 40.44, lon: -80.01 }, 'San Francisco 49ers': { lat: 37.40, lon: -121.97 }, 'Seattle Seahawks': { lat: 47.59, lon: -122.33 }, 'Tampa Bay Buccaneers': { lat: 27.97, lon: -82.50 }, 'Tennessee Titans': { lat: 36.16, lon: -86.77 }, 'Washington Commanders': { lat: 38.90, lon: -76.86 }
 };
 const teamAliasMap = {
@@ -69,7 +56,6 @@ async function connectToDb() {
         db = client.db('attitudebets');
         recordsCollection = db.collection('records');
         console.log("Successfully connected to the database. 🚀");
-
         const count = await recordsCollection.countDocuments();
         if (count === 0) {
             console.log("No records found, seeding database with initial zeroed stats...");
@@ -117,7 +103,8 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 async function getOdds(sportKey) {
     return fetchData(`odds_${sportKey}`, async () => {
         try {
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`);
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&daysFrom=3&apiKey=${ODDS_API_KEY}`;
+            const { data } = await axios.get(url);
             return data;
         } catch (error) {
             console.error("ERROR IN getOdds function:", error.message);
@@ -379,10 +366,44 @@ app.post('/ai-analysis', (req, res) => {
 
 app.get('/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// This endpoint uses the temporary in-memory records
-app.get('/records', (req, res) => res.json(recordsDB));
+app.get('/records', async (req, res) => {
+    try {
+        const records = await recordsCollection.find({}).toArray();
+        const recordsObj = records.reduce((obj, item) => {
+            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
+            return obj;
+        }, {});
+        res.json(recordsObj);
+    } catch (e) {
+        console.error("Failed to fetch records:", e);
+        res.status(500).json({ error: "Could not retrieve records from database." });
+    }
+});
+
+app.post('/update-record', async (req, res) => {
+    const { sport, result, odds } = req.body;
+    if (!sport || !result || !odds) {
+        return res.status(400).json({ error: 'Missing sport, result, or odds' });
+    }
+    const update = {};
+    if (result === 'win') {
+        update.$inc = { wins: 1, totalProfit: (10 * odds) - 10 };
+    } else {
+        update.$inc = { losses: 1, totalProfit: -10 };
+    }
+    try {
+        await recordsCollection.updateOne({ sport: sport }, update);
+        res.status(200).json({ success: true, message: `Record for ${sport} updated.` });
+    } catch(e) {
+        console.error("Failed to update record:", e);
+        res.status(500).json({ error: "Could not update record in database." });
+    }
+});
+
 
 app.get('/', (req, res) => res.send('Attitude Sports Bets API is online.'));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+connectToDb().then(() => {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+});
