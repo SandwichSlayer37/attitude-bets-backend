@@ -52,10 +52,11 @@ const FUTURES_PICKS_DB = {
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
     'americanfootball_nfl': { championship: 'Kansas City Chiefs', hotPick: 'Detroit Lions' }
 };
+// --- THIS IS THE ONLY CHANGE ---
 let recordsDB = {
-    'baseball_mlb': { wins: 82, losses: 51, totalProfit: 257.80 },
-    'icehockey_nhl': { wins: 45, losses: 33, totalProfit: 95.20 },
-    'americanfootball_nfl': { wins: 28, losses: 19, totalProfit: 71.50 }
+    'baseball_mlb': { wins: 0, losses: 0, totalProfit: 0 },
+    'icehockey_nhl': { wins: 0, losses: 0, totalProfit: 0 },
+    'americanfootball_nfl': { wins: 0, losses: 0, totalProfit: 0 }
 };
 const fallbackTeamStats = {
     'baseball_mlb': { 'Detroit Tigers': { record: '59-69', streak: 'L1' }, 'Oakland Athletics': { record: '38-91', streak: 'L5' } }
