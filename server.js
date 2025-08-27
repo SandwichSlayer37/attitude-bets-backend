@@ -20,7 +20,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-// --- FIX: FULLY POPULATED LOCATION MAP FOR ALL LEAGUES ---
+// Fully populated location map for all leagues
 const teamLocationMap = {
     // MLB
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 },
@@ -108,7 +108,6 @@ const teamAliasMap = {
     'Tampa Bay Buccaneers': ['Buccaneers', 'Bucs'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders']
 };
 
-
 const FUTURES_PICKS_DB = {
     'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
@@ -116,6 +115,10 @@ const FUTURES_PICKS_DB = {
 };
 
 const dataCache = new Map();
+
+// --- HELPER FUNCTIONS ---
+const parseRecord = (rec) => rec ? { w: parseInt(rec.split('-')[0]), l: parseInt(rec.split('-')[1]) } : { w: 0, l: 1 };
+const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
 
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
@@ -189,7 +192,8 @@ async function getWeatherData(teamName) {
     });
 }
 
-async function getRedditSentiment(homeTeam, awayTeam) {
+// --- FIX: This function now includes a "smart fallback" ---
+async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats) {
     const key = `reddit_${homeTeam}_${awayTeam}`;
     return fetchData(key, async () => {
         try {
@@ -198,7 +202,6 @@ async function getRedditSentiment(homeTeam, awayTeam) {
                 const quotedAliases = aliases.map(alias => `"${alias}"`);
                 return `"${teamName}" OR ${quotedAliases.join(' OR ')}`;
             };
-
             const homeSearchQuery = createSearchQuery(homeTeam);
             const awaySearchQuery = createSearchQuery(awayTeam);
             
@@ -212,7 +215,14 @@ async function getRedditSentiment(homeTeam, awayTeam) {
             const totalScore = homeScore + awayScore;
 
             if (totalScore === 0) {
-                return { home: 5.0, away: 5.0 };
+                // Smart Fallback: Use win percentage if Reddit data is unavailable
+                console.log(`No Reddit data for ${awayTeam} @ ${homeTeam}. Falling back to win percentage.`);
+                const homeWinPct = getWinPct(parseRecord(homeStats.record));
+                const awayWinPct = getWinPct(parseRecord(awayStats.record));
+                return { 
+                    home: 1 + (homeWinPct * 9), // Scale 0-1 to 1-10
+                    away: 1 + (awayWinPct * 9)
+                };
             }
 
             const homeSentiment = 1 + (homeScore / totalScore) * 9;
@@ -221,22 +231,28 @@ async function getRedditSentiment(homeTeam, awayTeam) {
             return { home: homeSentiment, away: awaySentiment };
         } catch (e) {
             console.error("Reddit API error:", e.message);
-            return { home: 5, away: 5 };
+            // Fallback on error as well
+            const homeWinPct = getWinPct(parseRecord(homeStats.record));
+            const awayWinPct = getWinPct(parseRecord(awayStats.record));
+            return { home: 1 + (homeWinPct * 9), away: 1 + (awayWinPct * 9) };
         }
     }, 1800000);
 }
 
 // --- THE UPGRADED PREDICTION ENGINE ---
-function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, redditSentiment } = context;
+async function runPredictionEngine(game, sportKey, context) {
+    const { teamStats, weather } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
     const homeStats = teamStats[home_team] || { record: '0-0', streak: 'W0' };
     const awayStats = teamStats[away_team] || { record: '0-0', streak: 'W0' };
+    
+    // Fetch Reddit sentiment from within the engine to provide the fallback
+    const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats);
+
     let homeScore = 50, awayScore = 50;
     const factors = {};
-    const parseRecord = (rec) => rec ? { w: parseInt(rec.split('-')[0]), l: parseInt(rec.split('-')[1]) } : { w: 0, l: 1 };
-    const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
+    
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     const parseStreak = (s) => (s && s.substring(1) ? (s.startsWith('W') ? parseInt(s.substring(1)) : -parseInt(s.substring(1))) : 0);
     factors['Streak'] = { value: (parseStreak(homeStats.streak) - parseStreak(awayStats.streak)) * (weights.momentum / 5), homeStat: homeStats.streak, awayStat: awayStats.streak };
@@ -252,16 +268,12 @@ function runPredictionEngine(game, sportKey, context) {
         factors['Betting Value'] = { value: homeValue * (weights.value / 5), homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${((100 - homePower) - (1 / awayOdds) * 100).toFixed(1)}%` };
         homeScore += factors['Betting Value'].value;
     }
-    let propBet = null, totalBet = null;
+    
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
-    if (confidence > 7.5) { const spreadMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'spreads'); const winnerSpread = spreadMarket?.outcomes.find(o => o.name === winner); if (winnerSpread) { propBet = { team: winner, line: winnerSpread.point, price: winnerSpread.price, type: sportKey === 'baseball_mlb' ? 'Run Line' : sportKey === 'icehockey_nhl' ? 'Puck Line' : 'Spread' }; } }
-    let rawPower = homeScore + awayScore;
-    if (weather && sportKey !== 'icehockey_nhl') { const weatherImpact = (50 - weather.wind) * 0.1 + (50 - Math.abs(21 - weather.temp)) * 0.05; rawPower += (weatherImpact - 50) * (weights.weather / 10); factors['Weather'] = { value: (weatherImpact - 50) * (weights.weather / 10), homeStat: `${weather.temp}°C`, awayStat: `${weather.wind.toFixed(1)} km/h` }; }
-    const totalsMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'totals');
-    if (totalsMarket) { let prediction = null; if (rawPower > 105) prediction = 'Over'; if (rawPower < 95) prediction = 'Under'; if (prediction) { const outcome = totalsMarket.outcomes.find(o => o.name === prediction); if (outcome) totalBet = { prediction, line: outcome.point, price: outcome.price }; } }
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    return { winner, strengthText, factors, weather, propBet, totalBet };
+    
+    return { winner, strengthText, factors, weather };
 }
 
 // --- API ENDPOINTS ---
@@ -271,12 +283,14 @@ app.get('/predictions', async (req, res) => {
     try {
         const [games, teamStats] = await Promise.all([getOdds(sport), getTeamStats(sport)]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
+        
         const predictions = await Promise.all(games.map(async (game) => {
-            const [weather, redditSentiment] = await Promise.all([ getWeatherData(game.home_team), getRedditSentiment(game.home_team, game.away_team) ]);
-            const context = { teamStats, weather, redditSentiment };
-            const predictionData = runPredictionEngine(game, sport, context);
+            const weather = await getWeatherData(game.home_team);
+            const context = { teamStats, weather }; // Pass stats and weather
+            const predictionData = await runPredictionEngine(game, sport, context); // Run engine
             return { game, prediction: predictionData };
         }));
+
         res.json(predictions.filter(p => p && p.prediction));
     } catch (error) {
         console.error("Prediction Error:", error);
