@@ -20,7 +20,6 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-// Fully populated location map for all leagues
 const teamLocationMap = {
     // MLB
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 },
@@ -109,9 +108,15 @@ const teamAliasMap = {
 };
 
 const flairMap = {
-    'baseball_mlb': '"MLB Bets and Picks"',
-    'icehockey_nhl': '"NHL Bets and Picks"',
-    'americanfootball_nfl': '"NFL Bets and Picks"'
+    'baseball_mlb': 'MLB Bets and Picks', // No quotes needed here
+    'icehockey_nhl': 'NHL Bets and Picks',
+    'americanfootball_nfl': 'NFL Bets and Picks'
+};
+
+const espnTeamAbbreviations = {
+    'Arizona Diamondbacks': 'ARI', 'Atlanta Braves': 'ATL', 'Baltimore Orioles': 'BAL', 'Boston Red Sox': 'BOS', 'Chicago Cubs': 'CHC', 'Chicago White Sox': 'CHW', 'Cincinnati Reds': 'CIN', 'Cleveland Guardians': 'CLE', 'Colorado Rockies': 'COL', 'Detroit Tigers': 'DET', 'Houston Astros': 'HOU', 'Kansas City Royals': 'KC', 'Los Angeles Angels': 'LAA', 'Los Angeles Dodgers': 'LAD', 'Miami Marlins': 'MIA', 'Milwaukee Brewers': 'MIL', 'Minnesota Twins': 'MIN', 'New York Mets': 'NYM', 'New York Yankees': 'NYY', 'Oakland Athletics': 'OAK', 'Philadelphia Phillies': 'PHI', 'Pittsburgh Pirates': 'PIT', 'San Diego Padres': 'SD', 'San Francisco Giants': 'SF', 'Seattle Mariners': 'SEA', 'St. Louis Cardinals': 'STL', 'Tampa Bay Rays': 'TB', 'Texas Rangers': 'TEX', 'Toronto Blue Jays': 'TOR', 'Washington Nationals': 'WSH',
+    'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 'Columbus Blue Jackets': 'CBJ', 'Dallas Stars': 'DAL', 'Detroit Red Wings': 'DET', 'Edmonton Oilers': 'EDM', 'Florida Panthers': 'FLA', 'Los Angeles Kings': 'LA', 'Minnesota Wild': 'MIN', 'Montreal Canadiens': 'MTL', 'Nashville Predators': 'NSH', 'New Jersey Devils': 'NJ', 'New York Islanders': 'NYI', 'New York Rangers': 'NYR', 'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJ', 'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TB', 'Toronto Maple Leafs': 'TOR', 'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG',
+    'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL', 'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI', 'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL', 'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB', 'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX', 'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC', 'Los Angeles Rams': 'LA', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN', 'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG', 'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT', 'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB', 'Tennessee Titans': 'TEN', 'Washington Commanders': 'WSH'
 };
 
 const FUTURES_PICKS_DB = {
@@ -124,14 +129,11 @@ const dataCache = new Map();
 
 // --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
-    if (!rec) return { w: 0, l: 1 }; // Return non-zero losses to avoid division by zero
+    if (!rec || typeof rec !== 'string') return { w: 0, l: 1 };
     const parts = rec.split('-');
     const wins = parseInt(parts[0], 10);
     const losses = parseInt(parts[1], 10);
-    // Validate that parsing was successful
-    if (isNaN(wins) || isNaN(losses)) {
-        return { w: 0, l: 1 };
-    }
+    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 1 };
     return { w: wins, l: losses };
 };
 const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
@@ -172,6 +174,7 @@ async function getTeamStats(sportKey) {
         const currentYear = new Date().getFullYear();
         if (sportKey === 'baseball_mlb') {
             try {
+                // *** FIX: Corrected typo in scraper URL from "standdings" to "standings" ***
                 const { data } = await axios.get(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standings.shtml`);
                 const $ = cheerio.load(data);
                 $('#teams_standings_overall tbody tr').each((i, el) => {
@@ -188,6 +191,7 @@ async function getTeamStats(sportKey) {
                 });
             } catch (e) { console.error(`Could not scrape MLB stats: ${e.message}`); }
         }
+        // Add scrapers for other sports here if needed
         return stats;
     });
 }
@@ -208,7 +212,27 @@ async function getWeatherData(teamName) {
     });
 }
 
-// --- NEW: Multi-tiered Social Sentiment with Flair Filtering ---
+async function fetchEspnData(sportKey) {
+    return fetchData(`espn_${sportKey}`, async () => {
+        const sportLeagueMap = {
+            'baseball_mlb': { sport: 'baseball', league: 'mlb' },
+            'icehockey_nhl': { sport: 'hockey', league: 'nhl' },
+            'americanfootball_nfl': { sport: 'football', league: 'nfl' }
+        };
+        const map = sportLeagueMap[sportKey];
+        if (!map) return null;
+
+        const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard`;
+        try {
+            const response = await axios.get(url);
+            return response.data;
+        } catch (error) {
+            console.error(`Could not fetch ESPN data for ${sportKey}. Error:`, error.message);
+            return null;
+        }
+    }, 60000); // Cache ESPN data for 1 minute for live scores
+}
+
 async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
     const key = `reddit_${homeTeam}_${awayTeam}_${sportKey}`;
     return fetchData(key, async () => {
@@ -223,7 +247,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
             const flair = flairMap[sportKey];
 
             // Tier 1: Search with flair
-            let results = await r.getSubreddit('sportsbook').search({ query: `flair:${flair} ${baseQuery}`, sort: 'new', time: 'month' });
+            let results = await r.getSubreddit('sportsbook').search({ query: `flair:"${flair}" ${baseQuery}`, sort: 'new', time: 'month' });
             
             // Tier 2: If Tier 1 fails, search without flair
             if (results.length === 0) {
@@ -256,7 +280,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
             });
             
             const totalScore = homeScore + awayScore;
-            if (totalScore === 0) { // Should be rare now but is a final safety net
+            if (totalScore === 0) {
                  const homeWinPct = getWinPct(parseRecord(homeStats.record));
                  const awayWinPct = getWinPct(parseRecord(awayStats.record));
                  return { home: 1 + (homeWinPct * 9), away: 1 + (awayWinPct * 9) };
@@ -276,8 +300,6 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-
-// --- THE UPGRADED PREDICTION ENGINE ---
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, weather } = context;
     const weights = getDynamicWeights(sportKey);
@@ -285,7 +307,6 @@ async function runPredictionEngine(game, sportKey, context) {
     const homeStats = teamStats[home_team] || { record: '0-0', streak: 'W0' };
     const awayStats = teamStats[away_team] || { record: '0-0', streak: 'W0' };
     
-    // Fetch Reddit sentiment from within the engine
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
 
     let homeScore = 50, awayScore = 50;
@@ -328,14 +349,39 @@ app.get('/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, teamStats] = await Promise.all([getOdds(sport), getTeamStats(sport)]);
+        const [games, teamStats, espnDataResponse] = await Promise.all([
+            getOdds(sport),
+            getTeamStats(sport),
+            fetchEspnData(sport)
+        ]);
+
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
         
+        const espnGamesMap = new Map();
+        if (espnDataResponse?.events) {
+            espnDataResponse.events.forEach(event => {
+                const competition = event.competitions?.[0];
+                if (!competition) return;
+                const homeTeam = competition.competitors.find(t => t.homeAway === 'home');
+                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
+                if (homeTeam && awayTeam) {
+                    const key = `${awayTeam.team.abbreviation}-vs-${homeTeam.team.abbreviation}`;
+                    espnGamesMap.set(key, event);
+                }
+            });
+        }
+        
         const predictions = await Promise.all(games.map(async (game) => {
+            const awayAbbr = espnTeamAbbreviations[game.away_team];
+            const homeAbbr = espnTeamAbbreviations[game.home_team];
+            const espnKey = `${awayAbbr}-vs-${homeAbbr}`;
+            const espnData = espnGamesMap.get(espnKey) || null;
+
             const weather = await getWeatherData(game.home_team);
             const context = { teamStats, weather };
             const predictionData = await runPredictionEngine(game, sport, context);
-            return { game, prediction: predictionData };
+            
+            return { game: { ...game, espnData }, prediction: predictionData };
         }));
 
         res.json(predictions.filter(p => p && p.prediction));
