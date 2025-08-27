@@ -6,7 +6,6 @@ const cheerio = require('cheerio');
 const Snoowrap = require('snoowrap');
 
 // Initialize the Express app
-const app = express();
 app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
 
 // --- API & DATA CONFIG ---
@@ -20,11 +19,41 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
+// --- FIX #1: EXPANDED TEAM LOCATION MAP FOR WEATHER ---
 const teamLocationMap = {
-    'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'New York Yankees': { lat: 40.82, lon: -73.92 },
-    'New York Mets': { lat: 40.75, lon: -73.84 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 },
+    // MLB
+    'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 },
+    'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 },
+    'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 },
+    'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 },
+    'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 },
+    'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 },
+    'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 },
+    'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 },
+    'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 },
+    'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 },
+    'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 },
+    'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 },
+    'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 },
+    'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 },
+    'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
+    // NHL
     'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 },
+    // NFL
     'Kansas City Chiefs': { lat: 39.04, lon: -94.48 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 },
+};
+
+// --- FIX #2: ALIAS MAP FOR BETTER REDDIT SEARCHES ---
+const teamAliasMap = {
+    'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'],
+    'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'],
+    'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'],
+    'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'],
+    'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'],
+    'Oakland Athletics': ["A's", 'Athletics'], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'],
+    'San Diego Padres': ['Padres'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners'],
+    'St. Louis Cardinals': ['Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'],
+    'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals']
 };
 
 const FUTURES_PICKS_DB = {
@@ -71,7 +100,7 @@ async function getTeamStats(sportKey) {
         const currentYear = new Date().getFullYear();
         if (sportKey === 'baseball_mlb') {
             try {
-                const { data } = await axios.get(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standings.shtml`);
+                const { data } = await axios.get(`https://www.baseball-reference.com/leagues/majors/${currentYear}-standdings.shtml`);
                 const $ = cheerio.load(data);
                 $('#teams_standings_overall tbody tr').each((i, el) => {
                     const row = $(el);
@@ -107,14 +136,19 @@ async function getWeatherData(teamName) {
     });
 }
 
+// --- UPDATED getRedditSentiment function ---
 async function getRedditSentiment(homeTeam, awayTeam) {
     const key = `reddit_${homeTeam}_${awayTeam}`;
     return fetchData(key, async () => {
         try {
-            const homeAlias = homeTeam.split(' ').pop();
-            const awayAlias = awayTeam.split(' ').pop();
-            const homeSearchQuery = `"${homeTeam}" OR "${homeAlias}"`;
-            const awaySearchQuery = `"${awayTeam}" OR "${awayAlias}"`;
+            const createSearchQuery = (teamName) => {
+                const aliases = teamAliasMap[teamName] || [teamName.split(' ').pop()];
+                const quotedAliases = aliases.map(alias => `"${alias}"`);
+                return `"${teamName}" OR ${quotedAliases.join(' OR ')}`;
+            };
+
+            const homeSearchQuery = createSearchQuery(homeTeam);
+            const awaySearchQuery = createSearchQuery(awayTeam);
 
             const [homeResults, awayResults] = await Promise.all([
                 r.getSubreddit('sportsbook').search({ query: homeSearchQuery, sort: 'new', time: 'week' }),
@@ -139,6 +173,7 @@ async function getRedditSentiment(homeTeam, awayTeam) {
         }
     }, 1800000);
 }
+
 
 // --- THE UPGRADED PREDICTION ENGINE ---
 function runPredictionEngine(game, sportKey, context) {
