@@ -1,4 +1,4 @@
-// FINAL AND COMPLETE VERSION - Includes all fixes.
+// FINAL VERSION - Includes Reddit API optimization and all other fixes.
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -48,7 +48,6 @@ const dataCache = new Map();
 // --- DATABASE CONNECTION ---
 let db;
 let recordsCollection;
-
 async function connectToDb() {
     try {
         const client = new MongoClient(DATABASE_URL);
@@ -180,98 +179,89 @@ async function fetchEspnData(sportKey) {
     }, 60000);
 }
 
-async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
-    const key = `reddit_${homeTeam}_${awayTeam}_${sportKey}`;
+// EFFICIENT REDDIT SENTIMENT ANALYSIS
+async function getBulkRedditSentiment(allGames) {
+    const key = `reddit_bulk_sentiment_${new Date().toISOString().slice(0, 13)}`; // Cache hourly
     return fetchData(key, async () => {
         try {
-            const createSearchQuery = (teamName) => `(${(teamAliasMap[teamName] || [teamName.split(' ').pop()]).map(a => `"${a}"`).join(' OR ')})`;
-            const baseQuery = `${createSearchQuery(homeTeam)} OR ${createSearchQuery(awayTeam)}`;
-            const flair = flairMap[sportKey];
-            let results = await r.getSubreddit('sportsbook').search({ query: `flair:"${flair}" ${baseQuery}`, sort: 'new', time: 'month' });
-            if (results.length === 0) {
-                results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
-            }
-            if (results.length === 0) {
-                return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
-            }
-            let homeScore = 0, awayScore = 0;
-            const homeAliases = [homeTeam, ...(teamAliasMap[homeTeam] || [])].map(a => a.toLowerCase());
-            const awayAliases = [awayTeam, ...(teamAliasMap[awayTeam] || [])].map(a => a.toLowerCase());
-            results.forEach(post => {
-                const title = post.title.toLowerCase();
-                if (homeAliases.some(alias => title.includes(alias))) homeScore++;
-                if (awayAliases.some(alias => title.includes(alias))) awayScore++;
+            console.log("Making a single bulk API call to Reddit...");
+            const posts = await r.getSubreddit('sportsbook').getHot({ limit: 150 });
+            const sentimentMap = new Map();
+
+            allGames.forEach(game => {
+                if (game) {
+                   sentimentMap.set(game.home_team, 0);
+                   sentimentMap.set(game.away_team, 0);
+                }
             });
-            if (homeScore + awayScore === 0) {
-                 return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
+
+            for (const post of posts) {
+                const text = `${post.title} ${post.selftext}`.toLowerCase();
+                for (const team of sentimentMap.keys()) {
+                    const aliases = [team, ...(teamAliasMap[team] || [])].map(a => a.toLowerCase());
+                    if (aliases.some(alias => text.includes(alias))) {
+                        sentimentMap.set(team, sentimentMap.get(team) + 1);
+                    }
+                }
             }
-            return { home: 1 + (homeScore / (homeScore + awayScore)) * 9, away: 1 + (awayScore / (homeScore + awayScore)) * 9 };
+            
+            let maxScore = 1;
+            for (const score of sentimentMap.values()) {
+                if (score > maxScore) maxScore = score;
+            }
+
+            const finalScores = {};
+            for (const [team, score] of sentimentMap.entries()) {
+                finalScores[team] = 1 + (score / maxScore) * 9;
+            }
+            
+            return finalScores;
+
         } catch (e) {
-            console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
-            return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
+            console.error(`Bulk Reddit API error:`, e.message);
+            return {};
         }
-    }, 1800000);
+    }, 3600000);
 }
 
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather } = context;
+    const { teamStats, weather, bulkSentiment } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
     const homeStats = teamStats[home_team] || { record: '0-0', streak: 'W0' };
     const awayStats = teamStats[away_team] || { record: '0-0', streak: 'W0' };
-    const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
+    
+    const homeSentiment = bulkSentiment[home_team] || (1 + getWinPct(parseRecord(homeStats.record)) * 9);
+    const awaySentiment = bulkSentiment[away_team] || (1 + getWinPct(parseRecord(awayStats.record)) * 9);
+
     let homeScore = 50, awayScore = 50;
     const factors = {};
+    
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     const parseStreak = (s) => (s && s.substring(1) ? (s.startsWith('W') ? parseInt(s.substring(1)) : -parseInt(s.substring(1))) : 0);
     factors['Streak'] = { value: (parseStreak(homeStats.streak) - parseStreak(awayStats.streak)) * (weights.momentum / 5), homeStat: homeStats.streak, awayStat: awayStats.streak };
-    factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
+    factors['Social Sentiment'] = { value: (homeSentiment - awaySentiment) * weights.newsSentiment, homeStat: `${homeSentiment.toFixed(1)}/10`, awayStat: `${awaySentiment.toFixed(1)}/10` };
     factors['Fatigue'] = { value: (Math.random() - 0.7) * weights.fatigue, homeStat: `${(Math.random() * 3).toFixed(1)}/10`, awayStat: `${(Math.random() * 5 + 2).toFixed(1)}/10` };
     factors['Offensive Form'] = { value: (Math.random() - 0.5) * weights.offensiveForm, homeStat: `${(Math.random() * 5 + 4).toFixed(1)}/10`, awayStat: `${(Math.random() * 5 + 4).toFixed(1)}/10` };
     factors['Defensive Form'] = { value: (Math.random() - 0.5) * weights.defensiveForm, homeStat: `${(Math.random() * 5 + 4).toFixed(1)}/10`, awayStat: `${(Math.random() * 5 + 4).toFixed(1)}/10` };
     factors['Injury Impact'] = { value: (Math.random() - 0.5) * weights.injuryImpact, homeStat: `${(Math.random()*5).toFixed(1)}/10`, awayStat: `${(Math.random()*5).toFixed(1)}/10` };
-    for (const factor in factors) {
-        if (factors[factor].value && !isNaN(factors[factor].value)) {
-            homeScore += factors[factor].value;
-            awayScore -= factors[factor].value;
-        }
-    }
+    
+    for (const factor in factors) { if (factors[factor].value && !isNaN(factors[factor].value)) { homeScore += factors[factor].value; awayScore -= factors[factor].value; } }
     const totalScore = homeScore + awayScore;
     let homePower = totalScore > 0 ? (homeScore / totalScore) * 100 : 50;
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
-    if (homeOdds && awayOdds) {
-        const homeImpliedProb = (1 / homeOdds) * 100;
-        const awayImpliedProb = (1 / awayOdds) * 100;
-        homeValue = homePower - homeImpliedProb;
-        awayValue = (100 - homePower) - awayImpliedProb;
-        let bettingValueUpdate = (homeValue - awayValue) * (weights.value / 5);
-        if(!isNaN(bettingValueUpdate)) {
-             homeScore += bettingValueUpdate;
-        }
-        factors['Betting Value'] = { value: bettingValueUpdate, homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
-    }
+    if (homeOdds && awayOdds) { const homeImpliedProb = (1 / homeOdds) * 100; const awayImpliedProb = (1 / awayOdds) * 100; homeValue = homePower - homeImpliedProb; awayValue = (100 - homePower) - awayImpliedProb; let bettingValueUpdate = (homeValue - awayValue) * (weights.value / 5); if(!isNaN(bettingValueUpdate)) { homeScore += bettingValueUpdate; } factors['Betting Value'] = { value: bettingValueUpdate, homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` }; }
     const finalTotalScore = homeScore + awayScore;
     let finalHomePower = finalTotalScore > 0 ? (homeScore / finalTotalScore) * 100 : 50;
     const winner = finalHomePower > 50 ? home_team : away_team;
     const confidence = Math.abs(finalHomePower - 50) * 2 / 100;
     let strengthText = confidence > 0.3 ? "Strong Advantage" : confidence > 0.15 ? "Good Chance" : "Slight Edge";
     let propBet = null, totalBet = null;
-    if (strengthText === "Strong Advantage" && winner === (homeOdds < awayOdds ? home_team : away_team)) {
-        const spreadMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'spreads');
-        const winnerSpread = spreadMarket?.outcomes.find(o => o.name === winner);
-        if (winnerSpread?.point < 0) {
-            propBet = { team: winner, line: winnerSpread.point, price: winnerSpread.price, type: sportKey === 'baseball_mlb' ? 'Run Line' : sportKey === 'icehockey_nhl' ? 'Puck Line' : 'Spread' };
-        }
-    }
+    if (strengthText === "Strong Advantage" && winner === (homeOdds < awayOdds ? home_team : away_team)) { const spreadMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'spreads'); const winnerSpread = spreadMarket?.outcomes.find(o => o.name === winner); if (winnerSpread?.point < 0) { propBet = { team: winner, line: winnerSpread.point, price: winnerSpread.price, type: sportKey === 'baseball_mlb' ? 'Run Line' : sportKey === 'icehockey_nhl' ? 'Puck Line' : 'Spread' }; } }
     const totalsMarket = game.bookmakers?.[0]?.markets?.find(m => m.key === 'totals')?.outcomes.find(o => o.name === 'Over');
-    if (totalsMarket) {
-        let prediction = null;
-        if (homeScore + awayScore > 105) prediction = 'Over';
-        if (homeScore + awayScore < 95) prediction = 'Under';
-        if (prediction) totalBet = { prediction, line: totalsMarket.point, price: totalsMarket.price };
-    }
+    if (totalsMarket) { let prediction = null; if (homeScore + awayScore > 105) prediction = 'Over'; if (homeScore + awayScore < 95) prediction = 'Under'; if (prediction) totalBet = { prediction, line: totalsMarket.point, price: totalsMarket.price }; }
     return { winner, strengthText, factors, weather, propBet, totalBet, homeValue, awayValue, homePower: finalHomePower, awayPower: 100 - finalHomePower };
 }
 
@@ -282,22 +272,18 @@ app.get('/predictions', async (req, res) => {
     try {
         const [games, teamStats, espnDataResponse] = await Promise.all([ getOdds(sport), getTeamStats(sport), fetchEspnData(sport) ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
+        
+        const bulkSentiment = await getBulkRedditSentiment(games);
+
         const espnGamesMap = new Map();
         if (espnDataResponse?.events) {
-            espnDataResponse.events.forEach(event => {
-                const competition = event.competitions?.[0];
-                if (!competition) return;
-                const home = competition.competitors.find(t => t.homeAway === 'home')?.team;
-                const away = competition.competitors.find(c => c.homeAway === 'away')?.team;
-                if (home && away) {
-                    espnGamesMap.set(`${away.name} @ ${home.name}`, event);
-                }
-            });
+            espnDataResponse.events.forEach(event => { const competition = event.competitions?.[0]; if (!competition) return; const home = competition.competitors.find(t => t.homeAway === 'home')?.team; const away = competition.competitors.find(c => c.homeAway === 'away')?.team; if (home && away) { espnGamesMap.set(`${away.name} @ ${home.name}`, event); } });
         }
+        
         const predictions = await Promise.all(games.map(async (game) => {
             const espnData = espnGamesMap.get(`${game.away_team.split(' ').pop()} @ ${game.home_team.split(' ').pop()}`) || null;
             const weather = await getWeatherData(game.home_team);
-            const context = { teamStats, weather };
+            const context = { teamStats, weather, bulkSentiment };
             const predictionData = await runPredictionEngine(game, sport, context);
             return { game: { ...game, espnData }, prediction: predictionData };
         }));
@@ -311,27 +297,37 @@ app.get('/predictions', async (req, res) => {
 app.get('/special-picks', async (req, res) => {
     try {
         const sports = ['baseball_mlb', 'americanfootball_nfl', 'icehockey_nhl'];
-        let allUpcomingGames = [];
+        let allGames = [];
+        let teamStatsBySport = {};
+
         for (const sport of sports) {
             const games = await getOdds(sport);
-            const teamStats = await getTeamStats(sport);
-            if(games?.length > 0) {
-                for (const game of games) {
-                    const prediction = await runPredictionEngine(game, sport, { teamStats });
-                    const winner = prediction.winner;
-                    const winnerValue = winner === game.home_team ? prediction.homeValue : prediction.awayValue;
-                    const winnerPower = winner === game.home_team ? prediction.homePower : prediction.awayPower;
-                    const odds = game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===winner)?.price;
-                    if (winnerValue && odds) {
-                        allUpcomingGames.push({ game, prediction, winnerValue, winnerPower, odds, sportKey: sport });
-                    }
-                }
+            if (games?.length > 0) {
+                allGames.push(...games.map(g => ({ ...g, sportKey: sport })));
+                teamStatsBySport[sport] = await getTeamStats(sport);
             }
         }
+        
+        const bulkSentiment = await getBulkRedditSentiment(allGames);
+
+        let allUpcomingGames = [];
+        for (const game of allGames) {
+            const context = { teamStats: teamStatsBySport[game.sportKey], bulkSentiment };
+            const prediction = await runPredictionEngine(game, game.sportKey, context);
+            const winner = prediction.winner;
+            const winnerValue = winner === game.home_team ? prediction.homeValue : prediction.awayValue;
+            const winnerPower = winner === game.home_team ? prediction.homePower : prediction.awayPower;
+            const odds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === winner)?.price;
+            if (winnerValue && odds) {
+                allUpcomingGames.push({ game, prediction, winnerValue, winnerPower, odds, sportKey: game.sportKey });
+            }
+        }
+        
         const potd = allUpcomingGames.filter(p => p.winnerValue > 5).sort((a, b) => b.winnerValue - a.winnerValue)[0] || null;
         const parlayCandidates = allUpcomingGames.filter(p => p.odds > 1.4 && p.winnerPower > 55).sort((a, b) => b.winnerPower - a.winnerPower);
         const parlay = parlayCandidates.length >= 2 ? [parlayCandidates[0], parlayCandidates[1]] : null;
         res.json({ pickOfTheDay: potd, parlay: parlay });
+
     } catch (error) {
         console.error("Special Picks Error:", error);
         res.status(500).json({ error: 'Failed to generate special picks.' });
@@ -355,7 +351,7 @@ app.post('/ai-analysis', (req, res) => {
         <h4 class="text-lg font-bold text-white mt-4 mb-2">Supporting Factors:</h4>
         <ul class="list-disc pl-5 mb-4 space-y-1">
             <li><strong>Record:</strong> ${home_team} (${factors.Record.homeStat}) vs. ${away_team} (${factors.Record.awayStat}).</li>
-            <li><strong>Momentum:</strong> The ${home_team} are on a ${factors.Streak.homeStat} streak, while the ${away_team} are on a ${factors.Streak.awayStat}.</li>
+            <li><strong>Momentum:</strong> ${home_team} are on a ${factors.Streak.homeStat} streak, while the ${away_team} are on a ${factors.Streak.awayStat}.</li>
         </ul>
         <h4 class="text-lg font-bold text-white mt-4 mb-2">Final Recommendation:</h4>
         <p class="p-3 bg-gray-700 rounded-lg">
@@ -399,7 +395,6 @@ app.post('/update-record', async (req, res) => {
         res.status(500).json({ error: "Could not update record in database." });
     }
 });
-
 
 app.get('/', (req, res) => res.send('Attitude Sports Bets API is online.'));
 
