@@ -117,8 +117,8 @@ async function getRedditSentiment(homeTeam, awayTeam) {
             const awaySearchQuery = `"${awayTeam}" OR "${awayAlias}"`;
 
             const [homeResults, awayResults] = await Promise.all([
-                r.getSubreddit('sportsbook').search({ query: homeSearchQuery, sort: 'new', time: 'day' }),
-                r.getSubreddit('sportsbook').search({ query: awaySearchQuery, sort: 'new', time: 'day' })
+                r.getSubreddit('sportsbook').search({ query: homeSearchQuery, sort: 'new', time: 'week' }),
+                r.getSubreddit('sportsbook').search({ query: awaySearchQuery, sort: 'new', time: 'week' })
             ]);
 
             const homeScore = homeResults.length;
