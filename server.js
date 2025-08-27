@@ -54,10 +54,62 @@ function getDynamicWeights(sportKey) {
 }
 
 // --- DATA FETCHING & SCRAPING MODULES ---
-async function fetchData(key, fetcherFn, ttl = 3600000) { if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) { return dataCache.get(key).data; } const data = await fetcherFn(); dataCache.set(key, { data, timestamp: Date.now() }); return data; }
-async function getOdds(sportKey) { return fetchData(`odds_${sportKey}`, async () => { try { const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`; const { data } = await axios.get(url); return data; } catch (error) { console.error("ERROR IN getOdds function:", error.message); return []; } }, 900000); }
-async function getTeamStats(sportKey) { return fetchData(`stats_${sportKey}`, async () => { if (sportKey === 'icehockey_nhl') { const { data } = await axios.get(`https://www.hockey-reference.com/leagues/NHL_${new Date().getFullYear() + 1}_standings.html`); const $ = cheerio.load(data); const stats = {}; $('#all_standings tbody tr.full_table').each((i, el) => { const row = $(el); const teamName = row.find('th[data-stat="team_name"] a').text(); if (teamName) { stats[teamName] = { record: `${row.find('td[data-stat="wins"]').text()}-${row.find('td[data-stat="losses"]').text()}`, streak: 'N/A' }; } }); return stats; } return {}; }); }
-async function getWeatherData(teamName) { const location = teamLocationMap[teamName]; if (!location) return null; const { lat, lon } = location; return fetchData(`weather_${lat}_${lon}`, async () => { try { const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`; const { data } = await axios.get(url); return { temp: data.current.temperature_2m, wind: data.current.wind_speed_10m, precip: data.current.precipitation, }; } catch (e) { console.error(`Could not fetch weather for ${teamName}: ${e.message}`); return null; } }); }
+async function fetchData(key, fetcherFn, ttl = 3600000) {
+    if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
+        return dataCache.get(key).data;
+    }
+    const data = await fetcherFn();
+    dataCache.set(key, { data, timestamp: Date.now() });
+    return data;
+}
+
+async function getOdds(sportKey) {
+    return fetchData(`odds_${sportKey}`, async () => {
+        try {
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`;
+            const { data } = await axios.get(url);
+            return data;
+        } catch (error) {
+            console.error("ERROR IN getOdds function:", error.message);
+            return [];
+        }
+    }, 900000);
+}
+
+async function getTeamStats(sportKey) {
+    return fetchData(`stats_${sportKey}`, async () => {
+        if (sportKey === 'icehockey_nhl') {
+            const { data } = await axios.get(`https://www.hockey-reference.com/leagues/NHL_${new Date().getFullYear() + 1}_standings.html`);
+            const $ = cheerio.load(data);
+            const stats = {};
+            $('#all_standings tbody tr.full_table').each((i, el) => {
+                const row = $(el);
+                const teamName = row.find('th[data-stat="team_name"] a').text();
+                if (teamName) {
+                    stats[teamName] = { record: `${row.find('td[data-stat="wins"]').text()}-${row.find('td[data-stat="losses"]').text()}`, streak: 'N/A' };
+                }
+            });
+            return stats;
+        }
+        return {};
+    });
+}
+
+async function getWeatherData(teamName) {
+    const location = teamLocationMap[teamName];
+    if (!location) return null;
+    const { lat, lon } = location;
+    return fetchData(`weather_${lat}_${lon}`, async () => {
+        try {
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
+            const { data } = await axios.get(url);
+            return { temp: data.current.temperature_2m, wind: data.current.wind_speed_10m, precip: data.current.precipitation };
+        } catch (e) {
+            console.error(`Could not fetch weather for ${teamName}: ${e.message}`);
+            return null;
+        }
+    });
+}
 
 async function getRedditSentiment(homeTeam, awayTeam) {
     const key = `reddit_${homeTeam}_${awayTeam}`;
@@ -139,7 +191,7 @@ function runPredictionEngine(game, sportKey, context) {
     if (totalsMarket) {
         let prediction = null;
         if (rawPower > 105) prediction = 'Over';
-        if (rawPower < 95) prediction = 'Under'; // <-- THIS LINE IS NOW FIXED
+        if (rawPower < 95) prediction = 'Under';
         if (prediction) {
             const outcome = totalsMarket.outcomes.find(o => o.name === prediction);
             if (outcome) totalBet = { prediction, line: outcome.point, price: outcome.price };
