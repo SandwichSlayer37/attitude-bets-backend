@@ -6,6 +6,7 @@ const cheerio = require('cheerio');
 const Snoowrap = require('snoowrap');
 
 // Initialize the Express app
+const app = express();
 app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
 
 // --- API & DATA CONFIG ---
@@ -19,6 +20,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
+// --- FIX: FULLY POPULATED LOCATION MAP FOR ALL LEAGUES ---
 const teamLocationMap = {
     // MLB
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 },
@@ -37,13 +39,43 @@ const teamLocationMap = {
     'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 },
     'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
     // NHL
-    'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 },
+    'Anaheim Ducks': { lat: 33.80, lon: -117.87 }, 'Arizona Coyotes': { lat: 33.53, lon: -112.26 },
+    'Boston Bruins': { lat: 42.36, lon: -71.06 }, 'Buffalo Sabres': { lat: 42.87, lon: -78.87 },
+    'Calgary Flames': { lat: 51.03, lon: -114.05 }, 'Carolina Hurricanes': { lat: 35.80, lon: -78.72 },
+    'Chicago Blackhawks': { lat: 41.88, lon: -87.67 }, 'Colorado Avalanche': { lat: 39.74, lon: -105.00 },
+    'Columbus Blue Jackets': { lat: 40.00, lon: -83.00 }, 'Dallas Stars': { lat: 32.79, lon: -96.81 },
+    'Detroit Red Wings': { lat: 42.34, lon: -83.05 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 },
+    'Florida Panthers': { lat: 26.15, lon: -80.32 }, 'Los Angeles Kings': { lat: 34.04, lon: -118.26 },
+    'Minnesota Wild': { lat: 44.94, lon: -93.10 }, 'Montreal Canadiens': { lat: 45.49, lon: -73.57 },
+    'Nashville Predators': { lat: 36.15, lon: -86.77 }, 'New Jersey Devils': { lat: 40.73, lon: -74.17 },
+    'New York Islanders': { lat: 40.72, lon: -73.62 }, 'New York Rangers': { lat: 40.75, lon: -73.99 },
+    'Ottawa Senators': { lat: 45.29, lon: -75.92 }, 'Philadelphia Flyers': { lat: 39.90, lon: -75.17 },
+    'Pittsburgh Penguins': { lat: 40.43, lon: -79.98 }, 'San Jose Sharks': { lat: 37.33, lon: -121.90 },
+    'Seattle Kraken': { lat: 47.62, lon: -122.35 }, 'St. Louis Blues': { lat: 38.62, lon: -90.20 },
+    'Tampa Bay Lightning': { lat: 27.94, lon: -82.45 }, 'Toronto Maple Leafs': { lat: 43.64, lon: -79.37 },
+    'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Vegas Golden Knights': { lat: 36.10, lon: -115.17 },
+    'Washington Capitals': { lat: 38.89, lon: -77.02 }, 'Winnipeg Jets': { lat: 49.89, lon: -97.14 },
     // NFL
-    'Kansas City Chiefs': { lat: 39.04, lon: -94.48 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 },
+    'Arizona Cardinals': { lat: 33.52, lon: -112.26 }, 'Atlanta Falcons': { lat: 33.75, lon: -84.40 },
+    'Baltimore Ravens': { lat: 39.27, lon: -76.62 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 },
+    'Carolina Panthers': { lat: 35.22, lon: -80.85 }, 'Chicago Bears': { lat: 41.86, lon: -87.61 },
+    'Cincinnati Bengals': { lat: 39.09, lon: -84.51 }, 'Cleveland Browns': { lat: 41.50, lon: -81.69 },
+    'Dallas Cowboys': { lat: 32.74, lon: -97.09 }, 'Denver Broncos': { lat: 39.74, lon: -105.02 },
+    'Detroit Lions': { lat: 42.34, lon: -83.04 }, 'Green Bay Packers': { lat: 44.50, lon: -88.06 },
+    'Houston Texans': { lat: 29.68, lon: -95.41 }, 'Indianapolis Colts': { lat: 39.76, lon: -86.16 },
+    'Jacksonville Jaguars': { lat: 30.32, lon: -81.63 }, 'Kansas City Chiefs': { lat: 39.04, lon: -94.48 },
+    'Las Vegas Raiders': { lat: 36.09, lon: -115.18 }, 'Los Angeles Chargers': { lat: 33.95, lon: -118.33 },
+    'Los Angeles Rams': { lat: 33.95, lon: -118.33 }, 'Miami Dolphins': { lat: 25.95, lon: -80.23 },
+    'Minnesota Vikings': { lat: 44.97, lon: -93.25 }, 'New England Patriots': { lat: 42.09, lon: -71.26 },
+    'New Orleans Saints': { lat: 29.95, lon: -90.08 }, 'New York Giants': { lat: 40.81, lon: -74.07 },
+    'New York Jets': { lat: 40.81, lon: -74.07 }, 'Philadelphia Eagles': { lat: 39.90, lon: -75.16 },
+    'Pittsburgh Steelers': { lat: 40.44, lon: -80.01 }, 'San Francisco 49ers': { lat: 37.40, lon: -121.97 },
+    'Seattle Seahawks': { lat: 47.59, lon: -122.33 }, 'Tampa Bay Buccaneers': { lat: 27.97, lon: -82.50 },
+    'Tennessee Titans': { lat: 36.16, lon: -86.77 }, 'Washington Commanders': { lat: 38.90, lon: -76.86 }
 };
 
-// --- FIX #1: ADDED MORE ALIASES ---
 const teamAliasMap = {
+    // MLB
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'],
     'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'],
     'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'],
@@ -52,8 +84,30 @@ const teamAliasMap = {
     'Oakland Athletics': ["A's", 'Athletics'], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'],
     'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"],
     'St. Louis Cardinals': ['Cardinals', 'Cards'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'],
-    'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals']
+    'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
+    // NHL
+    'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes', 'Yotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'],
+    'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Canes', 'Hurricanes'], 'Chicago Blackhawks': ['Blackhawks', 'Hawks'],
+    'Colorado Avalanche': ['Avalanche', 'Avs'], 'Columbus Blue Jackets': ['Blue Jackets', 'CBJ'], 'Dallas Stars': ['Stars'],
+    'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'],
+    'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators', 'Preds'],
+    'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders', 'Isles'], 'New York Rangers': ['Rangers'],
+    'Ottawa Senators': ['Senators', 'Sens'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins', 'Pens'],
+    'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning', 'Bolts'],
+    'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks'], 'Vegas Golden Knights': ['Golden Knights', 'Knights'],
+    'Washington Capitals': ['Capitals', 'Caps'], 'Winnipeg Jets': ['Jets'],
+    // NFL
+    'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'],
+    'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'],
+    'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'],
+    'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars', 'Jags'],
+    'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'],
+    'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots', 'Pats'],
+    'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'],
+    'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers', 'Niners'], 'Seattle Seahawks': ['Seahawks'],
+    'Tampa Bay Buccaneers': ['Buccaneers', 'Bucs'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders']
 };
+
 
 const FUTURES_PICKS_DB = {
     'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
@@ -148,7 +202,6 @@ async function getRedditSentiment(homeTeam, awayTeam) {
             const homeSearchQuery = createSearchQuery(homeTeam);
             const awaySearchQuery = createSearchQuery(awayTeam);
             
-            // --- FIX #2: CHANGED TIME FROM 'week' TO 'month' ---
             const [homeResults, awayResults] = await Promise.all([
                 r.getSubreddit('sportsbook').search({ query: homeSearchQuery, sort: 'new', time: 'month' }),
                 r.getSubreddit('sportsbook').search({ query: awaySearchQuery, sort: 'new', time: 'month' })
@@ -172,7 +225,6 @@ async function getRedditSentiment(homeTeam, awayTeam) {
         }
     }, 1800000);
 }
-
 
 // --- THE UPGRADED PREDICTION ENGINE ---
 function runPredictionEngine(game, sportKey, context) {
