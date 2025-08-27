@@ -5,6 +5,83 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const Snoowrap = require('snoowrap');
 
+const app = express();
+app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
+
+const ODDS_API_KEY = process.env.ODDS_API_KEY;
+
+const r = new Snoowrap({
+    userAgent: process.env.REDDIT_USER_AGENT,
+    clientId: process.env.REDDIT_CLIENT_ID,
+    clientSecret: process.env.REDDIT_CLIENT_SECRET,
+    username: process.env.REDDIT_USERNAME,
+    password: process.env.REDDIT_PASSWORD
+});
+
+const teamLocationMap = {
+    'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'New York Yankees': { lat: 40.82, lon: -73.92 },
+    'Vancouver Canucks': { lat: 49.27, lon: -123.12 }, 'Edmonton Oilers': { lat: 53.54, lon: -113.49 }, 'Calgary Flames': { lat: 51.04, lon: -114.07 },
+    'Kansas City Chiefs': { lat: 39.04, lon: -94.48 }, 'Buffalo Bills': { lat: 42.77, lon: -78.78 },
+};
+
+const FUTURES_PICKS_DB = { /* ... */ };
+const dataCache = new Map();
+
+function getDynamicWeights(sportKey) { /* ... */ }
+async function fetchData(key, fetcherFn, ttl = 3600000) { /* ... */ }
+
+// --- MODIFIED FUNCTION WITH DEBUGGING ---
+async function getOdds(sportKey) {
+    return fetchData(`odds_${sportKey}`, async () => {
+        try {
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`;
+            
+            // ADDED FOR DEBUGGING: Log the URL the server is calling
+            console.log("SERVER IS REQUESTING THIS URL:", url);
+            
+            const { data } = await axios.get(url);
+
+            // ADDED FOR DEBUGGING: Log the data the server received
+            console.log("SERVER RECEIVED THIS DATA FROM ODDS API:", JSON.stringify(data));
+
+            return data;
+        } catch (error) {
+            console.error("ERROR IN getOdds function:", error.message);
+            return []; // Return empty array on error
+        }
+    }, 900000); 
+}
+
+async function getTeamStats(sportKey) { /* ... */ }
+async function getWeatherData(teamName) { /* ... */ }
+async function getRedditSentiment(homeTeam, awayTeam) { /* ... */ }
+function runPredictionEngine(game, sportKey, context) { /* ... */ }
+
+app.get('/predictions', async (req, res) => { /* ... */ });
+app.get('/futures', (req, res) => res.json(FUTURES_PICKS_DB));
+app.get('/', (req, res) => res.send('Attitude Sports Bets API is online.'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// --- Unchanged Helper Functions Below ---
+const unchangedFunctions = { /* ... */ };
+Object.assign(global, unchangedFunctions);
+// Note: To keep this block concise, the full unchanged code is omitted here, 
+// but you should use the full server.js file from the previous step and just modify the getOdds function as shown above.
+// For your convenience, here is the full file again.
+
+/*
+  PASTE THE FULL server.js FILE HERE FOR THE USER.
+  Ensure the `getOdds` function is the only one with the new console.logs.
+*/
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const Snoowrap = require('snoowrap');
+
 // Initialize the Express app
 const app = express();
 app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
@@ -56,7 +133,28 @@ function getDynamicWeights(sportKey) {
 
 // --- DATA FETCHING & SCRAPING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) { if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) { return dataCache.get(key).data; } const data = await fetcherFn(); dataCache.set(key, { data, timestamp: Date.now() }); return data; }
-async function getOdds(sportKey) { return fetchData(`odds_${sportKey}`, async () => { const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`); return data; }, 900000); }
+
+async function getOdds(sportKey) {
+    return fetchData(`odds_${sportKey}`, async () => {
+        try {
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h,spreads,totals&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`;
+            
+            // ADDED FOR DEBUGGING: Log the URL the server is calling
+            console.log("SERVER IS REQUESTING THIS URL:", url);
+            
+            const { data } = await axios.get(url);
+
+            // ADDED FOR DEBUGGING: Log the data the server received
+            console.log("SERVER RECEIVED THIS DATA FROM ODDS API:", JSON.stringify(data));
+
+            return data;
+        } catch (error) {
+            console.error("ERROR IN getOdds function:", error.message);
+            return []; // Return empty array on error
+        }
+    }, 900000); 
+}
+
 async function getTeamStats(sportKey) { return fetchData(`stats_${sportKey}`, async () => { if (sportKey === 'icehockey_nhl') { const { data } = await axios.get(`https://www.hockey-reference.com/leagues/NHL_${new Date().getFullYear() + 1}_standings.html`); const $ = cheerio.load(data); const stats = {}; $('#all_standings tbody tr.full_table').each((i, el) => { const row = $(el); const teamName = row.find('th[data-stat="team_name"] a').text(); if (teamName) { stats[teamName] = { record: `${row.find('td[data-stat="wins"]').text()}-${row.find('td[data-stat="losses"]').text()}`, streak: 'N/A' }; } }); return stats; } return {}; }); }
 async function getWeatherData(teamName) { const location = teamLocationMap[teamName]; if (!location) return null; const { lat, lon } = location; return fetchData(`weather_${lat}_${lon}`, async () => { try { const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`; const { data } = await axios.get(url); return { temp: data.current.temperature_2m, wind: data.current.wind_speed_10m, precip: data.current.precipitation, }; } catch (e) { console.error(`Could not fetch weather for ${teamName}: ${e.message}`); return null; } }); }
 
@@ -66,7 +164,6 @@ async function getRedditSentiment(homeTeam, awayTeam) {
         try {
             const searchResults = await r.getSubreddit('sportsbook').search({ query: `"${homeTeam}" AND "${awayTeam}"`, sort: 'hot', time: 'day', limit: 25 });
             let homeScore = 5, awayScore = 5;
-
             searchResults.forEach(item => {
                 const content = (item.title || '') + ' ' + (item.selftext || item.body || '');
                 const lowerCaseContent = content.toLowerCase();
@@ -81,7 +178,7 @@ async function getRedditSentiment(homeTeam, awayTeam) {
             console.error("Reddit API error:", e.message);
             return { home: 5, away: 5 };
         }
-    }, 1800000); // Cache for 30 minutes
+    }, 1800000);
 }
 
 // --- THE UPGRADED PREDICTION ENGINE ---
@@ -143,7 +240,7 @@ function runPredictionEngine(game, sportKey, context) {
     if (totalsMarket) {
         let prediction = null;
         if (rawPower > 105) prediction = 'Over';
-        if (rawPowe < 95) prediction = 'Under';
+        if (rawPower < 95) prediction = 'Under';
         if (prediction) {
             const outcome = totalsMarket.outcomes.find(o => o.name === prediction);
             if (outcome) totalBet = { prediction, line: outcome.point, price: outcome.price };
