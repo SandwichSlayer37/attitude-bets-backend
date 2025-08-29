@@ -272,8 +272,10 @@ app.get('/predictions', async (req, res) => {
         const injuries = {};
         if (espnDataResponse?.events) {
             for (const event of espnDataResponse.events) {
-                for (const competitor of event.competitions[0].competitors) {
-                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
+                if (event.competitions && event.competitions[0] && event.competitions[0].competitors) {
+                    for (const competitor of event.competitions[0].competitors) {
+                        injuries[competitor.team.displayName] = competitor.team.injuries || [];
+                    }
                 }
             }
         }
@@ -283,9 +285,12 @@ app.get('/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const context = { teamStats, weather, injuries };
             const predictionData = await runPredictionEngine(game, sport, context);
-            const espnEvent = espnDataResponse?.events?.find(e => 
-                e.name.includes(espnTeamAbbreviations[game.home_team]) && e.name.includes(espnTeamAbbreviations[game.away_team])
-            );
+            const espnEvent = espnDataResponse?.events?.find(e => {
+                if (!e.name) return false;
+                const homeAbbr = espnTeamAbbreviations[game.home_team];
+                const awayAbbr = espnTeamAbbreviations[game.away_team];
+                return homeAbbr && awayAbbr && e.name.includes(homeAbbr) && e.name.includes(awayAbbr);
+            });
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
@@ -295,13 +300,39 @@ app.get('/predictions', async (req, res) => {
     }
 });
 
-app.get('/special-picks', async (req, res) => { /* (endpoint exists but simplified) */ });
-app.get('/records', async (req, res) => { /* (endpoint exists) */ });
+app.get('/special-picks', async (req, res) => {
+    try {
+        // This is a placeholder; a real implementation would be more complex
+        res.json({ pickOfTheDay: null, parlay: null });
+    } catch (error) {
+        console.error("Special Picks Error:", error);
+        res.status(500).json({ error: 'Failed to generate special picks.' });
+    }
+});
+
+app.get('/records', async (req, res) => {
+    try {
+        if (!recordsCollection) { await connectToDb(); }
+        const records = await recordsCollection.find({}).toArray();
+        const recordsObj = records.reduce((obj, item) => {
+            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
+            return obj;
+        }, {});
+        res.json(recordsObj);
+    } catch (e) {
+        console.error("Failed to fetch records:", e);
+        res.status(500).json({ error: "Could not retrieve records from database." });
+    }
+});
+
 app.get('/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 app.get('/', (req, res) => res.send('Attitude Sports Bets API is online.'));
 
 app.post('/ai-analysis', async (req, res) => {
     try {
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error("GEMINI_API_KEY is not set.");
+        }
         const { game, prediction } = req.body;
         const { home_team, away_team } = game;
         const { winner, factors } = prediction;
@@ -309,7 +340,7 @@ app.post('/ai-analysis', async (req, res) => {
         const awayRecord = factors['Record']?.awayStat || 'N/A';
         const prompt = `
             Act as a concise sports betting analyst. Provide a brief, insightful analysis for the following MLB game.
-            Format your response in simple HTML using only <h4> and <p> tags. Do not include markdown like \`\`\`html.
+            Format your response in simple HTML using only <h4> and <p> tags. Do not use markdown like \`\`\`html.
 
             Game: ${away_team} (${awayRecord}) @ ${home_team} (${homeRecord})
             Our Prediction: ${winner}
@@ -324,7 +355,7 @@ app.post('/ai-analysis', async (req, res) => {
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let analysisHtml = response.text();
-        analysisHtml = analysisHtml.replace(/```html/g, '').replace(/```/g, '');
+        analysisHtml = analysisHtml.replace(/```html/g, '').replace(/```/g, ''); // Clean up potential markdown
         res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Analysis Error:", error);
