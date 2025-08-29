@@ -1,4 +1,4 @@
-// FINAL COMPLETE VERSION
+// FINAL COMPLETE VERSION v6 - Updated Gemini Model
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -12,10 +12,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- SERVE THE FRONTEND STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -45,7 +43,6 @@ async function connectToDb() {
     }
 }
 
-// --- DATA MAPS ---
 const teamLocationMap = {
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 }, 'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 }, 'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 }, 'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 }, 'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 }, 'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 }, 'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 }, 'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 }, 'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 }, 'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 }, 'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 }, 'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 }, 'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
     'Washington Commanders': { lat: 38.90, lon: -76.86 }
@@ -70,7 +67,6 @@ const FUTURES_PICKS_DB = {
 };
 const dataCache = new Map();
 
-// --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
     const parts = rec.split('-');
@@ -82,13 +78,11 @@ const parseRecord = (rec) => {
 };
 const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
 
-// --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
-// --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -261,7 +255,6 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, factors, weather, homeValue, awayValue };
 }
 
-// --- API ENDPOINTS (prefixed with /api) ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
@@ -355,7 +348,7 @@ app.post('/api/ai-analysis', async (req, res) => {
             - Final Verdict: A confident, one or two-sentence summary.
         `;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         
@@ -371,7 +364,6 @@ app.post('/api/ai-analysis', async (req, res) => {
     }
 });
 
-// This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
