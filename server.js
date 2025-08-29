@@ -1,6 +1,7 @@
 // FINAL COMPLETE VERSION
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const axios = require('axios');
 const Snoowrap = require('snoowrap');
@@ -8,8 +9,11 @@ const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-app.use(cors({ origin: 'https://attitude-sports-bets.web.app' }));
+app.use(cors());
 app.use(express.json());
+
+// --- SERVE THE FRONTEND STATIC FILES ---
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -257,8 +261,8 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, factors, weather, homeValue, awayValue };
 }
 
-// --- API ENDPOINTS ---
-app.get('/predictions', async (req, res) => {
+// --- API ENDPOINTS (prefixed with /api) ---
+app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
@@ -300,7 +304,7 @@ app.get('/predictions', async (req, res) => {
     }
 });
 
-app.get('/special-picks', async (req, res) => {
+app.get('/api/special-picks', async (req, res) => {
     try {
         res.json({ pickOfTheDay: null, parlay: null });
     } catch (error) {
@@ -309,7 +313,7 @@ app.get('/special-picks', async (req, res) => {
     }
 });
 
-app.get('/records', async (req, res) => {
+app.get('/api/records', async (req, res) => {
     try {
         if (!recordsCollection) { await connectToDb(); }
         const records = await recordsCollection.find({}).toArray();
@@ -324,10 +328,9 @@ app.get('/records', async (req, res) => {
     }
 });
 
-app.get('/futures', (req, res) => res.json(FUTURES_PICKS_DB));
-app.get('/', (req, res) => res.send('Attitude Sports Bets API is online.'));
+app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-app.post('/ai-analysis', async (req, res) => {
+app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) {
             throw new Error("GEMINI_API_KEY is not set.");
@@ -366,6 +369,11 @@ app.post('/ai-analysis', async (req, res) => {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
+});
+
+// This must be the last GET route to serve the frontend
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
