@@ -1,4 +1,4 @@
-// FINAL COMPLETE VERSION v6 - Updated Gemini Model
+// FINAL UPGRADED VERSION - Better AI prompt and smarter prediction engine
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -14,6 +14,7 @@ app.use(express.json());
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -43,6 +44,7 @@ async function connectToDb() {
     }
 }
 
+// --- DATA MAPS ---
 const teamLocationMap = {
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 }, 'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 }, 'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 }, 'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 }, 'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 }, 'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 }, 'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 }, 'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 }, 'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 }, 'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 }, 'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 }, 'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 }, 'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
     'Washington Commanders': { lat: 38.90, lon: -76.86 }
@@ -67,6 +69,7 @@ const FUTURES_PICKS_DB = {
 };
 const dataCache = new Map();
 
+// --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
     const parts = rec.split('-');
@@ -78,11 +81,13 @@ const parseRecord = (rec) => {
 };
 const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
 
+// --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
+// --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -111,7 +116,8 @@ function extractStandings(node, stats) {
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            stats[teamName] = { record: `${wins}-${losses}`, streak };
+            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || 'N/A';
+            stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
         }
     }
     if (node.children) {
@@ -212,17 +218,17 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 }
 
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, injuries } = context;
+    const { teamStats, weather, injuries, h2h } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
-    const homeStats = teamStats[home_team] || { record: 'N/A', streak: 'N/A' };
-    const awayStats = teamStats[away_team] || { record: 'N/A', streak: 'N/A' };
+    const homeStats = teamStats[home_team] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
+    const awayStats = teamStats[away_team] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
-    const parseStreak = (s) => (s && s.substring(1) && !isNaN(s.substring(1)) ? (s.startsWith('W') ? parseInt(s.substring(1)) : -parseInt(s.substring(1))) : 0);
-    factors['Streak'] = { value: (parseStreak(homeStats.streak) - parseStreak(awayStats.streak)) * (weights.momentum / 5), homeStat: homeStats.streak, awayStat: awayStats.streak };
+    factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
+    factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
     const homeInjuries = injuries[home_team]?.length || 0;
     const awayInjuries = injuries[away_team]?.length || 0;
@@ -267,12 +273,21 @@ app.get('/api/predictions', async (req, res) => {
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
         
         const injuries = {};
+        const h2hRecords = {};
         if (espnDataResponse?.events) {
             for (const event of espnDataResponse.events) {
-                if (event.competitions && event.competitions[0] && event.competitions[0].competitors) {
-                    for (const competitor of event.competitions[0].competitors) {
-                        injuries[competitor.team.displayName] = competitor.team.injuries || [];
-                    }
+                const competition = event.competitions?.[0];
+                if (!competition) continue;
+                for (const competitor of competition.competitors) {
+                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
+                }
+                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
+                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
+                if (competition.series && homeTeam && awayTeam) {
+                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
+                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
+                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
+                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
                 }
             }
         }
@@ -280,7 +295,9 @@ app.get('/api/predictions', async (req, res) => {
         const predictions = [];
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
-            const context = { teamStats, weather, injuries };
+            const gameId = `${game.away_team}@${game.home_team}`;
+            const h2h = h2hRecords[gameId] || { home: 'N/A', away: 'N/A' };
+            const context = { teamStats, weather, injuries, h2h };
             const predictionData = await runPredictionEngine(game, sport, context);
             const espnEvent = espnDataResponse?.events?.find(e => {
                 if (!e.name) return false;
@@ -333,19 +350,21 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { winner, factors } = prediction;
         const homeRecord = factors['Record']?.homeStat || 'N/A';
         const awayRecord = factors['Record']?.awayStat || 'N/A';
+        const homeStreak = factors['Recent Form (L10)']?.homeStat || 'N/A';
+        const awayStreak = factors['Recent Form (L10)']?.awayStat || 'N/A';
         
         const prompt = `
-            Act as a concise sports betting analyst. Provide a brief, insightful analysis for the following MLB game.
-            Format your response in simple HTML using only <h4> for headings and <p> for paragraphs. Do not use markdown like \`\`\`html.
+            Act as a sports betting analyst. Create an HTML analysis for the following MLB game.
+            Use only <h4>, <p>, <ul>, <li>, and <strong> tags.
 
-            Game: ${away_team} (${awayRecord}) @ ${home_team} (${homeRecord})
+            Game: ${away_team} (${awayRecord}, ${awayStreak} L10) @ ${home_team} (${homeRecord}, ${homeStreak} L10)
             Our Algorithm's Prediction: ${winner}
-            
-            Based on this, provide the following sections:
-            - Key Narrative: A one-paragraph story of the matchup.
-            - Bull Case for ${winner}: One paragraph explaining why our prediction is solid.
-            - Bear Case for ${winner}: One paragraph explaining the risks or what could go wrong with the prediction.
-            - Final Verdict: A confident, one or two-sentence summary.
+
+            Generate the following HTML sections:
+            1. A <h4> titled "Key Narrative" followed by a <p> summarizing the matchup.
+            2. A <h4> titled "Bull Case for ${winner}" followed by a <ul> with two to three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
+            3. A <h4> titled "Bear Case for ${winner}" followed by a <ul> with two to three <li> bullet points explaining the risks. Make key stats bold with <strong>.
+            4. A <h4> titled "Final Verdict" followed by a single, confident <p> paragraph summarizing your recommendation.
         `;
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
