@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Correctly serve static files from the root directory
+// Correctly serve static files from the parent directory (project root)
 app.use(express.static(path.join(__dirname, '..')));
 
 // --- API & DATA CONFIG ---
