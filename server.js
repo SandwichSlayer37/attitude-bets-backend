@@ -1,4 +1,4 @@
-// FINAL VERSION - No Placeholders, API-driven Stats & Injuries
+// FINAL VERSION v3 - Uses correct ESPN Standings API for stats
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -65,11 +65,11 @@ const dataCache = new Map();
 
 // --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
-    if (!rec || typeof rec !== 'string') return { w: 0, l: 1 };
+    if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
     const parts = rec.split('-');
     const wins = parseInt(parts[0], 10);
     const losses = parseInt(parts[1], 10);
-    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 1 };
+    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0 };
     return { w: wins, l: losses };
 };
 const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
@@ -104,7 +104,39 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
-// NOTE: getTeamStats function is no longer needed and has been removed. Stats now come from fetchEspnData.
+// --- NEW RELIABLE FUNCTION FOR STATS ---
+async function getTeamStatsFromAPI(sportKey) {
+    return fetchData(`stats_api_${sportKey}`, async () => {
+        const sportLeagueMap = {
+            'baseball_mlb': { sport: 'baseball', league: 'mlb' },
+            'icehockey_nhl': { sport: 'hockey', league: 'nhl' },
+            'americanfootball_nfl': { sport: 'football', league: 'nfl' }
+        };
+        const map = sportLeagueMap[sportKey];
+        if (!map) return {};
+
+        try {
+            const url = `http://site.api.espn.com/apis/v2/sports/${map.sport}/${map.league}/standings`;
+            const { data } = await axios.get(url);
+            const stats = {};
+            
+            // The structure of the standings data has children (leagues/divisions)
+            for (const league of data.children) {
+                for (const team of league.standings.entries) {
+                    const teamName = team.team.displayName;
+                    const record = team.stats.find(s => s.name === 'overall')?.displayValue;
+                    const streak = team.stats.find(s => s.type === 'streak')?.displayValue;
+                    stats[teamName] = { record, streak };
+                }
+            }
+            return stats;
+        } catch (e) {
+            console.error(`Could not fetch stats from API for ${sportKey}: ${e.message}`);
+            return {}; // Return empty object on failure
+        }
+    });
+}
+
 
 async function getWeatherData(teamName) {
     const location = teamLocationMap[teamName];
@@ -123,7 +155,7 @@ async function getWeatherData(teamName) {
 }
 
 async function fetchEspnData(sportKey) {
-    return fetchData(`espn_${sportKey}`, async () => {
+    return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const sportLeagueMap = {
             'baseball_mlb': { sport: 'baseball', league: 'mlb' },
             'icehockey_nhl': { sport: 'hockey', league: 'nhl' },
@@ -185,14 +217,13 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-// MODIFIED to use real injury data instead of Math.random()
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather } = context;
+    const { teamStats, weather, injuries } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
 
-    const homeStats = teamStats[home_team] || { record: 'N/A', streak: 'N/A', injuries: 0 };
-    const awayStats = teamStats[away_team] || { record: 'N/A', streak: 'N/A', injuries: 0 };
+    const homeStats = teamStats[home_team] || { record: 'N/A', streak: 'N/A' };
+    const awayStats = teamStats[away_team] || { record: 'N/A', streak: 'N/A' };
     
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
 
@@ -204,9 +235,10 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Streak'] = { value: (parseStreak(homeStats.streak) - parseStreak(awayStats.streak)) * (weights.momentum / 5), homeStat: homeStats.streak, awayStat: awayStats.streak };
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
     
-    // --- REAL INJURY DATA ---
-    const injuryValue = (awayStats.injuries - homeStats.injuries) * (weights.injuryImpact / 5);
-    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeStats.injuries} players`, awayStat: `${awayStats.injuries} players` };
+    const homeInjuries = injuries[home_team]?.length || 0;
+    const awayInjuries = injuries[away_team]?.length || 0;
+    const injuryValue = (awayInjuries - homeInjuries) * (weights.injuryImpact / 5);
+    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries} players`, awayStat: `${awayInjuries} players` };
 
     for (const factor in factors) { 
         if (factors[factor].value && !isNaN(factors[factor].value)) {
@@ -218,8 +250,7 @@ async function runPredictionEngine(game, sportKey, context) {
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     
-    let homeValue = 'N/A';
-    let awayValue = 'N/A';
+    let homeValue = 'N/A', awayValue = 'N/A';
     
     if (homeOdds && awayOdds) {
         const homeImpliedProb = (1 / homeOdds) * 100;
@@ -241,41 +272,36 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, factors, weather, homeValue, awayValue };
 }
 
-
 // --- API ENDPOINTS ---
-// MODIFIED to use ESPN for all stats and injuries
 app.get('/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse] = await Promise.all([ getOdds(sport), fetchEspnData(sport) ]);
+        // MODIFIED: Now fetches from the new, reliable stats API
+        const [games, espnDataResponse, teamStats] = await Promise.all([ 
+            getOdds(sport), 
+            fetchEspnData(sport),
+            getTeamStatsFromAPI(sport) // The new function call
+        ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
         
-        // --- NEW: Build a stats object directly from ESPN data ---
-        const teamStats = {};
+        const injuries = {};
         if (espnDataResponse?.events) {
             for (const event of espnDataResponse.events) {
                 for (const competitor of event.competitions[0].competitors) {
-                    const teamName = competitor.team.displayName;
-                    const record = competitor.records?.find(r => r.name === 'overall')?.summary;
-                    const streak = competitor.records?.find(r => r.type === 'streak')?.summary;
-                    const injuries = competitor.team.injuries?.length || 0;
-                    if (teamName) {
-                        teamStats[teamName] = { record, streak, injuries };
-                    }
+                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
                 }
             }
         }
-
+        
         const predictions = [];
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
-            const context = { teamStats, weather };
+            const context = { teamStats, weather, injuries };
             const predictionData = await runPredictionEngine(game, sport, context);
             
-            // Find the full ESPN data for this game to pass to frontend
             const espnEvent = espnDataResponse?.events?.find(e => 
-                e.name.includes(game.home_team) && e.name.includes(game.away_team)
+                e.name.includes(espnTeamAbbreviations[game.home_team]) && e.name.includes(espnTeamAbbreviations[game.away_team])
             );
 
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
@@ -291,21 +317,12 @@ app.get('/predictions', async (req, res) => {
 app.get('/special-picks', async (req, res) => {
     // This endpoint remains simplified; full implementation would require more logic
     try {
-        const sports = ['baseball_mlb']; // Simplified to one sport for stability
-        let allGames = [];
-        for (const sport of sports) {
-            const games = await getOdds(sport);
-            if (games?.length > 0) {
-                allGames.push(...games.map(g => ({ ...g, sportKey: sport })));
-            }
-        }
         res.json({ pickOfTheDay: null, parlay: null }); // Return empty picks for now
     } catch (error) {
         console.error("Special Picks Error:", error);
         res.status(500).json({ error: 'Failed to generate special picks.' });
     }
 });
-
 
 app.get('/records', async (req, res) => {
     try {
