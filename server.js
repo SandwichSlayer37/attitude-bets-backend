@@ -302,7 +302,6 @@ app.get('/predictions', async (req, res) => {
 
 app.get('/special-picks', async (req, res) => {
     try {
-        // This is a placeholder; a real implementation would be more complex
         res.json({ pickOfTheDay: null, parlay: null });
     } catch (error) {
         console.error("Special Picks Error:", error);
@@ -338,25 +337,31 @@ app.post('/ai-analysis', async (req, res) => {
         const { winner, factors } = prediction;
         const homeRecord = factors['Record']?.homeStat || 'N/A';
         const awayRecord = factors['Record']?.awayStat || 'N/A';
+        
         const prompt = `
             Act as a concise sports betting analyst. Provide a brief, insightful analysis for the following MLB game.
-            Format your response in simple HTML using only <h4> and <p> tags. Do not use markdown like \`\`\`html.
+            Format your response in simple HTML using only <h4> for headings and <p> for paragraphs. Do not use markdown like \`\`\`html.
 
             Game: ${away_team} (${awayRecord}) @ ${home_team} (${homeRecord})
-            Our Prediction: ${winner}
+            Our Algorithm's Prediction: ${winner}
             
             Based on this, provide the following sections:
             - Key Narrative: A one-paragraph story of the matchup.
             - Bull Case for ${winner}: One paragraph explaining why our prediction is solid.
             - Bear Case for ${winner}: One paragraph explaining the risks or what could go wrong with the prediction.
-            - Verdict: A confident, one or two-sentence summary.
+            - Final Verdict: A confident, one or two-sentence summary.
         `;
+
         const model = genAI.getGenerativeModel({ model: "gemini-pro" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
+        
         let analysisHtml = response.text();
-        analysisHtml = analysisHtml.replace(/```html/g, '').replace(/```/g, ''); // Clean up potential markdown
+        
+        analysisHtml = analysisHtml.replace(/```html/g, '').replace(/```/g, '');
+
         res.json({ analysisHtml });
+
     } catch (error) {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
