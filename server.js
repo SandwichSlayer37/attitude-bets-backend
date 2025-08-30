@@ -29,6 +29,7 @@ const r = new Snoowrap({
 
 let db;
 let recordsCollection;
+let predictionsCollection; // --- NEW: Collection for storing individual predictions
 async function connectToDb() {
     try {
         if (db) return db;
@@ -36,6 +37,7 @@ async function connectToDb() {
         await client.connect();
         db = client.db('attitudebets');
         recordsCollection = db.collection('records');
+        predictionsCollection = db.collection('predictions'); // --- NEW: Initialize predictions collection
         console.log('Connected to MongoDB');
         return db;
     } catch (e) {
@@ -54,7 +56,6 @@ const teamAliasMap = {
     'Washington Commanders': ['Commanders']
 };
 
-// --- NEW: Universal map to resolve team name inconsistencies between APIs ---
 const canonicalTeamNameMap = {};
 Object.keys(teamAliasMap).forEach(canonicalName => {
     const lowerCanonical = canonicalName.toLowerCase();
@@ -133,7 +134,6 @@ function extractStandings(node, stats) {
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            // --- FIX: Default to '0-0' if vsLast10 is missing ---
             const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
             stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
         }
@@ -240,7 +240,6 @@ async function runPredictionEngine(game, sportKey, context) {
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
     
-    // --- UPDATED: Use canonical map to find correct stats ---
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
     
@@ -321,10 +320,40 @@ app.get('/api/predictions', async (req, res) => {
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
-            // --- UPDATED: Use a '0-0' fallback for H2H if series data isn't available ---
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const context = { teamStats, weather, injuries, h2h };
             const predictionData = await runPredictionEngine(game, sport, context);
+
+            // --- NEW: Save prediction to the database ---
+            if (predictionData && predictionData.winner && predictionsCollection) {
+                try {
+                    const winnerOdds = game.bookmakers?.[0]?.markets
+                        ?.find(m => m.key === 'h2h')?.outcomes
+                        ?.find(o => o.name === predictionData.winner)?.price;
+
+                    const predictionRecord = {
+                        gameId: game.id,
+                        sportKey: sport,
+                        predictedWinner: predictionData.winner,
+                        homeTeam: game.home_team,
+                        awayTeam: game.away_team,
+                        gameDate: game.commence_time,
+                        odds: winnerOdds || null,
+                        status: 'pending', // Will be updated to 'win' or 'loss' later
+                        createdAt: new Date()
+                    };
+                    
+                    await predictionsCollection.updateOne(
+                        { gameId: game.id },
+                        { $set: predictionRecord },
+                        { upsert: true }
+                    );
+                } catch (dbError) {
+                    console.error("Failed to save prediction to DB:", dbError);
+                }
+            }
+            // --- End of new logic ---
+
             const espnEvent = espnDataResponse?.events?.find(e => {
                 if (!e.name) return false;
                 const homeAbbr = espnTeamAbbreviations[game.home_team];
