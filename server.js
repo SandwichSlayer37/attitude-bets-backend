@@ -340,7 +340,7 @@ app.get('/api/records', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// --- THIS IS THE UPDATED AI ENDPOINT ---
+// --- THIS IS THE UPDATED AI ENDPOINT WITH STYLING & DEEPER INSIGHTS ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) {
@@ -389,6 +389,7 @@ app.post('/api/ai-analysis', async (req, res) => {
     }
 });
 
+// This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
