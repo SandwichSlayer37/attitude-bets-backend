@@ -133,7 +133,8 @@ function extractStandings(node, stats) {
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || 'N/A';
+            // --- FIX: Default to '0-0' if vsLast10 is missing ---
+            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
             stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
         }
     }
