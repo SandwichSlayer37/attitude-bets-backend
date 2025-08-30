@@ -1,4 +1,4 @@
-// FINAL WORKING VERSION - Corrected File Paths
+// FINAL UPGRADED VERSION - Better AI prompt and smarter prediction engine
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -12,7 +12,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- SERVE THE FRONTEND STATIC FILES ---
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- API & DATA CONFIG ---
@@ -45,15 +44,32 @@ async function connectToDb() {
     }
 }
 
-// --- DATA MAPS & HELPERS ---
+// --- DATA MAPS ---
 const teamLocationMap = {
     'Arizona Diamondbacks': { lat: 33.44, lon: -112.06 }, 'Atlanta Braves': { lat: 33.89, lon: -84.46 }, 'Baltimore Orioles': { lat: 39.28, lon: -76.62 }, 'Boston Red Sox': { lat: 42.34, lon: -71.09 }, 'Chicago Cubs': { lat: 41.94, lon: -87.65 }, 'Chicago White Sox': { lat: 41.83, lon: -87.63 }, 'Cincinnati Reds': { lat: 39.09, lon: -84.50 }, 'Cleveland Guardians': { lat: 41.49, lon: -81.68 }, 'Colorado Rockies': { lat: 39.75, lon: -104.99 }, 'Detroit Tigers': { lat: 42.33, lon: -83.05 }, 'Houston Astros': { lat: 29.75, lon: -95.35 }, 'Kansas City Royals': { lat: 39.05, lon: -94.48 }, 'Los Angeles Angels': { lat: 33.80, lon: -117.88 }, 'Los Angeles Dodgers': { lat: 34.07, lon: -118.24 }, 'Miami Marlins': { lat: 25.77, lon: -80.22 }, 'Milwaukee Brewers': { lat: 43.02, lon: -87.97 }, 'Minnesota Twins': { lat: 44.98, lon: -93.27 }, 'New York Mets': { lat: 40.75, lon: -73.84 }, 'New York Yankees': { lat: 40.82, lon: -73.92 }, 'Oakland Athletics': { lat: 37.75, lon: -122.20 }, 'Philadelphia Phillies': { lat: 39.90, lon: -75.16 }, 'Pittsburgh Pirates': { lat: 40.44, lon: -80.00 }, 'San Diego Padres': { lat: 32.70, lon: -117.15 }, 'San Francisco Giants': { lat: 37.77, lon: -122.38 }, 'Seattle Mariners': { lat: 47.59, lon: -122.33 }, 'St. Louis Cardinals': { lat: 38.62, lon: -90.19 }, 'Tampa Bay Rays': { lat: 27.76, lon: -82.65 }, 'Texas Rangers': { lat: 32.75, lon: -97.08 }, 'Toronto Blue Jays': { lat: 43.64, lon: -79.38 }, 'Washington Nationals': { lat: 38.87, lon: -77.00 },
     'Washington Commanders': { lat: 38.90, lon: -76.86 }
 };
 const teamAliasMap = {
-    'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics'], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
+    'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
     'Washington Commanders': ['Commanders']
 };
+
+// --- NEW: Universal map to resolve team name inconsistencies between APIs ---
+const canonicalTeamNameMap = {};
+Object.keys(teamAliasMap).forEach(canonicalName => {
+    const lowerCanonical = canonicalName.toLowerCase();
+    if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
+    teamAliasMap[canonicalName].forEach(alias => {
+        const lowerAlias = alias.toLowerCase();
+        if (!canonicalTeamNameMap[lowerAlias]) canonicalTeamNameMap[lowerAlias] = canonicalName;
+    });
+});
+Object.keys(teamLocationMap).forEach(canonicalName => {
+    const lowerCanonical = canonicalName.toLowerCase();
+    if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
+});
+
+
 const flairMap = {
     'baseball_mlb': 'MLB Bets and Picks',
     'icehockey_nhl': 'NHL Bets and Picks',
@@ -70,6 +86,7 @@ const FUTURES_PICKS_DB = {
 };
 const dataCache = new Map();
 
+// --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
     const parts = rec.split('-');
@@ -81,11 +98,13 @@ const parseRecord = (rec) => {
 };
 const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
 
+// --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
+// --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -114,7 +133,7 @@ function extractStandings(node, stats) {
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            const lastTen = team.stats.find(s => s.abbreviation === 'L10')?.displayValue || 'N/A';
+            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || 'N/A';
             stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
         }
     }
@@ -219,8 +238,14 @@ async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, weather, injuries, h2h } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
-    const homeStats = teamStats[home_team] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
-    const awayStats = teamStats[away_team] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
+    
+    // --- UPDATED: Use canonical map to find correct stats ---
+    const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
+    const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
+    
+    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
+    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
+
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
@@ -259,7 +284,6 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, factors, weather, homeValue, awayValue };
 }
 
-// --- API ENDPOINTS (prefixed with /api) ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
@@ -271,40 +295,41 @@ app.get('/api/predictions', async (req, res) => {
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
         
+        const injuries = {};
+        const h2hRecords = {};
+        if (espnDataResponse?.events) {
+            for (const event of espnDataResponse.events) {
+                const competition = event.competitions?.[0];
+                if (!competition) continue;
+                for (const competitor of competition.competitors) {
+                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
+                    injuries[canonicalName] = competitor.team.injuries || [];
+                }
+                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
+                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
+                if (competition.series && homeTeam && awayTeam) {
+                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
+                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
+                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
+                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
+                }
+            }
+        }
+        
         const predictions = [];
         for (const game of games) {
+            const weather = await getWeatherData(game.home_team);
+            const gameId = `${game.away_team}@${game.home_team}`;
+            // --- UPDATED: Use a '0-0' fallback for H2H if series data isn't available ---
+            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
+            const context = { teamStats, weather, injuries, h2h };
+            const predictionData = await runPredictionEngine(game, sport, context);
             const espnEvent = espnDataResponse?.events?.find(e => {
                 if (!e.name) return false;
                 const homeAbbr = espnTeamAbbreviations[game.home_team];
                 const awayAbbr = espnTeamAbbreviations[game.away_team];
                 return homeAbbr && awayAbbr && e.name.includes(homeAbbr) && e.name.includes(awayAbbr);
             });
-
-            const competition = espnEvent?.competitions?.[0];
-            const injuries = {};
-            const h2h = { home: 'N/A', away: 'N/A' };
-
-            if (competition) {
-                for (const competitor of competition.competitors) {
-                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
-                }
-
-                if (competition.series) {
-                    const homeTeamESPN = competition.competitors.find(c => c.homeAway === 'home');
-                    const awayTeamESPN = competition.competitors.find(c => c.homeAway === 'away');
-                    if (homeTeamESPN && awayTeamESPN) {
-                        const homeWins = competition.series.competitors.find(c => c.id === homeTeamESPN.id)?.wins || 0;
-                        const awayWins = competition.series.competitors.find(c => c.id === awayTeamESPN.id)?.wins || 0;
-                        h2h.home = `${homeWins}-${awayWins}`;
-                        h2h.away = `${awayWins}-${homeWins}`;
-                    }
-                }
-            }
-            
-            const weather = await getWeatherData(game.home_team);
-            const context = { teamStats, weather, injuries, h2h };
-            const predictionData = await runPredictionEngine(game, sport, context);
-            
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
@@ -340,6 +365,7 @@ app.get('/api/records', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
+// --- THIS IS THE UPDATED AI ENDPOINT WITH STYLING & DEEPER INSIGHTS ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) {
@@ -390,7 +416,7 @@ app.post('/api/ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
