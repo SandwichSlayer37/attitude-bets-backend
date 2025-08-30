@@ -340,6 +340,7 @@ app.get('/api/records', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
+// --- THIS IS THE UPDATED AI ENDPOINT ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) {
@@ -350,21 +351,26 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { winner, factors } = prediction;
         const homeRecord = factors['Record']?.homeStat || 'N/A';
         const awayRecord = factors['Record']?.awayStat || 'N/A';
-        const homeStreak = factors['Recent Form (L10)']?.homeStat || 'N/A';
-        const awayStreak = factors['Recent Form (L10)']?.awayStat || 'N/A';
+        const homeL10 = factors['Recent Form (L10)']?.homeStat || 'N/A';
+        const awayL10 = factors['Recent Form (L10)']?.awayStat || 'N/A';
         
         const prompt = `
-            Act as a sports betting analyst. Create an HTML analysis for the following MLB game.
-            Use only <h4>, <p>, <ul>, <li>, and <strong> tags.
+            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following MLB game.
+            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
 
-            Game: ${away_team} (${awayRecord}, ${awayStreak} L10) @ ${home_team} (${homeRecord}, ${homeStreak} L10)
+            Game: ${away_team} (${awayRecord}, ${awayL10} L10) @ ${home_team} (${homeRecord}, ${homeL10} L10)
             Our Algorithm's Prediction: ${winner}
 
-            Generate the following HTML sections:
-            1. A <h4> titled "Key Narrative" followed by a <p> summarizing the matchup.
-            2. A <h4> titled "Bull Case for ${winner}" followed by a <ul> with two to three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
-            3. A <h4> titled "Bear Case for ${winner}" followed by a <ul> with two to three <li> bullet points explaining the risks. Make key stats bold with <strong>.
-            4. A <h4> titled "Final Verdict" followed by a single, confident <p> paragraph summarizing your recommendation.
+            Generate the following HTML structure:
+            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup.
+            2. An <hr> with class "border-gray-700 my-4".
+            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
+            4. An <hr> with class "border-gray-700 my-4".
+            5. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Bear Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks. Make key stats bold with <strong>.
+            6. An <hr> with class "border-gray-700 my-4".
+            7. A <h4> with class "text-xl font-bold text-gray-400 mb-2" titled "Factors Not Considered". Follow it with a <p> with class "text-gray-300 mb-4 text-sm" that speculates on one or two qualitative factors (e.g., player morale, specific pitching matchups, travel fatigue) that our quantitative algorithm might miss.
+            8. An <hr> with class "border-gray-700 my-4".
+            9. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation.
         `;
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
