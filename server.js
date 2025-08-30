@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Better AI prompt and smarter prediction engine
+// FINAL UPGRADED VERSION - Robust H2H and Last 10 Stats
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -113,11 +113,11 @@ function extractStandings(node, stats) {
     if (node.standings && node.standings.entries) {
         for (const team of node.standings.entries) {
             const teamName = team.team.displayName;
-            const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
-            const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
-            const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || 'N/A';
-            stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
+            const record = team.stats.find(s => s.name === 'overall')?.displayValue || '0-0';
+            const streak = team.stats.find(s => s.type === 'streak')?.displayValue || 'N/A';
+            // --- FIX: Use a more reliable key for the Last 10 stat ---
+            const lastTen = team.stats.find(s => s.abbreviation === 'L10')?.displayValue || 'N/A';
+            stats[teamName] = { record, streak, lastTen };
         }
     }
     if (node.children) {
@@ -261,6 +261,7 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, factors, weather, homeValue, awayValue };
 }
 
+// --- API ENDPOINTS (prefixed with /api) ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
@@ -272,39 +273,40 @@ app.get('/api/predictions', async (req, res) => {
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
         
-        const injuries = {};
-        const h2hRecords = {};
-        if (espnDataResponse?.events) {
-            for (const event of espnDataResponse.events) {
-                const competition = event.competitions?.[0];
-                if (!competition) continue;
-                for (const competitor of competition.competitors) {
-                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
-                }
-                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-                if (competition.series && homeTeam && awayTeam) {
-                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            }
-        }
-        
         const predictions = [];
         for (const game of games) {
-            const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
-            const h2h = h2hRecords[gameId] || { home: 'N/A', away: 'N/A' };
-            const context = { teamStats, weather, injuries, h2h };
-            const predictionData = await runPredictionEngine(game, sport, context);
             const espnEvent = espnDataResponse?.events?.find(e => {
                 if (!e.name) return false;
                 const homeAbbr = espnTeamAbbreviations[game.home_team];
                 const awayAbbr = espnTeamAbbreviations[game.away_team];
                 return homeAbbr && awayAbbr && e.name.includes(homeAbbr) && e.name.includes(awayAbbr);
             });
+
+            const competition = espnEvent?.competitions?.[0];
+            const injuries = {};
+            const h2h = { home: 'N/A', away: 'N/A' };
+
+            if (competition) {
+                for (const competitor of competition.competitors) {
+                    injuries[competitor.team.displayName] = competitor.team.injuries || [];
+                }
+
+                if (competition.series) {
+                    const homeTeamESPN = competition.competitors.find(c => c.homeAway === 'home');
+                    const awayTeamESPN = competition.competitors.find(c => c.homeAway === 'away');
+                    if (homeTeamESPN && awayTeamESPN) {
+                        const homeWins = competition.series.competitors.find(c => c.id === homeTeamESPN.id)?.wins || 0;
+                        const awayWins = competition.series.competitors.find(c => c.id === awayTeamESPN.id)?.wins || 0;
+                        h2h.home = `${homeWins}-${awayWins}`;
+                        h2h.away = `${awayWins}-${homeWins}`;
+                    }
+                }
+            }
+            
+            const weather = await getWeatherData(game.home_team);
+            const context = { teamStats, weather, injuries, h2h };
+            const predictionData = await runPredictionEngine(game, sport, context);
+            
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
@@ -340,7 +342,6 @@ app.get('/api/records', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// --- THIS IS THE UPDATED AI ENDPOINT WITH STYLING & DEEPER INSIGHTS ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) {
@@ -389,7 +390,6 @@ app.post('/api/ai-analysis', async (req, res) => {
     }
 });
 
-// This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
