@@ -423,16 +423,22 @@ app.get('/api/special-picks', async (req, res) => {
         
         const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
         const potdValueThreshold = isPeakSeason ? 5 : 2.5;
-        const parlayConfidenceThreshold = isPeakSeason ? 7.5 : 5;
+        // --- FIX: Raised parlay threshold to ensure higher quality picks ---
+        const parlayConfidenceThreshold = 7.5; // Always require "Good Chance" or better for a parlay leg
         
-        // --- Filter for UPCOMING games only ---
-        const upcomingPredictions = allPredictions.filter(p => new Date(p.game.commence_time) > new Date());
+        // --- FIX: Filter for games in the next 24 hours for better timezone handling ---
+        const now = new Date();
+        const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+        const upcomingTodayPredictions = allPredictions.filter(p => {
+            const gameDate = new Date(p.game.commence_time);
+            return gameDate > now && gameDate < cutoff;
+        });
 
         let pickOfTheDay = null;
         let parlay = null;
 
         // --- Pick of the Day Logic ---
-        const highValuePicks = upcomingPredictions.filter(p => {
+        const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
@@ -448,7 +454,7 @@ app.get('/api/special-picks', async (req, res) => {
         }
         
         // --- Parlay of the Day Logic ---
-        const goodPicks = upcomingPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
+        const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) - 
                              (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
         
