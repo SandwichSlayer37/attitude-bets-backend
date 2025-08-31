@@ -179,9 +179,12 @@ async function getTeamStatsFromAPI(sportKey) {
 }
 
 async function getWeatherData(teamName) {
+    // --- FIX: Use the canonical name map to find the correct team location ---
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
+    
     if (!location) return null;
+    
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
