@@ -572,7 +572,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().replace(/```html/g, '').replace(/```g, '');
+        // --- FIX: Use a safer method to remove markdown that avoids Regex errors ---
+        let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Analysis Error:", error);
@@ -610,7 +611,8 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().replace(/```html/g, '').replace(/```g, '');
+        // --- FIX: Use a safer method to remove markdown that avoids Regex errors ---
+        let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -626,7 +628,7 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
