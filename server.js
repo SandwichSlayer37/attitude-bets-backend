@@ -18,6 +18,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
+const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password"; // For securing the reconcile endpoint
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const r = new Snoowrap({
@@ -178,12 +179,9 @@ async function getTeamStatsFromAPI(sportKey) {
 }
 
 async function getWeatherData(teamName) {
-    // --- FIX: Use the canonical name map to find the correct team location ---
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
-    
     if (!location) return null;
-    
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
@@ -195,6 +193,7 @@ async function getWeatherData(teamName) {
         }
     });
 }
+
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
@@ -211,9 +210,7 @@ async function fetchEspnData(sportKey) {
 }
 
 async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
-    // --- FIX: Use a more stable caching key to reduce API calls ---
     const key = `reddit_${[homeTeam, awayTeam].sort().join('_')}_${sportKey}`;
-    
     return fetchData(key, async () => {
         try {
             const createSearchQuery = (teamName) => `(${ (teamAliasMap[teamName] || [teamName.split(' ').pop()]).map(a => `"${a}"`).join(' OR ')})`;
@@ -241,10 +238,9 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
             return { home: 1 + (homeScore / totalScore) * 9, away: 1 + (awayScore / totalScore) * 9 };
         } catch (e) {
             console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
-            // Return neutral sentiment on error to avoid breaking predictions
             return { home: 5, away: 5 };
         }
-    }, 1800000); // Cache Reddit results for 30 minutes (1800000 ms)
+    }, 1800000);
 }
 
 async function runPredictionEngine(game, sportKey, context) {
@@ -541,6 +537,81 @@ app.get('/api/records', async (req, res) => {
     }
 });
 
+// --- NEW: Endpoint to reconcile game results ---
+app.get('/api/reconcile-results', async (req, res) => {
+    // --- Basic password protection ---
+    const { password } = req.query;
+    if (password !== RECONCILE_PASSWORD) {
+        return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    try {
+        if (!predictionsCollection || !recordsCollection) await connectToDb();
+
+        const pendingPredictions = await predictionsCollection.find({ status: 'pending' }).toArray();
+        if (pendingPredictions.length === 0) {
+            return res.json({ message: "No pending predictions to reconcile." });
+        }
+
+        let reconciledCount = 0;
+        const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
+
+        for (const sportKey of sportKeys) {
+            const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
+            if (!map) continue;
+
+            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
+            const { data: espnData } = await axios.get(url);
+
+            if (!espnData.events) continue;
+
+            for (const prediction of pendingPredictions.filter(p => p.sportKey === sportKey)) {
+                const gameEvent = espnData.events.find(e => {
+                    const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
+                    const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
+                    const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
+                    const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
+                    if (!eventHome || !eventAway) return false;
+                    const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
+                    const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
+                    return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
+                });
+
+                if (gameEvent && gameEvent.status.type.completed) {
+                    const competition = gameEvent.competitions[0];
+                    const winnerData = competition.competitors.find(c => c.winner === true);
+                    if (!winnerData) continue;
+
+                    const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
+                    const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
+
+                    const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
+                    let profit = 0;
+                    if (result === 'win') {
+                        profit = (10 * prediction.odds) - 10;
+                    } else {
+                        profit = -10;
+                    }
+
+                    await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
+                    
+                    const updateField = result === 'win' ? { wins: 1, totalProfit: profit } : { losses: 1, totalProfit: profit };
+                    await recordsCollection.updateOne({ sport: sportKey }, { $inc: updateField }, { upsert: true });
+                    reconciledCount++;
+                }
+            }
+        }
+        res.json({ message: `Reconciliation complete. Processed ${reconciledCount} predictions.` });
+    } catch (error) {
+        console.error("Reconciliation Error:", error);
+        res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
+    }
+});
+
+
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
 app.post('/api/ai-analysis', async (req, res) => {
@@ -578,7 +649,6 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        // --- FIX: Use a safer method to remove markdown that avoids Regex errors ---
         let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
     } catch (error) {
@@ -617,7 +687,6 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        // --- FIX: Use a safer method to remove markdown that avoids Regex errors ---
         let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
 
