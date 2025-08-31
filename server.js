@@ -1,69 +1,49 @@
-app.get('/api/special-picks', async (req, res) => {
+app.post('/api/ai-analysis', async (req, res) => {
     try {
-        const { allPredictions, gameCounts } = await getAllDailyPredictions();
-        
-        // --- DYNAMIC THRESHOLD LOGIC ---
-        let sportsInSeason = 0;
-        for(const sport of SPORTS_DB) {
-            if(gameCounts[sport.key] >= sport.gameCountThreshold) {
-                sportsInSeason++;
-            }
+        if (!process.env.GEMINI_API_KEY) {
+            throw new Error("GEMINI_API_KEY is not set.");
         }
-        const isPeakSeason = sportsInSeason >= 2;
+        const { game, prediction } = req.body;
+        const { home_team, away_team } = game;
+        const { winner, factors } = prediction;
+        const homeRecord = factors['Record']?.homeStat || 'N/A';
+        const awayRecord = factors['Record']?.awayStat || 'N/A';
+        const homeL10 = factors['Recent Form (L10)']?.homeStat || 'N/A';
+        const awayL10 = factors['Recent Form (L10)']?.awayStat || 'N/A';
+        const homeSentiment = factors['Social Sentiment']?.homeStat || 'N/A';
+        const awaySentiment = factors['Social Sentiment']?.awayStat || 'N/A';
         
-        const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
-        const potdValueThreshold = isPeakSeason ? 5 : 2.5;
-        const parlayConfidenceThreshold = isPeakSeason ? 7.5 : 5;
+        const prompt = `
+            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game.
+            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
+
+            Game: ${away_team} (${awayRecord}, ${awayL10} L10) @ ${home_team} (${homeRecord}, ${homeL10} L10)
+            Our Algorithm's Prediction: ${winner}
+
+            Generate the following HTML structure:
+            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup.
+            2. An <hr> with class "border-gray-700 my-4".
+            3. A <h4> with class "text-xl font-bold text-indigo-400 mb-2" titled "Social Sentiment Analysis". Follow it with a <p> with class "text-gray-300 mb-4". In this paragraph, explain that this score (Home: ${homeSentiment}, Away: ${awaySentiment}) is derived from recent discussions on sports betting forums like Reddit's r/sportsbook. Briefly interpret the scores - for example, does the higher score suggest the public is heavily favoring that team, or are the scores close, indicating a divided opinion?
+            4. An <hr> with class "border-gray-700 my-4".
+            5. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
+            6. An <hr> with class "border-gray-700 my-4".
+            7. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Bear Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks. Make key stats bold with <strong>.
+            8. An <hr> with class "border-gray-700 my-4".
+            9. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation.
+        `;
+
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
         
-        // --- NEW: Filter for UPCOMING games scheduled for TODAY only ---
-        const todayString = new Date().toDateString();
-        const upcomingTodayPredictions = allPredictions.filter(p => {
-            const gameDate = new Date(p.game.commence_time);
-            return gameDate.toDateString() === todayString && gameDate > new Date();
-        });
-
-        let pickOfTheDay = null;
-        let parlay = null;
-
-        // --- Pick of the Day Logic ---
-        const highValuePicks = upcomingTodayPredictions.filter(p => {
-            const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
-            return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
-        });
-
-        if (highValuePicks.length > 0) {
-            pickOfTheDay = highValuePicks.reduce((best, current) => {
-                const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
-                const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
-                const bestScore = best.prediction.confidence + bestValue;
-                const currentScore = current.prediction.confidence + currentValue;
-                return currentScore > bestScore ? current : best;
-            });
-        }
+        let analysisHtml = response.text();
         
-        // --- Parlay of the Day Logic ---
-        const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
-            .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) - 
-                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
-        
-        if (goodPicks.length >= 2) {
-            const leg1 = goodPicks[0];
-            const leg2 = goodPicks[1];
-            
-            const odds1 = leg1.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg1.prediction.winner)?.price || 0;
-            const odds2 = leg2.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg2.prediction.winner)?.price || 0;
+        analysisHtml = analysisHtml.replace(/```html/g, '').replace(/```/g, '');
 
-            if (odds1 && odds2) {
-                parlay = {
-                    legs: [leg1, leg2],
-                    totalOdds: (odds1 * odds2).toFixed(2)
-                };
-            }
-        }
+        res.json({ analysisHtml });
 
-        res.json({ pickOfTheDay, parlay });
     } catch (error) {
-        console.error("Special Picks Error:", error);
-        res.status(500).json({ error: 'Failed to generate special picks.' });
+        console.error("AI Analysis Error:", error);
+        res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
