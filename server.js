@@ -179,7 +179,11 @@ async function getTeamStatsFromAPI(sportKey) {
 }
 
 async function getWeatherData(teamName) {
-    // --- FIX: Use the canonical name map to find the correct team location ---
+    // --- FIX: Add safety check for incomplete game data ---
+    if (!teamName) {
+        return null;
+    }
+
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
     
