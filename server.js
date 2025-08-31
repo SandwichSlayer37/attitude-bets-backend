@@ -48,10 +48,10 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
-const SPORTS_DB = [ 
-    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
-    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
-    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 } 
+const SPORTS_DB = [
+    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 },
+    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 },
+    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 }
 ];
 
 const teamLocationMap = {
@@ -604,7 +604,7 @@ app.get('/api/reconcile-results', async (req, res) => {
 
                     const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
                     let profit = 0;
-                    if (result === 'win') {
+                    if (result === 'win' && prediction.odds) {
                         profit = (10 * prediction.odds) - 10;
                     } else {
                         profit = -10;
@@ -622,6 +622,31 @@ app.get('/api/reconcile-results', async (req, res) => {
     } catch (error) {
         console.error("Reconciliation Error:", error);
         res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
+    }
+});
+
+// --- NEW: Endpoint to fetch recent bet history ---
+app.get('/api/recent-bets', async (req, res) => {
+    const { sport } = req.query;
+    if (!sport) {
+        return res.status(400).json({ error: "Sport parameter is required." });
+    }
+
+    try {
+        if (!predictionsCollection) await connectToDb();
+        
+        const recentBets = await predictionsCollection.find({
+            sportKey: sport,
+            status: { $in: ['win', 'loss'] }
+        })
+        .sort({ gameDate: -1 })
+        .limit(20)
+        .toArray();
+
+        res.json(recentBets);
+    } catch (error) {
+        console.error("Recent Bets Error:", error);
+        res.status(500).json({ error: "Failed to fetch recent bets." });
     }
 });
 
