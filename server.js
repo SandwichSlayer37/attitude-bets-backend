@@ -538,6 +538,21 @@ app.get('/api/special-picks', async (req, res) => {
 });
 
 
+app.get('/api/records', async (req, res) => {
+    try {
+        if (!recordsCollection) { await connectToDb(); }
+        const records = await recordsCollection.find({}).toArray();
+        const recordsObj = records.reduce((obj, item) => {
+            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
+            return obj;
+        }, {});
+        res.json(recordsObj);
+    } catch (e) {
+        console.error("Failed to fetch records:", e);
+        res.status(500).json({ error: "Could not retrieve records from database." });
+    }
+});
+
 app.get('/api/reconcile-results', async (req, res) => {
     const { password } = req.query;
     if (password !== RECONCILE_PASSWORD) {
@@ -589,7 +604,6 @@ app.get('/api/reconcile-results', async (req, res) => {
 
                     const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
                     
-                    // --- FIX: Correct P/L calculation for wins with missing odds ---
                     let profit = 0;
                     if (result === 'win') {
                         if (prediction.odds) {
@@ -613,6 +627,41 @@ app.get('/api/reconcile-results', async (req, res) => {
     } catch (error) {
         console.error("Reconciliation Error:", error);
         res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
+    }
+});
+
+app.get('/api/recent-bets', async (req, res) => {
+    const { sport } = req.query;
+    if (!sport) {
+        return res.status(400).json({ error: "Sport parameter is required." });
+    }
+
+    try {
+        if (!predictionsCollection) await connectToDb();
+        
+        const recentBets = await predictionsCollection.find({
+            sportKey: sport,
+            status: { $in: ['win', 'loss'] }
+        })
+        .sort({ gameDate: -1 })
+        .limit(20)
+        .toArray();
+
+        // Add a check to find the actual winner from the ESPN data stored in each prediction, if available
+        for (const bet of recentBets) {
+            if (bet.game && bet.game.espnData && bet.game.espnData.competitions) {
+                const competition = bet.game.espnData.competitions[0];
+                const winnerData = competition.competitors.find(c => c.winner === true);
+                if(winnerData) {
+                    bet.actualWinner = winnerData.team.displayName;
+                }
+            }
+        }
+
+        res.json(recentBets);
+    } catch (error) {
+        console.error("Recent Bets Error:", error);
+        res.status(500).json({ error: "Failed to fetch recent bets." });
     }
 });
 
