@@ -178,8 +178,12 @@ async function getTeamStatsFromAPI(sportKey) {
 }
 
 async function getWeatherData(teamName) {
-    const location = teamLocationMap[teamName];
+    // --- FIX: Use the canonical name map to find the correct team location ---
+    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
+    const location = teamLocationMap[canonicalName];
+    
     if (!location) return null;
+    
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
@@ -191,7 +195,6 @@ async function getWeatherData(teamName) {
         }
     });
 }
-
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
@@ -208,7 +211,9 @@ async function fetchEspnData(sportKey) {
 }
 
 async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
-    const key = `reddit_${homeTeam}_${awayTeam}_${sportKey}`;
+    // --- FIX: Use a more stable caching key to reduce API calls ---
+    const key = `reddit_${[homeTeam, awayTeam].sort().join('_')}_${sportKey}`;
+    
     return fetchData(key, async () => {
         try {
             const createSearchQuery = (teamName) => `(${ (teamAliasMap[teamName] || [teamName.split(' ').pop()]).map(a => `"${a}"`).join(' OR ')})`;
@@ -236,9 +241,10 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
             return { home: 1 + (homeScore / totalScore) * 9, away: 1 + (awayScore / totalScore) * 9 };
         } catch (e) {
             console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
-            return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
+            // Return neutral sentiment on error to avoid breaking predictions
+            return { home: 5, away: 5 };
         }
-    }, 1800000);
+    }, 1800000); // Cache Reddit results for 30 minutes (1800000 ms)
 }
 
 async function runPredictionEngine(game, sportKey, context) {
