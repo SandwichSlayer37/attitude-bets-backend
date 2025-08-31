@@ -13,15 +13,13 @@ app.get('/api/special-picks', async (req, res) => {
         
         const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
         const potdValueThreshold = isPeakSeason ? 5 : 2.5;
-        // --- FIX: Raised parlay threshold to ensure higher quality picks ---
-        const parlayConfidenceThreshold = 7.5; // Always require "Good Chance" or better for a parlay leg
+        const parlayConfidenceThreshold = isPeakSeason ? 7.5 : 5;
         
-        // --- FIX: Filter for games in the next 24 hours for better timezone handling ---
-        const now = new Date();
-        const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+        // --- NEW: Filter for UPCOMING games scheduled for TODAY only ---
+        const todayString = new Date().toDateString();
         const upcomingTodayPredictions = allPredictions.filter(p => {
             const gameDate = new Date(p.game.commence_time);
-            return gameDate > now && gameDate < cutoff;
+            return gameDate.toDateString() === todayString && gameDate > new Date();
         });
 
         let pickOfTheDay = null;
