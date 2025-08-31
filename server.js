@@ -179,15 +179,25 @@ async function getTeamStatsFromAPI(sportKey) {
 }
 
 async function getWeatherData(teamName) {
-    // --- FIX: Add safety check for incomplete game data ---
     if (!teamName) {
+        console.log("Weather check skipped: No team name provided.");
         return null;
     }
 
+    // --- DEBUG LOGGING: See what names are being processed ---
+    console.log(`Weather requested for team: "${teamName}"`);
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
+    console.log(`Resolved to canonical name: "${canonicalName}"`);
+
     const location = teamLocationMap[canonicalName];
     
-    if (!location) return null;
+    if (!location) {
+        // --- DEBUG LOGGING: This will tell us if a location is not found ---
+        console.log(`--> Weather FAILED: Location not found for "${canonicalName}"`);
+        return null;
+    }
+    
+    console.log(`--> Weather SUCCESS: Found location for "${canonicalName}"`);
     
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
