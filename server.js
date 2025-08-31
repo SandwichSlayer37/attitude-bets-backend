@@ -424,6 +424,52 @@ app.get('/api/predictions', async (req, res) => {
                 }
             }
 
+            // --- FIX: Upgraded ESPN event matching logic for better accuracy ---
+            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+
+            const espnEvent = espnDataResponse?.events?.find(e => {
+                const competitors = e.competitions?.[0]?.competitors;
+                if (!competitors || competitors.length < 2) return false;
+                
+                const eventHomeCanonical = canonicalTeamNameMap[competitors.find(c=>c.homeAway === 'home').team.displayName.toLowerCase()];
+                const eventAwayCanonical = canonicalTeamNameMap[competitors.find(c=>c.homeAway === 'away').team.displayName.toLowerCase()];
+
+                return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
+            });
+            // --- End of fix ---
+
+            predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
+        }
+        res.json(predictions.filter(p => p && p.prediction));
+    } catch (error) {
+        console.error("Prediction Error:", error);
+        res.status(500).json({ error: "Failed to process predictions.", details: error.message });
+    }
+});
+        
+        const predictions = [];
+        for (const game of games) {
+            const weather = await getWeatherData(game.home_team);
+            const gameId = `${game.away_team}@${game.home_team}`;
+            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
+            const context = { teamStats, weather, injuries, h2h };
+            const predictionData = await runPredictionEngine(game, sport, context);
+
+            if (predictionData && predictionData.winner && predictionsCollection) {
+                try {
+                    const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
+                    const predictionRecord = {
+                        gameId: game.id, sportKey: sport, predictedWinner: predictionData.winner,
+                        homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time,
+                        odds: winnerOdds || null, status: 'pending', createdAt: new Date()
+                    };
+                    await predictionsCollection.updateOne({ gameId: game.id }, { $set: predictionRecord }, { upsert: true });
+                } catch (dbError) {
+                    console.error("Failed to save prediction to DB:", dbError);
+                }
+            }
+
             const espnEvent = espnDataResponse?.events?.find(e => e.name && e.name.includes(espnTeamAbbreviations[game.home_team]) && e.name.includes(espnTeamAbbreviations[game.away_team]));
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
         }
