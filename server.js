@@ -562,23 +562,30 @@ app.get('/api/reconcile-results', async (req, res) => {
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
 
-        const pendingPredictions = await predictionsCollection.find({ status: 'pending' }).toArray();
+        // --- FIX: Only look for predictions from before today ---
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); 
+        const pendingPredictions = await predictionsCollection.find({ 
+            status: 'pending',
+            gameDate: { $lt: today.toISOString() } 
+        }).toArray();
+
         if (pendingPredictions.length === 0) {
-            return res.json({ message: "No pending predictions to reconcile." });
+            return res.json({ message: "No pending predictions from previous days to reconcile." });
         }
 
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
         
-        // --- Process games from today that are finished ---
-        const today = new Date();
-        const formattedToday = `${today.getFullYear()}${(today.getMonth() + 1).toString().padStart(2, '0')}${today.getDate().toString().padStart(2, '0')}`;
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
 
         for (const sportKey of sportKeys) {
             const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
             if (!map) continue;
 
-            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedToday}`;
+            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
             const { data: espnData } = await axios.get(url);
 
             if (!espnData.events) continue;
@@ -608,19 +615,23 @@ app.get('/api/reconcile-results', async (req, res) => {
                     
                     let profit = 0;
                     if (result === 'win') {
-                        if (prediction.odds) {
-                           profit = (10 * prediction.odds) - 10;
-                        } else {
-                           profit = 9.10; // Default to a standard -110 odds win if not available
-                        }
+                        profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
                     } else {
                         profit = -10;
                     }
 
-                    await predictionsCollection.updateOne({ _id: new MongoClient.ObjectId(prediction._id) }, { $set: { status: result, profit: profit } });
+                    await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
                     
-                    const updateField = result === 'win' ? { wins: 1, totalProfit: profit } : { losses: 1, totalProfit: profit };
-                    await recordsCollection.updateOne({ sport: sportKey }, { $inc: updateField }, { upsert: true });
+                    // --- FIX: More robust database update logic ---
+                    const updateField = result === 'win' 
+                        ? { $inc: { wins: 1, totalProfit: profit } }
+                        : { $inc: { losses: 1, totalProfit: profit } };
+                    
+                    await recordsCollection.updateOne(
+                        { sport: sportKey },
+                        updateField,
+                        { upsert: true }
+                    );
                     reconciledCount++;
                 }
             }
