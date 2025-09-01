@@ -361,6 +361,8 @@ async function getAllDailyPredictions() {
                 if (predictionsCollection) {
                     try {
                         const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
+                        
+                        // --- FIX: Use $setOnInsert to save the odds only on the first creation ---
                         const predictionRecord = {
                             gameId: game.id,
                             sportKey: sportKey,
@@ -372,7 +374,16 @@ async function getAllDailyPredictions() {
                             status: 'pending',
                             createdAt: new Date()
                         };
-                        await predictionsCollection.updateOne({ gameId: game.id }, { $set: predictionRecord }, { upsert: true });
+
+                        await predictionsCollection.updateOne(
+                            { gameId: game.id },
+                            { 
+                                $setOnInsert: predictionRecord,
+                                $set: { predictedWinner: predictionData.winner } // Still update the winner in case the pick changes
+                            },
+                            { upsert: true }
+                        );
+
                     } catch (dbError) {
                         console.error("Failed to save prediction from getAllDailyPredictions to DB:", dbError);
                     }
