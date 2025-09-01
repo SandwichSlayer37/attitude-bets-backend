@@ -538,6 +538,21 @@ app.get('/api/special-picks', async (req, res) => {
 });
 
 
+app.get('/api/records', async (req, res) => {
+    try {
+        if (!recordsCollection) { await connectToDb(); }
+        const records = await recordsCollection.find({}).toArray();
+        const recordsObj = records.reduce((obj, item) => {
+            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
+            return obj;
+        }, {});
+        res.json(recordsObj);
+    } catch (e) {
+        console.error("Failed to fetch records:", e);
+        res.status(500).json({ error: "Could not retrieve records from database." });
+    }
+});
+
 app.get('/api/reconcile-results', async (req, res) => {
     const { password } = req.query;
     if (password !== RECONCILE_PASSWORD) {
@@ -555,7 +570,6 @@ app.get('/api/reconcile-results', async (req, res) => {
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
         
-        // --- Process games from today that are finished ---
         const today = new Date();
         const formattedToday = `${today.getFullYear()}${(today.getMonth() + 1).toString().padStart(2, '0')}${today.getDate().toString().padStart(2, '0')}`;
 
@@ -614,6 +628,42 @@ app.get('/api/reconcile-results', async (req, res) => {
     } catch (error) {
         console.error("Reconciliation Error:", error);
         res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
+    }
+});
+
+app.get('/api/recent-bets', async (req, res) => {
+    const { sport } = req.query;
+    if (!sport) {
+        return res.status(400).json({ error: "Sport parameter is required." });
+    }
+
+    try {
+        if (!predictionsCollection) await connectToDb();
+        
+        const recentBets = await predictionsCollection.find({
+            sportKey: sport,
+            status: { $in: ['win', 'loss'] }
+        })
+        .sort({ gameDate: -1 })
+        .limit(20)
+        .toArray();
+
+        for (const bet of recentBets) {
+            if (bet.game && bet.game.espnData && bet.game.espnData.competitions) {
+                const competition = bet.game.espnData.competitions[0];
+                if (competition && competition.competitors) {
+                    const winnerData = competition.competitors.find(c => c.winner === true);
+                    if(winnerData && winnerData.team) {
+                        bet.actualWinner = winnerData.team.displayName;
+                    }
+                }
+            }
+        }
+
+        res.json(recentBets);
+    } catch (error) {
+        console.error("Recent Bets Error:", error);
+        res.status(500).json({ error: "Failed to fetch recent bets." });
     }
 });
 
