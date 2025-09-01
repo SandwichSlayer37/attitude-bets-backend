@@ -570,6 +570,7 @@ app.get('/api/reconcile-results', async (req, res) => {
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
         
+        // --- Process games from today that are finished ---
         const today = new Date();
         const formattedToday = `${today.getFullYear()}${(today.getMonth() + 1).toString().padStart(2, '0')}${today.getDate().toString().padStart(2, '0')}`;
 
