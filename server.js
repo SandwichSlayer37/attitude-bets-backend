@@ -392,26 +392,30 @@ async function getAllDailyPredictions() {
                     try {
                         const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
                         
-                        // --- FIX: Use $setOnInsert to save the odds only on the first creation ---
-                        const predictionRecord = {
-                            gameId: game.id,
-                            sportKey: sportKey,
-                            predictedWinner: predictionData.winner,
-                            homeTeam: game.home_team,
-                            awayTeam: game.away_team,
-                            gameDate: game.commence_time,
-                            odds: winnerOdds || null,
-                            status: 'pending',
-                            createdAt: new Date()
+                        // --- FIX: Simplify update to prevent conflicts and ensure odds are only set once ---
+                        const updateOperations = {
+                            // Fields to set ONLY on first insert
+                            $setOnInsert: {
+                                gameId: game.id,
+                                sportKey: sportKey,
+                                homeTeam: game.home_team,
+                                awayTeam: game.away_team,
+                                gameDate: game.commence_time,
+                                odds: winnerOdds || null, // Lock in initial odds
+                                status: 'pending',
+                                createdAt: new Date()
+                            },
+                            // Fields to ALWAYS set/update
+                            $set: {
+                                predictedWinner: predictionData.winner, // Update predicted winner if algorithm changes its mind
+                                // Any other fields that should always be updated, e.g., status if we were updating it here
+                            }
                         };
 
                         await predictionsCollection.updateOne(
-                            { gameId: game.id },
-                            { 
-                                $setOnInsert: predictionRecord,
-                                $set: { predictedWinner: predictionData.winner } // Still update the winner in case the pick changes
-                            },
-                            { upsert: true }
+                            { gameId: game.id }, // Find by gameId
+                            updateOperations,
+                            { upsert: true } // Insert if not found, update if found
                         );
 
                     } catch (dbError) {
