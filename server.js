@@ -132,13 +132,35 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    // Corrected the cache key and removed the faulty daysFrom parameter
-    const key = `odds_${sportKey}_all_upcoming`;
+    // This new key will ensure the old cache is not used.
+    const key = `odds_${sportKey}_3day_fetch`; 
     return fetchData(key, async () => {
         try {
-            // This URL now correctly fetches all available upcoming games
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`);
-            return data;
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            const dayAfter = new Date(today);
+            dayAfter.setDate(dayAfter.getDate() + 2);
+
+            const formatDate = (date) => date.toISOString().split('T')[0];
+
+            const dates = [formatDate(today), formatDate(tomorrow), formatDate(dayAfter)];
+            const allGames = [];
+
+            // Create an array of promises for each API call
+            const requests = dates.map(date => 
+                axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`)
+            );
+
+            // Execute all requests in parallel
+            const responses = await Promise.all(requests);
+
+            // Combine the results
+            for (const response of responses) {
+                allGames.push(...response.data);
+            }
+            
+            return allGames;
         } catch (error) {
             console.error("ERROR IN getOdds function:", error.message);
             return [];
