@@ -146,7 +146,6 @@ async function getOdds(sportKey) {
 // --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
     return fetchData(`stats_api_${sportKey}_v3`, async () => {
-        // This new function only supports MLB for now.
         if (sportKey !== 'baseball_mlb') {
             return {};
         }
@@ -155,7 +154,6 @@ async function getTeamStatsFromAPI(sportKey) {
         const stats = {};
 
         try {
-            // Step 1: Initialize all MLB teams from a reliable source
             const teamsUrl = `https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${currentYear}`;
             const { data: teamsData } = await axios.get(teamsUrl);
             if (teamsData.teams) {
@@ -170,7 +168,6 @@ async function getTeamStatsFromAPI(sportKey) {
                 });
             }
 
-            // Step 2: Get Standings (for overall record and Last 10)
             const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
             const { data: standingsData } = await axios.get(standingsUrl);
             if (standingsData.records) {
@@ -193,16 +190,22 @@ async function getTeamStatsFromAPI(sportKey) {
 
         } catch (e) {
             console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            return {};
+            return stats;
         }
-    }, 3600000); // Cache for 1 hour
+    }, 3600000);
 }
 
 async function getWeatherData(teamName) {
-    if (!teamName) { return null; }
+    if (!teamName) {
+        return null;
+    }
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
-    if (!location) { return null; }
+    
+    if (!location) {
+        return null;
+    }
+    
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
@@ -280,17 +283,15 @@ async function runPredictionEngine(game, sportKey, context) {
     const factors = {};
     
     let homeInjuryImpact = 0;
-    const homeInjuries = injuries[home_team] || [];
+    const homeInjuries = injuries[homeCanonicalName] || [];
     homeInjuries.forEach(player => {
-        const isStar = homeRoster[player.name]?.isAllStar;
-        homeInjuryImpact += isStar ? 3 : 1;
+        homeInjuryImpact += 1;
     });
 
     let awayInjuryImpact = 0;
-    const awayInjuries = injuries[away_team] || [];
+    const awayInjuries = injuries[awayCanonicalName] || [];
     awayInjuries.forEach(player => {
-        const isStar = awayRoster[player.name]?.isAllStar;
-        awayInjuryImpact += isStar ? 3 : 1;
+        awayInjuryImpact += 1;
     });
 
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
@@ -357,7 +358,8 @@ async function getAllDailyPredictions() {
                 if (!competition) continue;
                 for (const competitor of competition.competitors) {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    injuries[canonicalName] = competitor.team.injuries || [];
+                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                    injuries[canonicalName] = fullInjuries;
                 }
                 const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
                 const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
@@ -463,14 +465,7 @@ app.get('/api/predictions', async (req, res) => {
         
         const predictions = [];
         for (const game of games) {
-            const homeAbbr = espnTeamAbbreviations[game.home_team];
-            const awayAbbr = espnTeamAbbreviations[game.away_team];
-            
-            const [homeRoster, awayRoster] = await Promise.all([
-                getRosterWithAllStars(sport, homeAbbr),
-                getRosterWithAllStars(sport, awayAbbr)
-            ]);
-
+            const homeRoster = {}, awayRoster = {};
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
