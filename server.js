@@ -278,8 +278,8 @@ async function runPredictionEngine(game, sportKey, context) {
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
     
-    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
-    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A' };
+    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
+    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
 
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
@@ -287,17 +287,28 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
+    
+    // --- NEW FACTORS ---
+    if (sportKey === 'baseball_mlb') {
+        // Offensive Rating (higher is better)
+        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${homeStats.runsPerGame.toFixed(2)} RPG`, awayStat: `${awayStats.runsPerGame.toFixed(2)} RPG` };
+        // Defensive Rating (lower ERA is better)
+        factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
+    }
+    
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
     const homeInjuries = injuries[home_team]?.length || 0;
     const awayInjuries = injuries[away_team]?.length || 0;
     const injuryValue = (awayInjuries - homeInjuries) * (weights.injuryImpact / 5);
     factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries} players`, awayStat: `${awayInjuries} players` };
+
     for (const factor in factors) { 
         if (factors[factor].value && !isNaN(factors[factor].value)) {
             homeScore += factors[factor].value; 
             awayScore -= factors[factor].value;
         }
     }
+
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 'N/A', awayValue = 'N/A';
