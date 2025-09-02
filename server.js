@@ -132,18 +132,20 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    const key = `odds_${sportKey}_final_fix`;
+    const key = `odds_${sportKey}_final_window_fix`; // New key to bust the cache
     return fetchData(key, async () => {
         try {
             const allGames = [];
             const gameIds = new Set();
-            
-            // --- FIX: Use a robust method to get the next 3 days in UTC ---
             const datesToFetch = [];
-            for (let i = 0; i < 3; i++) {
-                const d = new Date();
-                d.setUTCDate(d.getUTCDate() + i);
-                datesToFetch.push(d.toISOString().split('T')[0]);
+
+            // --- DEFINITIVE FIX: Fetch a window of -1 to +2 days from the server's UTC date ---
+            // This captures all relevant games regardless of user's timezone.
+            const today = new Date();
+            for (let i = -1; i < 2; i++) { // Fetches yesterday, today, and tomorrow from server's perspective
+                const targetDate = new Date(today);
+                targetDate.setUTCDate(today.getUTCDate() + i);
+                datesToFetch.push(targetDate.toISOString().split('T')[0]);
             }
 
             const requests = datesToFetch.map(date => 
