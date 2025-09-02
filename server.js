@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Better AI prompt and smarter prediction engine
+// FINAL UPGRADED VERSION - Switched to a reliable stats API
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -143,42 +143,11 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
-function extractStandings(node, stats) {
-    if (node.standings && node.standings.entries) {
-        for (const team of node.standings.entries) {
-            const teamName = team.team.displayName;
-            
-            // --- FIX: Using the exact stat names found in the live ESPN API data ---
-            const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
-            const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
-            const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
-            const runsPerGame = team.stats.find(s => s.name === 'avgRuns')?.displayValue || '0';
-            const teamERA = team.stats.find(s => s.name === 'earnedRunAverage')?.displayValue || '99.99';
-
-            stats[teamName] = { 
-                record: `${wins}-${losses}`, 
-                streak, 
-                lastTen,
-                runsPerGame: parseFloat(runsPerGame), 
-                teamERA: parseFloat(teamERA)         
-            };
-        }
-    }
-    if (node.children) {
-        for (const child of node.children) {
-            extractStandings(child, stats);
-        }
-    }
-}
-
 // --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
     return fetchData(`stats_api_${sportKey}_v3`, async () => {
         // This new function only supports MLB for now.
         if (sportKey !== 'baseball_mlb') {
-            // For other sports, return an empty object to prevent errors
-            // and allow the prediction engine to run with available data.
             return {};
         }
 
@@ -186,14 +155,11 @@ async function getTeamStatsFromAPI(sportKey) {
         const stats = {};
 
         try {
-            // Step 1: Get Team IDs and basic info
+            // Step 1: Initialize all MLB teams from a reliable source
             const teamsUrl = `https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${currentYear}`;
             const { data: teamsData } = await axios.get(teamsUrl);
-            const teamIdMap = {};
             if (teamsData.teams) {
                 teamsData.teams.forEach(team => {
-                    teamIdMap[team.name] = team.id;
-                    // Initialize stats object for each team with defaults
                     stats[team.name] = { 
                         record: '0-0', 
                         streak: 'N/A', 
@@ -211,44 +177,12 @@ async function getTeamStatsFromAPI(sportKey) {
                 for (const record of standingsData.records) {
                     for (const teamRecord of record.teamRecords) {
                         const teamName = teamRecord.team.name;
-                        if (stats[teamName]) { // Update if team already exists
-                            const wins = teamRecord.wins;
-                            const losses = teamRecord.losses;
-                            const lastTen = `${teamRecord.records.splitRecords.find(r => r.type === 'lastTen')?.wins || 0}-${teamRecord.records.splitRecords.find(r => r.type === 'lastTen')?.losses || 0}`;
-                            
-                            stats[teamName].record = `${wins}-${losses}`;
+                        if (stats[teamName]) {
+                            stats[teamName].record = `${teamRecord.wins}-${teamRecord.losses}`;
                             stats[teamName].streak = teamRecord.streak?.streakCode || 'N/A';
-                            stats[teamName].lastTen = lastTen;
-                        }
-                    }
-                }
-            }
-
-            // Step 3: Get Detailed Team Statistics (for RPG and ERA)
-            // This requires making a call for each team, or finding a single endpoint for all team stats
-            // Let's use a common stats endpoint for the league.
-            // This is a more complex endpoint, but should contain what we need
-            const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}`;
-            const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
-
-            if (leagueStatsData.stats) {
-                for (const statGroup of leagueStatsData.stats) {
-                    for (const teamStatEntry of statGroup.splits) {
-                        const teamName = teamStatEntry.team.name;
-                        if (stats[teamName]) { // Update if team already exists
-                            const statList = teamStatEntry.stat;
-                            
-                            // Offensive Rating (Runs Per Game - RPG)
-                            const runs = statList.runs;
-                            const gamesPlayed = statList.gamesPlayed;
-                            if (runs !== undefined && gamesPlayed > 0) {
-                                stats[teamName].runsPerGame = parseFloat((runs / gamesPlayed).toFixed(2));
-                            }
-
-                            // Defensive Rating (Earned Run Average - ERA)
-                            const era = statList.era;
-                            if (era !== undefined) {
-                                stats[teamName].teamERA = parseFloat(era);
+                            const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
+                            if(lastTenRecord) {
+                                stats[teamName].lastTen = `${lastTenRecord.wins}-${lastTenRecord.losses}`;
                             }
                         }
                     }
@@ -259,56 +193,16 @@ async function getTeamStatsFromAPI(sportKey) {
 
         } catch (e) {
             console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            // Return existing stats or empty object if an error occurs
-            return stats; 
+            return {};
         }
     }, 3600000); // Cache for 1 hour
 }
 
-// --- NEW FUNCTION: To parse the structure of the /statistics endpoint ---
-function extractTeamStats(categories, stats) {
-    // ESPN's statistics endpoint has categories like 'offense', 'pitching', 'defense'
-    // We need to iterate through these to find the relevant stats
-    for (const category of categories) {
-        if (category.stats) {
-            for (const teamStatEntry of category.stats) {
-                const teamName = teamStatEntry.team.displayName;
-                if (!stats[teamName]) {
-                    stats[teamName] = { record: 'N/A', streak: 'N/A', lastTen: '0-0', runsPerGame: 0, teamERA: 99.99 };
-                }
-
-                // Extract relevant stats from the 'statistics' array within each teamStatEntry
-                // These keys are common but might need fine-tuning after first run/inspection
-                const lastTen = teamStatEntry.statistics.find(s => s.name === 'recordLast10' || s.name === 'vsLast10')?.displayValue || stats[teamName].lastTen;
-                const runsPerGame = teamStatEntry.statistics.find(s => s.name === 'avgRuns' || s.name === 'runsPerGame')?.displayValue || stats[teamName].runsPerGame;
-                const earnedRunAverage = teamStatEntry.statistics.find(s => s.name === 'earnedRunAverage' || s.name === 'era')?.displayValue || stats[teamName].teamERA;
-                const wins = teamStatEntry.statistics.find(s => s.name === 'wins')?.displayValue || (stats[teamName].record !== 'N/A' ? stats[teamName].record.split('-')[0] : '0');
-                const losses = teamStatEntry.statistics.find(s => s.name === 'losses')?.displayValue || (stats[teamName].record !== 'N/A' ? stats[teamName].record.split('-')[1] : '0');
-
-
-                stats[teamName] = {
-                    ...stats[teamName], // Keep existing data
-                    record: `${wins}-${losses}`,
-                    lastTen: lastTen,
-                    runsPerGame: parseFloat(runsPerGame),
-                    teamERA: parseFloat(earnedRunAverage)
-                };
-            }
-        }
-    }
-}
-
 async function getWeatherData(teamName) {
-    if (!teamName) {
-        return null;
-    }
+    if (!teamName) { return null; }
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
-    
-    if (!location) {
-        return null;
-    }
-    
+    if (!location) { return null; }
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
@@ -371,7 +265,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 }
 
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, injuries, h2h } = context;
+    const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
     
@@ -384,23 +278,33 @@ async function runPredictionEngine(game, sportKey, context) {
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
+    
+    let homeInjuryImpact = 0;
+    const homeInjuries = injuries[home_team] || [];
+    homeInjuries.forEach(player => {
+        const isStar = homeRoster[player.name]?.isAllStar;
+        homeInjuryImpact += isStar ? 3 : 1;
+    });
+
+    let awayInjuryImpact = 0;
+    const awayInjuries = injuries[away_team] || [];
+    awayInjuries.forEach(player => {
+        const isStar = awayRoster[player.name]?.isAllStar;
+        awayInjuryImpact += isStar ? 3 : 1;
+    });
+
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
     
-    // --- NEW FACTORS ---
     if (sportKey === 'baseball_mlb') {
-        // Offensive Rating (higher is better)
-        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${homeStats.runsPerGame.toFixed(2)} RPG`, awayStat: `${awayStats.runsPerGame.toFixed(2)} RPG` };
-        // Defensive Rating (lower ERA is better)
-        factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
+        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
+        factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA || 99.99).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA || 99.99).toFixed(2)} ERA` };
     }
     
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
-    const homeInjuries = injuries[home_team]?.length || 0;
-    const awayInjuries = injuries[away_team]?.length || 0;
-    const injuryValue = (awayInjuries - homeInjuries) * (weights.injuryImpact / 5);
-    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries} players`, awayStat: `${awayInjuries} players` };
+    const injuryValue = (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5);
+    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries.length} players`, awayStat: `${awayInjuries.length} players`, injuries: { home: homeInjuries, away: awayInjuries } };
 
     for (const factor in factors) { 
         if (factors[factor].value && !isNaN(factors[factor].value)) {
@@ -476,7 +380,8 @@ async function getAllDailyPredictions() {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h };
+            const homeRoster = {}, awayRoster = {};
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sportKey, context);
             
             if (predictionData && predictionData.winner) {
@@ -484,30 +389,26 @@ async function getAllDailyPredictions() {
                     try {
                         const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
                         
-                        // --- FIX: Simplify update to prevent conflicts and ensure odds are only set once ---
                         const updateOperations = {
-                            // Fields to set ONLY on first insert
                             $setOnInsert: {
                                 gameId: game.id,
                                 sportKey: sportKey,
                                 homeTeam: game.home_team,
                                 awayTeam: game.away_team,
                                 gameDate: game.commence_time,
-                                odds: winnerOdds || null, // Lock in initial odds
+                                odds: winnerOdds || null,
                                 status: 'pending',
                                 createdAt: new Date()
                             },
-                            // Fields to ALWAYS set/update
                             $set: {
-                                predictedWinner: predictionData.winner, // Update predicted winner if algorithm changes its mind
-                                // Any other fields that should always be updated, e.g., status if we were updating it here
+                                predictedWinner: predictionData.winner,
                             }
                         };
 
                         await predictionsCollection.updateOne(
-                            { gameId: game.id }, // Find by gameId
+                            { gameId: game.id },
                             updateOperations,
-                            { upsert: true } // Insert if not found, update if found
+                            { upsert: true }
                         );
 
                     } catch (dbError) {
@@ -546,7 +447,8 @@ app.get('/api/predictions', async (req, res) => {
                 if (!competition) continue;
                 for (const competitor of competition.competitors) {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    injuries[canonicalName] = competitor.team.injuries || [];
+                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                    injuries[canonicalName] = fullInjuries;
                 }
                 const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
                 const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
@@ -561,21 +463,39 @@ app.get('/api/predictions', async (req, res) => {
         
         const predictions = [];
         for (const game of games) {
+            const homeAbbr = espnTeamAbbreviations[game.home_team];
+            const awayAbbr = espnTeamAbbreviations[game.away_team];
+            
+            const [homeRoster, awayRoster] = await Promise.all([
+                getRosterWithAllStars(sport, homeAbbr),
+                getRosterWithAllStars(sport, awayAbbr)
+            ]);
+
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h };
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
                 try {
                     const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                    const predictionRecord = {
-                        gameId: game.id, sportKey: sport, predictedWinner: predictionData.winner,
-                        homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time,
-                        odds: winnerOdds || null, status: 'pending', createdAt: new Date()
+                    const updateOperations = {
+                        $setOnInsert: {
+                            gameId: game.id,
+                            sportKey: sport,
+                            homeTeam: game.home_team,
+                            awayTeam: game.away_team,
+                            gameDate: game.commence_time,
+                            odds: winnerOdds || null,
+                            status: 'pending',
+                            createdAt: new Date()
+                        },
+                        $set: {
+                            predictedWinner: predictionData.winner,
+                        }
                     };
-                    await predictionsCollection.updateOne({ gameId: game.id }, { $set: predictionRecord }, { upsert: true });
+                    await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
                 } catch (dbError) {
                     console.error("Failed to save prediction to DB:", dbError);
                 }
@@ -699,7 +619,6 @@ app.get('/api/reconcile-results', async (req, res) => {
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
 
-        // --- FIX: Only look for predictions from before today ---
         const today = new Date();
         today.setHours(0, 0, 0, 0); 
         const pendingPredictions = await predictionsCollection.find({ 
@@ -759,7 +678,6 @@ app.get('/api/reconcile-results', async (req, res) => {
 
                     await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
                     
-                    // --- FIX: More robust database update logic ---
                     const updateField = result === 'win' 
                         ? { $inc: { wins: 1, totalProfit: profit } }
                         : { $inc: { losses: 1, totalProfit: profit } };
