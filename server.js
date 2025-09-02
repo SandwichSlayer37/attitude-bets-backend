@@ -132,19 +132,18 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    const key = `odds_${sportKey}_4day_window`;
+    const key = `odds_${sportKey}_final_fix`;
     return fetchData(key, async () => {
         try {
             const allGames = [];
             const gameIds = new Set();
+            
+            // --- FIX: Use a robust method to get the next 3 days in UTC ---
             const datesToFetch = [];
-
-            // --- FIX: Fetch a wider window of dates to account for timezone differences ---
-            const today = new Date();
-            for (let i = -1; i < 3; i++) { // Fetch from yesterday, today, tomorrow, and the next day
-                const targetDate = new Date();
-                targetDate.setUTCDate(today.getUTCDate() + i);
-                datesToFetch.push(targetDate.toISOString().split('T')[0]);
+            for (let i = 0; i < 3; i++) {
+                const d = new Date();
+                d.setUTCDate(d.getUTCDate() + i);
+                datesToFetch.push(d.toISOString().split('T')[0]);
             }
 
             const requests = datesToFetch.map(date => 
