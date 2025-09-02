@@ -132,8 +132,7 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    // This new key will ensure the old cache is not used.
-    const key = `odds_${sportKey}_3day_fetch`; 
+    const key = `odds_${sportKey}_3day_fetch_deduped`;
     return fetchData(key, async () => {
         try {
             const today = new Date();
@@ -142,10 +141,17 @@ async function getOdds(sportKey) {
             const dayAfter = new Date(today);
             dayAfter.setDate(dayAfter.getDate() + 2);
 
-            const formatDate = (date) => date.toISOString().split('T')[0];
+            // Format date to YYYY-MM-DD for the API
+            const formatDateParam = (date) => {
+                const year = date.getFullYear();
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const day = date.getDate().toString().padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            };
 
-            const dates = [formatDate(today), formatDate(tomorrow), formatDate(dayAfter)];
-            const allGames = [];
+            const dates = [formatDateParam(today), formatDateParam(tomorrow), formatDateParam(dayAfter)];
+            let allGames = [];
+            const gameIds = new Set(); // To store unique game IDs
 
             // Create an array of promises for each API call
             const requests = dates.map(date => 
@@ -155,9 +161,14 @@ async function getOdds(sportKey) {
             // Execute all requests in parallel
             const responses = await Promise.all(requests);
 
-            // Combine the results
+            // Combine the results and de-duplicate
             for (const response of responses) {
-                allGames.push(...response.data);
+                for (const game of response.data) {
+                    if (!gameIds.has(game.id)) {
+                        allGames.push(game);
+                        gameIds.add(game.id);
+                    }
+                }
             }
             
             return allGames;
