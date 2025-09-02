@@ -132,15 +132,18 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    return fetchData(`odds_${sportKey}`, async () => {
+    // --- FIX: Add daysFrom parameter to fetch a wider range of games for paid plans ---
+    const key = `odds_${sportKey}_2days`;
+    return fetchData(key, async () => {
         try {
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`);
+            // Fetch games for today and tomorrow (up to 2 days out)
+            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&daysFrom=2&apiKey=${ODDS_API_KEY}`);
             return data;
         } catch (error) {
             console.error("ERROR IN getOdds function:", error.message);
             return [];
         }
-    }, 900000);
+    }, 900000); // Cache for 15 minutes
 }
 
 // --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
