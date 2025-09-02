@@ -183,23 +183,58 @@ async function getTeamStatsFromAPI(sportKey) {
         if (!map) return {};
 
         try {
-            // --- FIX: Add the current year to the URL to get current standings ---
+            // --- FIX: Use a dedicated statistics endpoint for more granular team data ---
+            // This endpoint generally has more detailed stats for all teams in a league
             const currentYear = new Date().getFullYear();
-            const url = `http://site.api.espn.com/apis/v2/sports/${map.sport}/${map.league}/standings?year=${currentYear}`;
+            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/statistics?season=${currentYear}`;
             
             const { data } = await axios.get(url);
             const stats = {};
-            if (data.children) {
-                for (const child of data.children) {
-                    extractStandings(child, stats);
-                }
+            
+            // --- Call the new dedicated parser ---
+            if (data.splits && data.splits.categories) {
+                extractTeamStats(data.splits.categories, stats);
             }
+            
             return stats;
         } catch (e) {
             console.error(`Could not fetch stats from API for ${sportKey}: ${e.message}`);
             return {};
         }
     }, 3600000);
+}
+
+// --- NEW FUNCTION: To parse the structure of the /statistics endpoint ---
+function extractTeamStats(categories, stats) {
+    // ESPN's statistics endpoint has categories like 'offense', 'pitching', 'defense'
+    // We need to iterate through these to find the relevant stats
+    for (const category of categories) {
+        if (category.stats) {
+            for (const teamStatEntry of category.stats) {
+                const teamName = teamStatEntry.team.displayName;
+                if (!stats[teamName]) {
+                    stats[teamName] = { record: 'N/A', streak: 'N/A', lastTen: '0-0', runsPerGame: 0, teamERA: 99.99 };
+                }
+
+                // Extract relevant stats from the 'statistics' array within each teamStatEntry
+                // These keys are common but might need fine-tuning after first run/inspection
+                const lastTen = teamStatEntry.statistics.find(s => s.name === 'recordLast10' || s.name === 'vsLast10')?.displayValue || stats[teamName].lastTen;
+                const runsPerGame = teamStatEntry.statistics.find(s => s.name === 'avgRuns' || s.name === 'runsPerGame')?.displayValue || stats[teamName].runsPerGame;
+                const earnedRunAverage = teamStatEntry.statistics.find(s => s.name === 'earnedRunAverage' || s.name === 'era')?.displayValue || stats[teamName].teamERA;
+                const wins = teamStatEntry.statistics.find(s => s.name === 'wins')?.displayValue || (stats[teamName].record !== 'N/A' ? stats[teamName].record.split('-')[0] : '0');
+                const losses = teamStatEntry.statistics.find(s => s.name === 'losses')?.displayValue || (stats[teamName].record !== 'N/A' ? stats[teamName].record.split('-')[1] : '0');
+
+
+                stats[teamName] = {
+                    ...stats[teamName], // Keep existing data
+                    record: `${wins}-${losses}`,
+                    lastTen: lastTen,
+                    runsPerGame: parseFloat(runsPerGame),
+                    teamERA: parseFloat(earnedRunAverage)
+                };
+            }
+        }
+    }
 }
 
 async function getWeatherData(teamName) {
