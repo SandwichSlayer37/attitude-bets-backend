@@ -151,7 +151,18 @@ function extractStandings(node, stats) {
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
             const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
-            stats[teamName] = { record: `${wins}-${losses}`, streak, lastTen };
+            
+            // --- NEW STATS ---
+            const runsPerGame = team.stats.find(s => s.name === 'runsPerGame')?.displayValue || '0';
+            const teamERA = team.stats.find(s => s.name === 'era')?.displayValue || '99.99';
+
+            stats[teamName] = { 
+                record: `${wins}-${losses}`, 
+                streak, 
+                lastTen,
+                runsPerGame: parseFloat(runsPerGame), // Convert to number
+                teamERA: parseFloat(teamERA)         // Convert to number
+            };
         }
     }
     if (node.children) {
