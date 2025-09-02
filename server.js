@@ -150,22 +150,18 @@ function extractStandings(node, stats) {
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
             
-            // --- FIX: Use more common stat names from ESPN API, or check for alternatives ---
-            // Common ESPN stat names for MLB: 'runsPerGame' and 'era' are usually correct.
-            // If they still show 0/99, ESPN might be using different keys for a specific league or endpoint.
-            // For now, let's assume these are the correct keys.
-            // A fallback to ensure numbers:
-            const runsPerGame = team.stats.find(s => s.name === 'runsPerGame')?.displayValue || '0';
-            const teamERA = team.stats.find(s => s.name === 'era')?.displayValue || '99.99';
+            // --- UPDATED: More robust search for Last10, RPG, and ERA keys ---
+            const lastTen = team.stats.find(s => s.name === 'vsLast10' || s.name === 'recordLast10' || s.name === 'lastTenGames')?.displayValue || '0-0';
+            const runsPerGame = team.stats.find(s => s.name === 'runsPerGame' || s.name === 'rpg' || s.name === 'runsAvg')?.displayValue || '0';
+            const teamERA = team.stats.find(s => s.name === 'era' || s.name === 'earnedRunAverage' || s.name === 'pitchingEra')?.displayValue || '99.99';
 
             stats[teamName] = { 
                 record: `${wins}-${losses}`, 
                 streak, 
                 lastTen,
-                runsPerGame: parseFloat(runsPerGame), // Convert to number
-                teamERA: parseFloat(teamERA)         // Convert to number
+                runsPerGame: parseFloat(runsPerGame), 
+                teamERA: parseFloat(teamERA)         
             };
         }
     }
