@@ -1,827 +1,728 @@
-// FINAL UPGRADED VERSION - Switched to a reliable stats API
-require('dotenv').config();
-const express = require('express');
-const path = require('path');
-const cors = require('cors');
-const axios = require('axios');
-const Snoowrap = require('snoowrap');
-const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attitude Sports Bets</title>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; }
+        #login-screen, #success-animation { display: flex; align-items: center; justify-content: center; height: 100vh; width: 100vw; position: fixed; top: 0; left: 0; background: linear-gradient(135deg, #1f2937, #111827); z-index: 100; }
+        .login-card { background: #1f2937; padding: 2rem; border-radius: 1rem; box-shadow: 0 0 20px rgba(0,0,0,0.6); width: 100%; max-width: 400px; }
+        .password-wrapper { position: relative; }
+        .toggle-password { position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); cursor: pointer; color: #9ca3af; }
+        #success-animation { display: none; background: #111827; }
+        .success-checkmark { width: 120px; height: 120px; border-radius: 50%; display: block; stroke-width: 4; stroke: #4ade80; stroke-miterlimit: 10; box-shadow: inset 0px 0px 0px #4ade80; animation: scale .5s ease-in-out .2s both, fill .5s ease-in-out .7s both; }
+        .success-checkmark__circle { stroke-dasharray: 166; stroke-dashoffset: 166; stroke-width: 4; stroke-miterlimit: 10; stroke: #4ade80; fill: none; animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards; }
+        .success-checkmark__check { transform-origin: 50% 50%; stroke-dasharray: 48; stroke-dashoffset: 48; animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards; }
+        @keyframes stroke { 100% { stroke-dashoffset: 0; } }
+        @keyframes scale { 0%, 100% { transform: none; } 50% { transform: scale3d(1.1, 1.1, 1); } }
+        @keyframes fill { 100% { box-shadow: inset 0px 0px 0px 60px #4ade80; } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .card-gradient { background: linear-gradient(145deg, #1f2937, #374151); position: relative; transition: box-shadow 0.3s ease-in-out, transform 0.3s ease-in-out; border: 1px solid #374151; }
+        .card-highlight { box-shadow: 0 0 25px rgba(59, 130, 246, 0.7); border-color: #3b82f6; transform: scale(1.02); }
+        .live-badge { position: absolute; top: 1rem; right: 1rem; background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; animation: pulse 2s infinite; z-index: 10; }
+        .explanation-box { background-color: rgba(0, 0, 0, 0.25); border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: #d1d5db; border-left: 3px solid #3b82f6; }
+        .explanation-item { display: grid; grid-template-columns: 1fr 2fr 1fr; align-items: center; text-align: center; padding: 8px 0; border-bottom: 1px solid #374151; }
+        .explanation-item:last-child { border-bottom: none; }
+        .factor-label { font-weight: 700; color: #67e8f9; }
+        .stat-text { color: #ffffff; display: flex; justify-content: center; align-items: center; gap: 0.5rem; }
+        .date-display { background-color: rgba(255, 255, 255, 0.1); color: #e5e7eb; font-weight: 600; font-size: 0.75rem; padding: 4px 8px; border-radius: 9999px; }
+        .sport-selector-card { background-color: #273142; border: 2px solid transparent; border-radius: 12px; padding-top: 1.5rem; text-align: center; cursor: pointer; transition: all 0.2s ease-in-out; position: relative; overflow: hidden; }
+        .sport-selector-card:hover { background-color: #313e54; }
+        .sport-selector-card.active { border-color: #3b82f6; background-color: #313e54; }
+        .sport-icon { height: 80px; width: auto; margin: 0 auto 1rem; }
+        .record-container { background-color: rgba(0,0,0,0.3); padding: 0.75rem; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+        .record-stat { text-align: center; }
+        .record-stat .value { font-size: 1.25rem; font-weight: 700; color: white; }
+        .record-stat .label { font-size: 0.7rem; font-weight: 500; color: #9ca3af; text-transform: uppercase; }
+        .profit-container { padding: 0.5rem; text-align: center; }
+        .profit-container .label { font-size: 0.7rem; font-weight: 500; color: #9ca3af; text-transform: uppercase; }
+        .profit-container .value { font-size: 1.5rem; font-weight: 700; }
+        .futures-pick-card { background-color: #273142; border-radius: 12px; padding: 1rem; text-align: center; }
+        .futures-pick-card .label { font-size: 0.8rem; font-weight: 600; color: #9ca3af; }
+        .futures-pick-card .team { font-size: 1.25rem; font-weight: 700; }
+        .prime-pick-container { background-color: rgba(30, 41, 59, 0.7); border: 1px solid #3b82f6; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+        .prime-pick-title { color: #60a5fa; font-weight: 700; font-size: 1rem; text-align: center; margin-bottom: 1rem; letter-spacing: 1px; }
+        .prime-pick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; }
+        .prime-pick-item { text-align: center; }
+        .prime-pick-label { font-size: 0.75rem; font-weight: 600; color: #9ca3af; text-transform: uppercase; margin-bottom: 0.25rem; }
+        .prime-pick-value { font-size: 1.1rem; font-weight: bold; color: #ffffff; }
+        .prime-pick-confidence { font-size: 0.8rem; color: #9ca3af; }
+        .weather-icon-container { position: relative; display: inline-block; cursor: pointer; }
+        .weather-tooltip { visibility: hidden; width: 160px; background-color: #1f2937; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -80px; opacity: 0; transition: opacity 0.3s; font-size: 0.8rem; border: 1px solid #374151; }
+        .weather-icon-container:hover .weather-tooltip { visibility: visible; opacity: 1; }
+        .sharp-report-container { background-color: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 8px; padding: 0.75rem; margin-top: 1rem; }
+        .sharp-report-container .title { color: #10b981; font-weight: 700; font-size: 0.9rem; text-align: center; margin-bottom: 0.5rem; }
+        .sharp-report-container .text { font-size: 0.8rem; color: #d1d5db; text-align: center; }
+        .special-pick-card { background: linear-gradient(145deg, #1f2937, #374151); border: 1px solid #4a5568; border-radius: 12px; }
+        .special-pick-card .title { font-size: 1rem; font-weight: 700; color: #a0aec0; text-align: center; padding-top: 1rem; padding-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px; background-color: rgba(0,0,0,0.2); border-top-left-radius: 12px; border-top-right-radius: 12px; }
+        .modal-backdrop { background-color: rgba(0, 0, 0, 0.75); }
+        .history-btn { background-color: rgba(255, 255, 255, 0.1); border: 1px solid #4a5568; color: #cbd5e1; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; margin-top: 0.5rem; transition: background-color 0.2s; }
+        .history-btn:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .view-injuries-btn { background: none; border: none; color: #60a5fa; text-decoration: underline; font-size: 0.75rem; cursor: pointer; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-slate-900 text-gray-200">
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-app.use(express.static(path.join(__dirname, '..', 'public')));
-
-// --- API & DATA CONFIG ---
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const DATABASE_URL = process.env.DATABASE_URL;
-const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-const r = new Snoowrap({
-    userAgent: process.env.REDDIT_USER_AGENT,
-    clientId: process.env.REDDIT_CLIENT_ID,
-    clientSecret: process.env.REDDIT_CLIENT_SECRET,
-    username: process.env.REDDIT_USERNAME,
-    password: process.env.REDDIT_PASSWORD
-});
-
-let db;
-let recordsCollection;
-let predictionsCollection;
-async function connectToDb() {
-    try {
-        if (db) return db;
-        const client = new MongoClient(DATABASE_URL);
-        await client.connect();
-        db = client.db('attitudebets');
-        recordsCollection = db.collection('records');
-        predictionsCollection = db.collection('predictions');
-        console.log('Connected to MongoDB');
-        return db;
-    } catch (e) {
-        console.error("Failed to connect to MongoDB", e);
-        process.exit(1);
-    }
-}
-
-// --- DATA MAPS ---
-const SPORTS_DB = [ 
-    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
-    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
-    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 } 
-];
-
-const teamLocationMap = {
-    // MLB
-    'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667 }, 'Atlanta Braves': { lat: 33.8907, lon: -84.4677 }, 'Baltimore Orioles': { lat: 39.2838, lon: -76.6217 }, 'Boston Red Sox': { lat: 42.3467, lon: -71.0972 }, 'Chicago Cubs': { lat: 41.9484, lon: -87.6553 }, 'Chicago White Sox': { lat: 41.8300, lon: -87.6337 }, 'Cincinnati Reds': { lat: 39.0975, lon: -84.5069 }, 'Cleveland Guardians': { lat: 41.4962, lon: -81.6852 }, 'Colorado Rockies': { lat: 39.7562, lon: -104.9942 }, 'Detroit Tigers': { lat: 42.3390, lon: -83.0552 }, 'Houston Astros': { lat: 29.7570, lon: -95.3555 }, 'Kansas City Royals': { lat: 39.0517, lon: -94.4803 }, 'Los Angeles Angels': { lat: 33.8003, lon: -117.8827 }, 'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2398 }, 'Miami Marlins': { lat: 25.7781, lon: -80.2196 }, 'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712 }, 'Minnesota Twins': { lat: 44.9817, lon: -93.2775 }, 'New York Mets': { lat: 40.7571, lon: -73.8458 }, 'New York Yankees': { lat: 40.8296, lon: -73.9262 }, 'Oakland Athletics': { lat: 37.7516, lon: -122.2005 }, 'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665 }, 'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057 }, 'San Diego Padres': { lat: 32.7073, lon: -117.1570 }, 'San Francisco Giants': { lat: 37.7786, lon: -122.3893 }, 'Seattle Mariners': { lat: 47.5914, lon: -122.3325 }, 'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928 }, 'Tampa Bay Rays': { lat: 27.7682, lon: -82.6534 }, 'Texas Rangers': { lat: 32.7513, lon: -97.0829 }, 'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894 }, 'Washington Nationals': { lat: 38.8729, lon: -77.0074 },
-    // NFL
-    'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
-    // NHL
-    'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 29.4270, lon: -98.4385 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 }
-};
-
-const teamAliasMap = {
-    // MLB
-    'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
-    // NFL
-    'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
-    // NHL
-    'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'], 'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Hurricanes'], 'Chicago Blackhawks': ['Blackhawks'], 'Colorado Avalanche': ['Avalanche'], 'Columbus Blue Jackets': ['Blue Jackets'], 'Dallas Stars': ['Stars'], 'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'], 'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators'], 'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders'], 'New York Rangers': ['Rangers'], 'Ottawa Senators': ['Senators'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins'], 'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning'], 'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks'], 'Vegas Golden Knights': ['Golden Knights'], 'Washington Capitals': ['Capitals'], 'Winnipeg Jets': ['Jets']
-};
-
-const canonicalTeamNameMap = {};
-Object.keys(teamAliasMap).forEach(canonicalName => {
-    const lowerCanonical = canonicalName.toLowerCase();
-    if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
-    teamAliasMap[canonicalName].forEach(alias => {
-        const lowerAlias = alias.toLowerCase();
-        if (!canonicalTeamNameMap[lowerAlias]) canonicalTeamNameMap[lowerAlias] = canonicalName;
-    });
-});
-Object.keys(teamLocationMap).forEach(canonicalName => {
-    const lowerCanonical = canonicalName.toLowerCase();
-    if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
-});
-
-
-const flairMap = {
-    'baseball_mlb': 'MLB Bets and Picks',
-    'icehockey_nhl': 'NHL Bets and Picks',
-    'americanfootball_nfl': 'NFL Bets and Picks'
-};
-const espnTeamAbbreviations = {
-    'Arizona Diamondbacks': 'ARI', 'Atlanta Braves': 'ATL', 'Baltimore Orioles': 'BAL', 'Boston Red Sox': 'BOS', 'Chicago Cubs': 'CHC', 'Chicago White Sox': 'CHW', 'Cincinnati Reds': 'CIN', 'Cleveland Guardians': 'CLE', 'Colorado Rockies': 'COL', 'Detroit Tigers': 'DET', 'Houston Astros': 'HOU', 'Kansas City Royals': 'KC', 'Los Angeles Angels': 'LAA', 'Los Angeles Dodgers': 'LAD', 'Miami Marlins': 'MIA', 'Milwaukee Brewers': 'MIL', 'Minnesota Twins': 'MIN', 'New York Mets': 'NYM', 'New York Yankees': 'NYY', 'Oakland Athletics': 'OAK', 'Philadelphia Phillies': 'PHI', 'Pittsburgh Pirates': 'PIT', 'San Diego Padres': 'SD', 'San Francisco Giants': 'SF', 'Seattle Mariners': 'SEA', 'St. Louis Cardinals': 'STL', 'Tampa Bay Rays': 'TB', 'Texas Rangers': 'TEX', 'Toronto Blue Jays': 'TOR', 'Washington Nationals': 'WSH',
-    'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL', 'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI', 'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL', 'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB', 'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX', 'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC', 'Los Angeles Rams': 'LAR', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN', 'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG', 'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT', 'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB', 'Tennessee Titans': 'TEN', 'Washington Commanders': 'WSH'
-};
-const FUTURES_PICKS_DB = {
-    'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
-    'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
-    'americanfootball_nfl': { championship: 'Kansas City Chiefs', hotPick: 'Detroit Lions' }
-};
-const dataCache = new Map();
-
-// --- HELPER FUNCTIONS ---
-const parseRecord = (rec) => {
-    if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
-    const parts = rec.split('-');
-    if (parts.length < 2) return { w: 0, l: 0 };
-    const wins = parseInt(parts[0], 10);
-    const losses = parseInt(parts[1], 10);
-    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0 };
-    return { w: wins, l: losses };
-};
-const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
-
-// --- DYNAMIC WEIGHTS ---
-function getDynamicWeights(sportKey) {
-    if (sportKey === 'baseball_mlb') return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
-    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
-}
-
-// --- DATA FETCHING MODULES ---
-async function fetchData(key, fetcherFn, ttl = 3600000) {
-    if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
-        return dataCache.get(key).data;
-    }
-    const data = await fetcherFn();
-    dataCache.set(key, { data, timestamp: Date.now() });
-    return data;
-}
-
-async function getOdds(sportKey) {
-    return fetchData(`odds_${sportKey}`, async () => {
-        try {
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`);
-            return data;
-        } catch (error) {
-            console.error("ERROR IN getOdds function:", error.message);
-            return [];
-        }
-    }, 900000);
-}
-
-// --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
-async function getTeamStatsFromAPI(sportKey) {
-    return fetchData(`stats_api_${sportKey}_v3`, async () => {
-        if (sportKey !== 'baseball_mlb') {
-            return {};
-        }
-
-        const currentYear = new Date().getFullYear();
-        const stats = {};
-
-        try {
-            const teamsUrl = `https://statsapi.mlb.com/api/v1/teams?sportId=1&season=${currentYear}`;
-            const { data: teamsData } = await axios.get(teamsUrl);
-            if (teamsData.teams) {
-                teamsData.teams.forEach(team => {
-                    stats[team.name] = { 
-                        record: '0-0', 
-                        streak: 'N/A', 
-                        lastTen: '0-0', 
-                        runsPerGame: 0, 
-                        teamERA: 99.99 
-                    };
-                });
-            }
-
-            const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
-            const { data: standingsData } = await axios.get(standingsUrl);
-            if (standingsData.records) {
-                for (const record of standingsData.records) {
-                    for (const teamRecord of record.teamRecords) {
-                        const teamName = teamRecord.team.name;
-                        if (stats[teamName]) {
-                            stats[teamName].record = `${teamRecord.wins}-${teamRecord.losses}`;
-                            stats[teamName].streak = teamRecord.streak?.streakCode || 'N/A';
-                            const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                            if(lastTenRecord) {
-                                stats[teamName].lastTen = `${lastTenRecord.wins}-${lastTenRecord.losses}`;
-                            }
-                        }
-                    }
-                }
-            }
-            
-            return stats;
-
-        } catch (e) {
-            console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            return stats;
-        }
-    }, 3600000);
-}
-
-async function getWeatherData(teamName) {
-    if (!teamName) {
-        return null;
-    }
-    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
-    const location = teamLocationMap[canonicalName];
+    <div id="login-screen">
+        <div class="login-card">
+            <h2 class="text-2xl font-bold text-white mb-4 text-center">Login</h2>
+            <div class="mb-4 password-wrapper">
+                <input type="password" id="password-input" placeholder="Enter Password" class="w-full p-2 rounded bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <span id="toggle-password" class="toggle-password">👁</span>
+            </div>
+            <div class="mb-4 flex items-center">
+                <input type="checkbox" id="remember-device" class="mr-2 h-4 w-4 rounded text-blue-600 focus:ring-blue-500">
+                <label for="remember-device" class="text-gray-300 text-sm">Remember this device</label>
+            </div>
+            <button id="login-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition-colors duration-200">Login</button>
+            <p id="login-error" class="text-red-400 text-sm mt-2 hidden text-center">Incorrect password. Try again.</p>
+        </div>
+    </div>
     
-    if (!location) {
-        return null;
-    }
-    
-    return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
-        try {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
-            const { data } = await axios.get(url);
-            return { temp: data.current.temperature_2m, wind: data.current.wind_speed_10m, precip: data.current.precipitation };
-        } catch (e) {
-            console.error(`Could not fetch weather for ${teamName}: ${e.message}`);
-            return null;
-        }
-    });
-}
+    <div id="success-animation" class="hidden">
+        <svg class="success-checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52"><circle class="success-checkmark__circle" cx="26" cy="26" r="25" fill="none"/><path class="success-checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/></svg>
+    </div>
 
-async function fetchEspnData(sportKey) {
-    return fetchData(`espn_scoreboard_${sportKey}`, async () => {
-        const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
-        if (!map) return null;
-        try {
-            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard`;
-            const { data } = await axios.get(url);
-            return data;
-        } catch (error) {
-            console.error(`Could not fetch ESPN scoreboard for ${sportKey}. Error:`, error.message);
-            return null;
-        }
-    }, 60000);
-}
+    <div id="app-container" class="hidden">
+        <div class="container mx-auto p-4 md:p-8 max-w-5xl">
+            <header class="text-center mb-8">
+                <img src="logo.png" alt="Attitude Sports Bets Logo" class="mx-auto h-52">
+                <h1 class="text-4xl font-bold text-gray-200 tracking-wider mt-3">ATTITUDE</h1>
+                <h2 class="text-lg font-medium text-gray-400 tracking-widest -mt-1">SPORTS BETS</h2>
+                <p class="text-gray-400 mt-4">Advanced Prediction Algorithm</p>
+            </header>
 
-async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
-    const key = `reddit_${[homeTeam, awayTeam].sort().join('_')}_${sportKey}`;
-    return fetchData(key, async () => {
-        try {
-            const createSearchQuery = (teamName) => `(${ (teamAliasMap[teamName] || [teamName.split(' ').pop()]).map(a => `"${a}"`).join(' OR ')})`;
-            const baseQuery = `${createSearchQuery(homeTeam)} OR ${createSearchQuery(awayTeam)}`;
-            const flair = flairMap[sportKey];
-            let results = await r.getSubreddit('sportsbook').search({ query: `flair:"${flair}" ${baseQuery}`, sort: 'new', time: 'month' });
-            if (results.length === 0) {
-                results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
-            }
-            if (results.length === 0) {
-                return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
-            }
-            let homeScore = 0, awayScore = 0;
-            const homeAliases = [homeTeam, ...(teamAliasMap[homeTeam] || [])].map(a => a.toLowerCase());
-            const awayAliases = [awayTeam, ...(teamAliasMap[awayTeam] || [])].map(a => a.toLowerCase());
-            results.forEach(post => {
-                const title = post.title.toLowerCase();
-                if (homeAliases.some(alias => title.includes(alias))) homeScore++;
-                if (awayAliases.some(alias => title.includes(alias))) awayScore++;
-            });
-            const totalScore = homeScore + awayScore;
-            if (totalScore === 0) {
-                 return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
-            }
-            return { home: 1 + (homeScore / totalScore) * 9, away: 1 + (awayScore / totalScore) * 9 };
-        } catch (e) {
-            console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
-            return { home: 5, away: 5 };
-        }
-    }, 1800000);
-}
-
-async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
-    const weights = getDynamicWeights(sportKey);
-    const { home_team, away_team } = game;
-    
-    const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
-    const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
-    
-    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
-    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
-
-    const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
-    let homeScore = 50, awayScore = 50;
-    const factors = {};
-    
-    let homeInjuryImpact = 0;
-    const homeInjuries = injuries[homeCanonicalName] || [];
-    homeInjuries.forEach(player => {
-        homeInjuryImpact += 1;
-    });
-
-    let awayInjuryImpact = 0;
-    const awayInjuries = injuries[awayCanonicalName] || [];
-    awayInjuries.forEach(player => {
-        awayInjuryImpact += 1;
-    });
-
-    factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
-    factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-    factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
-    
-    if (sportKey === 'baseball_mlb') {
-        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
-        factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA || 99.99).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA || 99.99).toFixed(2)} ERA` };
-    }
-    
-    factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
-    const injuryValue = (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5);
-    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries.length} players`, awayStat: `${awayInjuries.length} players`, injuries: { home: homeInjuries, away: awayInjuries } };
-
-    for (const factor in factors) { 
-        if (factors[factor].value && !isNaN(factors[factor].value)) {
-            homeScore += factors[factor].value; 
-            awayScore -= factors[factor].value;
-        }
-    }
-
-    const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
-    const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
-    let homeValue = 'N/A', awayValue = 'N/A';
-    if (homeOdds && awayOdds) {
-        const homeImpliedProb = (1 / homeOdds) * 100;
-        const homePower = (homeScore / (homeScore + awayScore)) * 100;
-        homeValue = homePower - homeImpliedProb;
-        awayValue = ((100-homePower) - (1/awayOdds) * 100);
-        factors['Betting Value'] = { value: homeValue * (weights.value / 5), homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
-        if (!isNaN(factors['Betting Value'].value)) {
-            homeScore += factors['Betting Value'].value;
-        }
-    } else {
-         factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
-    }
-    const winner = homeScore > awayScore ? home_team : away_team;
-    const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
-    let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
-}
-
-async function getAllDailyPredictions() {
-    const allPredictions = [];
-    const gameCounts = {};
-
-    for (const sport of SPORTS_DB) {
-        const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([ 
-            getOdds(sportKey), 
-            fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey)
-        ]);
-
-        gameCounts[sportKey] = games.length;
-        if (!games || games.length === 0) continue;
-        
-        const injuries = {};
-        const h2hRecords = {};
-        if (espnDataResponse?.events) {
-            for (const event of espnDataResponse.events) {
-                const competition = event.competitions?.[0];
-                if (!competition) continue;
-                for (const competitor of competition.competitors) {
-                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    injuries[canonicalName] = fullInjuries;
-                }
-                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-                if (competition.series && homeTeam && awayTeam) {
-                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            }
-        }
-        
-        for (const game of games) {
-            const espnEvent = espnDataResponse?.events?.find(e => {
-                if (!e.name) return false;
-                const homeAbbr = espnTeamAbbreviations[game.home_team];
-                const awayAbbr = espnTeamAbbreviations[game.away_team];
-                return homeAbbr && awayAbbr && e.name.includes(homeAbbr) && e.name.includes(awayAbbr);
-            });
-            const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
-            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const homeRoster = {}, awayRoster = {};
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
-            const predictionData = await runPredictionEngine(game, sportKey, context);
-            
-            if (predictionData && predictionData.winner) {
-                if (predictionsCollection) {
-                    try {
-                        const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                        
-                        const updateOperations = {
-                            $setOnInsert: {
-                                gameId: game.id,
-                                sportKey: sportKey,
-                                homeTeam: game.home_team,
-                                awayTeam: game.away_team,
-                                gameDate: game.commence_time,
-                                odds: winnerOdds || null,
-                                status: 'pending',
-                                createdAt: new Date()
-                            },
-                            $set: {
-                                predictedWinner: predictionData.winner,
-                            }
-                        };
-
-                        await predictionsCollection.updateOne(
-                            { gameId: game.id },
-                            updateOperations,
-                            { upsert: true }
-                        );
-
-                    } catch (dbError) {
-                        console.error("Failed to save prediction from getAllDailyPredictions to DB:", dbError);
-                    }
-                }
-
-                allPredictions.push({ 
-                    game: { ...game, espnData: espnEvent || null, sportKey: sportKey }, 
-                    prediction: predictionData 
-                });
-            }
-        }
-    }
-    return { allPredictions, gameCounts };
-}
-
-// --- API ENDPOINTS ---
-
-app.get('/api/predictions', async (req, res) => {
-    const { sport } = req.query;
-    if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
-    try {
-        const [games, espnDataResponse, teamStats] = await Promise.all([ 
-            getOdds(sport), 
-            fetchEspnData(sport),
-            getTeamStatsFromAPI(sport)
-        ]);
-        if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
-        
-        const injuries = {};
-        const h2hRecords = {};
-        if (espnDataResponse?.events) {
-             for (const event of espnDataResponse.events) {
-                const competition = event.competitions?.[0];
-                if (!competition) continue;
-                for (const competitor of competition.competitors) {
-                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    injuries[canonicalName] = fullInjuries;
-                }
-                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-                if (competition.series && homeTeam && awayTeam) {
-                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            }
-        }
-        
-        const predictions = [];
-        for (const game of games) {
-            const homeRoster = {}, awayRoster = {};
-            const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
-            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
-            const predictionData = await runPredictionEngine(game, sport, context);
-
-            if (predictionData && predictionData.winner && predictionsCollection) {
-                try {
-                    const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                    const updateOperations = {
-                        $setOnInsert: {
-                            gameId: game.id,
-                            sportKey: sport,
-                            homeTeam: game.home_team,
-                            awayTeam: game.away_team,
-                            gameDate: game.commence_time,
-                            odds: winnerOdds || null,
-                            status: 'pending',
-                            createdAt: new Date()
-                        },
-                        $set: {
-                            predictedWinner: predictionData.winner,
-                        }
-                    };
-                    await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
-                } catch (dbError) {
-                    console.error("Failed to save prediction to DB:", dbError);
-                }
-            }
-
-            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-            const espnEvent = espnDataResponse?.events?.find(e => {
-                const competitors = e.competitions?.[0]?.competitors;
-                if (!competitors || competitors.length < 2) return false;
+            <main>
+                <div id="special-picks-ui" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"></div>
                 
-                const eventHomeCompetitor = competitors.find(c=>c.homeAway === 'home');
-                const eventAwayCompetitor = competitors.find(c=>c.homeAway === 'away');
+                <div class="flex justify-center items-center mb-8">
+                    <div id="sport-selection-ui" class="grid grid-cols-2 md:grid-cols-3 gap-6"></div>
+                </div>
 
-                if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
+                <div id="futures-picks-ui" class="grid grid-cols-2 gap-6 mb-8 hidden"></div>
 
-                const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
-                const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
+                <div id="loading-indicator" class="text-center my-12 hidden">
+                    <div class="inline-block animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500"></div>
+                    <p class="mt-4 text-gray-400">Fetching predictions from server...</p>
+                </div>
+                <div id="games-container" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+                <div id="error-message" class="text-center my-8 text-red-400 hidden"></div>
+            </main>
+        </div>
+    </div>
+    
+    <div id="ai-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="ai-modal-title">AI Expert Analysis</h2>
+                    <button id="close-ai-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="ai-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
 
-                return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
-            });
+    <div id="history-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="history-modal-title">Recent Bet History</h2>
+                    <button id="close-history-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="history-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="injury-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="injury-modal-title">Injury Report</h2>
+                    <button id="close-injury-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="injury-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
 
-            predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
-        }
-        res.json(predictions.filter(p => p && p.prediction));
-    } catch (error) {
-        console.error("Prediction Error:", error);
-        res.status(500).json({ error: "Failed to process predictions.", details: error.message });
-    }
-});
+    <script type="module">
+        const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
+        const CORRECT_PASSWORD = "droptheattitude37";
 
-app.get('/api/special-picks', async (req, res) => {
-    try {
-        const { allPredictions, gameCounts } = await getAllDailyPredictions();
+        // --- DOM Elements ---
+        const loginScreen = document.getElementById('login-screen');
+        const successAnimation = document.getElementById('success-animation');
+        const appContainer = document.getElementById('app-container');
+        const passwordInput = document.getElementById('password-input');
+        const togglePassword = document.getElementById('toggle-password');
+        const loginBtn = document.getElementById('login-btn');
+        const loginError = document.getElementById('login-error');
+        const rememberDevice = document.getElementById('remember-device');
         
-        let sportsInSeason = 0;
-        for(const sport of SPORTS_DB) {
-            if(gameCounts[sport.key] >= sport.gameCountThreshold) {
-                sportsInSeason++;
+        const specialPicksContainer = document.getElementById('special-picks-ui');
+        const sportSelectionContainer = document.getElementById('sport-selection-ui');
+        const futuresPicksContainer = document.getElementById('futures-picks-ui');
+        const gamesContainer = document.getElementById('games-container');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorMessage = document.getElementById('error-message');
+
+        const aiModal = document.getElementById('ai-modal');
+        const aiModalTitle = document.getElementById('ai-modal-title');
+        const aiModalContent = document.getElementById('ai-modal-content');
+        const closeAiModalBtn = document.getElementById('close-ai-modal-btn');
+        
+        const historyModal = document.getElementById('history-modal');
+        const historyModalTitle = document.getElementById('history-modal-title');
+        const historyModalContent = document.getElementById('history-modal-content');
+        const closeHistoryModalBtn = document.getElementById('close-history-modal-btn');
+
+        const injuryModal = document.getElementById('injury-modal');
+        const injuryModalTitle = document.getElementById('injury-modal-title');
+        const injuryModalContent = document.getElementById('injury-modal-content');
+        const closeInjuryModalBtn = document.getElementById('close-injury-modal-btn');
+        
+        
+        // --- Data & State ---
+        const teamLogosDB = {
+            'Arizona Diamondbacks': 'https://a.espncdn.com/i/teamlogos/mlb/500/ari.png', 'Atlanta Braves': 'https://a.espncdn.com/i/teamlogos/mlb/500/atl.png', 'Baltimore Orioles': 'https://a.espncdn.com/i/teamlogos/mlb/500/bal.png', 'Boston Red Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/bos.png', 'Chicago Cubs': 'https://a.espncdn.com/i/teamlogos/mlb/500/chc.png', 'Chicago White Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/chw.png', 'Cincinnati Reds': 'https://a.espncdn.com/i/teamlogos/mlb/500/cin.png', 'Cleveland Guardians': 'https://a.espncdn.com/i/teamlogos/mlb/500/cle.png', 'Colorado Rockies': 'https://a.espncdn.com/i/teamlogos/mlb/500/col.png', 'Detroit Tigers': 'https://a.espncdn.com/i/teamlogos/mlb/500/det.png', 'Houston Astros': 'https://a.espncdn.com/i/teamlogos/mlb/500/hou.png', 'Kansas City Royals': 'https://a.espncdn.com/i/teamlogos/mlb/500/kc.png', 'Los Angeles Angels': 'https://a.espncdn.com/i/teamlogos/mlb/500/laa.png', 'Los Angeles Dodgers': 'https://a.espncdn.com/i/teamlogos/mlb/500/la.png', 'Miami Marlins': 'https://a.espncdn.com/i/teamlogos/mlb/500/mia.png', 'Milwaukee Brewers': 'https://a.espncdn.com/i/teamlogos/mlb/500/mil.png', 'Minnesota Twins': 'https://a.espncdn.com/i/teamlogos/mlb/500/min.png', 'New York Mets': 'https://a.espncdn.com/i/teamlogos/mlb/500/nym.png', 'New York Yankees': 'https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png', 'Oakland Athletics': 'https://a.espncdn.com/i/teamlogos/mlb/500/oak.png', 'Philadelphia Phillies': 'https://a.espncdn.com/i/teamlogos/mlb/500/phi.png', 'Pittsburgh Pirates': 'https://a.espncdn.com/i/teamlogos/mlb/500/pit.png', 'San Diego Padres': 'https://a.espncdn.com/i/teamlogos/mlb/500/sd.png', 'San Francisco Giants': 'https://a.espncdn.com/i/teamlogos/mlb/500/sf.png', 'Seattle Mariners': 'https://a.espncdn.com/i/teamlogos/mlb/500/sea.png', 'St. Louis Cardinals': 'https://a.espncdn.com/i/teamlogos/mlb/500/stl.png', 'Tampa Bay Rays': 'https://a.espncdn.com/i/teamlogos/mlb/500/tb.png', 'Texas Rangers': 'https://a.espncdn.com/i/teamlogos/mlb/500/tex.png', 'Toronto Blue Jays': 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png', 'Washington Nationals': 'https://a.espncdn.com/i/teamlogos/mlb/500/wsh.png',
+            'Arizona Cardinals': 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png', 'Atlanta Falcons': 'https://a.espncdn.com/i/teamlogos/nfl/500/atl.png', 'Baltimore Ravens': 'https://a.espncdn.com/i/teamlogos/nfl/500/bal.png', 'Buffalo Bills': 'https://a.espncdn.com/i/teamlogos/nfl/500/buf.png', 'Carolina Panthers': 'https://a.espncdn.com/i/teamlogos/nfl/500/car.png', 'Chicago Bears': 'https://a.espncdn.com/i/teamlogos/nfl/500/chi.png', 'Cincinnati Bengals': 'https://a.espncdn.com/i/teamlogos/nfl/500/cin.png', 'Cleveland Browns': 'https://a.espncdn.com/i/teamlogos/nfl/500/cle.png', 'Dallas Cowboys': 'https://a.espncdn.com/i/teamlogos/nfl/500/dal.png', 'Denver Broncos': 'https://a.espncdn.com/i/teamlogos/nfl/500/den.png', 'Detroit Lions': 'https://a.espncdn.com/i/teamlogos/nfl/500/det.png', 'Green Bay Packers': 'https://a.espncdn.com/i/teamlogos/nfl/500/gb.png', 'Houston Texans': 'https://a.espncdn.com/i/teamlogos/nfl/500/hou.png', 'Indianapolis Colts': 'https://a.espncdn.com/i/teamlogos/nfl/500/ind.png', 'Jacksonville Jaguars': 'https://a.espncdn.com/i/teamlogos/nfl/500/jax.png', 'Kansas City Chiefs': 'https://a.espncdn.com/i/teamlogos/nfl/500/kc.png', 'Las Vegas Raiders': 'https://a.espncdn.com/i/teamlogos/nfl/500/lv.png', 'Los Angeles Chargers': 'https://a.espncdn.com/i/teamlogos/nfl/500/lac.png', 'Los Angeles Rams': 'https://a.espncdn.com/i/teamlogos/nfl/500/lar.png', 'Miami Dolphins': 'https://a.espncdn.com/i/teamlogos/nfl/500/mia.png', 'Minnesota Vikings': 'https://a.espncdn.com/i/teamlogos/nfl/500/min.png', 'New England Patriots': 'https://a.espncdn.com/i/teamlogos/nfl/500/ne.png', 'New Orleans Saints': 'https://a.espncdn.com/i/teamlogos/nfl/500/no.png', 'New York Giants': 'https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png', 'New York Jets': 'https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png', 'Philadelphia Eagles': 'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png', 'Pittsburgh Steelers': 'https://a.espncdn.com/i/teamlogos/nfl/500/pit.png', 'San Francisco 49ers': 'https://a.espncdn.com/i/teamlogos/nfl/500/sf.png', 'Seattle Seahawks': 'https://a.espncdn.com/i/teamlogos/nfl/500/sea.png', 'Tampa Bay Buccaneers': 'https://a.espncdn.com/i/teamlogos/nfl/500/tb.png', 'Tennessee Titans': 'https://a.espncdn.com/i/teamlogos/nfl/500/ten.png', 'Washington Commanders': 'https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png'
+        };
+        const sportsDB = [ 
+            { key: 'baseball_mlb', name: 'MLB', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png' }, 
+            { key: 'icehockey_nhl', name: 'NHL', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png' }, 
+            { key: 'americanfootball_nfl', name: 'NFL', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png' } 
+        ];
+        let allGamesData = {}; 
+        let recordsData = {};
+
+        async function initializeSportSelectionUI() {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/records`);
+                if (!response.ok) throw new Error('Failed to fetch records');
+                recordsData = await response.json();
+            } catch (e) {
+                console.error("Could not fetch records", e);
             }
-        }
-        const isPeakSeason = sportsInSeason >= 2;
-        
-        const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
-        const potdValueThreshold = isPeakSeason ? 5 : 2.5;
-        const parlayConfidenceThreshold = 7.5; 
-        
-        const now = new Date();
-        const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-        const upcomingTodayPredictions = allPredictions.filter(p => {
-            const gameDate = new Date(p.game.commence_time);
-            return gameDate > now && gameDate < cutoff;
-        });
 
-        let pickOfTheDay = null;
-        let parlay = null;
+            sportSelectionContainer.innerHTML = '';
+            sportsDB.forEach(sport => {
+                const history = recordsData[sport.key] || { wins: 0, losses: 0, totalProfit: 0 };
+                const total = history.wins + history.losses;
+                const pct = total > 0 ? Math.round((history.wins / total) * 100) : '-';
+                const profitColor = history.totalProfit >= 0 ? 'text-green-400' : 'text-red-400';
+                const profitSign = history.totalProfit > 0 ? '+' : '';
 
-        const highValuePicks = upcomingTodayPredictions.filter(p => {
-            const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
-            return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
-        });
-
-        if (highValuePicks.length > 0) {
-            pickOfTheDay = highValuePicks.reduce((best, current) => {
-                const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
-                const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
-                const bestScore = best.prediction.confidence + bestValue;
-                const currentScore = current.prediction.confidence + currentValue;
-                return currentScore > bestScore ? current : best;
+                const card = document.createElement('div');
+                card.className = 'sport-selector-card';
+                card.dataset.sport = sport.key;
+                card.innerHTML = `
+                    <img src="${sport.icon}" alt="${sport.name} Logo" class="sport-icon">
+                    <div class="record-container">
+                        <h4 class="text-white font-bold mb-2">Prediction Record</h4>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="record-stat"><div class="value">${history.wins}-${history.losses}</div><div class="label">W-L</div></div>
+                            <div class="record-stat"><div class="value">${pct}%</div><div class="label">Win %</div></div>
+                        </div>
+                        <div class="profit-container mt-2 border-t border-gray-700">
+                             <div class="label">P/L (Based on $10 Bets)</div>
+                             <div class="value ${profitColor}">${profitSign}$${history.totalProfit.toFixed(2)}</div>
+                        </div>
+                        <button class="history-btn" data-sport="${sport.key}">View History</button>
+                    </div>`;
+                card.querySelector('.history-btn').addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevents sport selection from firing
+                    handleHistoryClick(sport.key, sport.name);
+                });
+                card.addEventListener('click', () => handleSportSelection(sport.key));
+                sportSelectionContainer.appendChild(card);
             });
         }
-        
-        const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
-            .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) - 
-                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
-        
-        if (goodPicks.length >= 2) {
-            const leg1 = goodPicks[0];
-            const leg2 = goodPicks[1];
+
+        async function handleSportSelection(sportKey) {
+            document.querySelectorAll('.sport-selector-card').forEach(card => card.classList.toggle('active', card.dataset.sport === sportKey));
+            gamesContainer.innerHTML = ''; 
+            loadingIndicator.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
             
-            const odds1 = leg1.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg1.prediction.winner)?.price || 0;
-            const odds2 = leg2.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg2.prediction.winner)?.price || 0;
-
-            if (odds1 && odds2) {
-                parlay = {
-                    legs: [leg1, leg2],
-                    totalOdds: (odds1 * odds2).toFixed(2)
-                };
+            try {
+                const response = await fetch(`${API_ENDPOINT}/predictions?sport=${sportKey}`);
+                if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+                
+                const data = await response.json();
+                allGamesData[sportKey] = data; 
+                displayGames(sportKey);
+                displayFuturesPicks(sportKey);
+            } catch (error) {
+                console.error("Failed to fetch predictions:", error);
+                errorMessage.textContent = "Could not load predictions from the server. Please try again in a minute.";
+                errorMessage.classList.remove('hidden');
+            } finally {
+                loadingIndicator.classList.add('hidden');
             }
         }
 
-        res.json({ pickOfTheDay, parlay });
-    } catch (error) {
-        console.error("Special Picks Error:", error);
-        res.status(500).json({ error: 'Failed to generate special picks.' });
-    }
-});
+        function displayGames(sportKey) {
+            gamesContainer.innerHTML = '';
+            const data = allGamesData[sportKey];
 
+            if (data.message) {
+                errorMessage.textContent = data.message;
+                errorMessage.classList.remove('hidden');
+                return;
+            }
 
-app.get('/api/records', async (req, res) => {
-    try {
-        if (!recordsCollection) { await connectToDb(); }
-        const records = await recordsCollection.find({}).toArray();
-        const recordsObj = records.reduce((obj, item) => {
-            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
-            return obj;
-        }, {});
-        res.json(recordsObj);
-    } catch (e) {
-        console.error("Failed to fetch records:", e);
-        res.status(500).json({ error: "Could not retrieve records from database." });
-    }
-});
+            const activeGames = data.filter(gameData => {
+                const gameState = gameData.game.espnData?.status?.type?.state;
+                return gameState !== 'post' && gameState !== 'final';
+            });
+             
+            const sortedGames = activeGames.sort((a, b) => {
+                const aIsLive = a.game.espnData?.status?.type?.state === 'in';
+                const bIsLive = b.game.espnData?.status?.type?.state === 'in';
+                if (aIsLive && !bIsLive) return -1;
+                if (!aIsLive && bIsLive) return 1;
+                return new Date(a.game.commence_time) - new Date(b.game.commence_time);
+            });
 
-app.get('/api/reconcile-results', async (req, res) => {
-    const { password } = req.query;
-    if (password !== RECONCILE_PASSWORD) {
-        return res.status(401).json({ error: "Unauthorized" });
-    }
+            if (sortedGames.length === 0) {
+                 errorMessage.textContent = `No upcoming or live games found for ${sportsDB.find(s=>s.key === sportKey).name}.`;
+                 errorMessage.classList.remove('hidden');
+                 return;
+            }
 
-    try {
-        if (!predictionsCollection || !recordsCollection) await connectToDb();
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0); 
-        const pendingPredictions = await predictionsCollection.find({ 
-            status: 'pending',
-            gameDate: { $lt: today.toISOString() } 
-        }).toArray();
-
-        if (pendingPredictions.length === 0) {
-            return res.json({ message: "No pending predictions from previous days to reconcile." });
+            sortedGames.forEach(gameData => {
+                const gameCard = document.createElement('div');
+                gameCard.className = 'card-gradient rounded-lg p-6 shadow-lg';
+                gameCard.id = `game-card-${gameData.game.id}`;
+                renderGameCard(gameCard, gameData, sportKey);
+                gamesContainer.appendChild(gameCard);
+            });
+        }
+        
+        async function displayFuturesPicks(sportKey) {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/futures`);
+                const allPicks = await response.json();
+                const picks = allPicks[sportKey];
+                if (!picks) {
+                    futuresPicksContainer.classList.add('hidden');
+                    return;
+                }
+                futuresPicksContainer.innerHTML = `
+                    <div class="futures-pick-card">
+                        <div class="label">Championship Pick</div>
+                        <div class="team">${picks.championship}</div>
+                    </div>
+                    <div class="futures-pick-card">
+                        <div class="label">Team to Watch</div>
+                        <div class="team">${picks.hotPick}</div>
+                    </div>
+                `;
+                futuresPicksContainer.classList.remove('hidden');
+            } catch (e) {
+                console.error("Could not load futures picks", e);
+                futuresPicksContainer.classList.add('hidden');
+            }
         }
 
-        let reconciledCount = 0;
-        const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
+        function renderGameCard(cardElement, data, sportKey) {
+            const { game, prediction } = data;
+            const { home_team, away_team, espnData } = game;
+            const { winner, strengthText, factors, weather } = prediction;
+
+            const competition = espnData?.competitions?.[0];
+            const espnStatus = competition?.status;
+            const gameState = espnStatus?.type?.state;
+            const isLive = gameState === 'in';
+
+            let middleContentHtml = '<div class="text-2xl font-bold text-gray-500 text-center">@</div>';
+            if (isLive && competition) {
+                const home = competition.competitors.find(c => c.homeAway === 'home');
+                const away = competition.competitors.find(c => c.homeAway === 'away');
+                const scoreHtml = `<div class="text-3xl font-bold text-white">${away?.score ?? '0'} - ${home?.score ?? '0'}</div>`;
+                const liveStatusContent = `<div class="text-sm font-semibold text-red-400 mb-1">${espnStatus?.type?.detail || 'Live'}</div>`;
+                middleContentHtml = `${liveStatusContent}${scoreHtml}`;
+            }
+
+            const awayLogo = teamLogosDB[away_team] || `https://placehold.co/64x64/2d3748/ffffff?text=??`;
+            const homeLogo = teamLogosDB[home_team] || `https://placehold.co/64x64/2d3748/ffffff?text=??`;
+            
+            const bookmaker = game.bookmakers?.[0];
+            const homeOdds = bookmaker?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===home_team)?.price ?? 'N/A';
+            const awayOdds = bookmaker?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===away_team)?.price ?? 'N/A';
+            
+            const teamRecordAway = factors['Record']?.awayStat || 'N/A';
+            const teamRecordHome = factors['Record']?.homeStat || 'N/A';
+            
+            const gameDateHtml = game.commence_time 
+                ? `<div class="date-display">${formatGameDate(new Date(game.commence_time))}</div>`
+                : '';
+            
+            cardElement.innerHTML = `
+                ${isLive ? '<div class="live-badge">LIVE</div>' : ''}
+                
+                <div class="flex justify-between items-center mb-2 h-8">
+                    <div class="w-1/3">
+                        ${gameDateHtml}
+                    </div>
+                    <div class="w-1/3 text-center">
+                        ${generateWeatherIconHtml(weather, sportKey)}
+                    </div>
+                    <div class="w-1/3">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 items-center mb-4">
+                    <div class="text-center">
+                        <img src="${awayLogo}" class="h-16 mx-auto mb-2" alt="${away_team} logo">
+                        <p class="font-bold text-lg">${away_team}</p>
+                        <p class="text-gray-400 text-sm">${teamRecordAway}</p>
+                        <p class="text-xl font-semibold text-yellow-400 mt-1">${awayOdds}</p>
+                    </div>
+                    
+                    <div class="text-center h-16 flex flex-col justify-center">${middleContentHtml}</div>
+                    
+                    <div class="text-center">
+                        <img src="${homeLogo}" class="h-16 mx-auto mb-2" alt="${home_team} logo">
+                        <p class="font-bold text-lg">${home_team}</p>
+                        <p class="text-gray-400 text-sm">${teamRecordHome}</p>
+                        <p class="text-xl font-semibold text-yellow-400 mt-1">${homeOdds}</p>
+                    </div>
+                </div>
+                
+                ${generateSharpReport(prediction, home_team, away_team)}
+
+                <div class="prime-pick-container">
+                    <div class="prime-pick-title">PRIME PICKS</div>
+                    <div class="prime-pick-grid">
+                        <div class="prime-pick-item">
+                            <div class="prime-pick-label">Moneyline</div>
+                            <div class="prime-pick-value">${winner}</div>
+                            <div class="prime-pick-confidence">${strengthText}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 mt-4">
+                    <button class="explanation-btn w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg">Why This Pick?</button>
+                    <button class="ai-analysis-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Get AI Analysis</button>
+                </div>
+                <div class="explanation-box hidden mt-3"></div>
+            `;
+            cardElement.querySelector('.explanation-btn').addEventListener('click', (e) => {
+                const box = e.target.closest('.card-gradient').querySelector('.explanation-box');
+                box.classList.toggle('hidden');
+                if (!box.classList.contains('hidden')) {
+                    box.innerHTML = generateExplanationHtml(factors);
+                }
+            });
+            cardElement.querySelector('.ai-analysis-btn').addEventListener('click', (e) => {
+                handleAiAnalysis(e.target, data);
+            });
+        }
         
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
+        function generateExplanationHtml(factors) {
+            const factorOrder = ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Rating', 'Defensive Rating', 'Social Sentiment', 'Injury Impact', 'Betting Value'];
+            let html = '<div class="space-y-2"><h4 class="font-bold text-center text-white mb-2">Key Factor Breakdown</h4>';
+            factorOrder.forEach(factorName => {
+                const data = factors[factorName];
+                if (data) {
+                    html += `<div class="explanation-item">
+                                <div class="stat-text text-xs">${data.awayStat || 'N/A'}</div>
+                                <div class="factor-label">${factorName}</div>
+                                <div class="stat-text text-xs">${data.homeStat || 'N/A'}</div>
+                             </div>`;
+                }
+            });
+            return html + '</div>';
+        }
+        
+        function generateWeatherIconHtml(weatherData, sportKey) {
+            if (sportKey === 'icehockey_nhl' || !weatherData) return '';
+            let iconSvg = '';
+            let colorClass = 'text-gray-400';
+            let weatherDescription = 'Clear';
+            if (weatherData.precip > 0.5) {
+                weatherDescription = 'Rain'; colorClass = 'text-blue-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 0010.5 21z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 12a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 0015.75 12z" /><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 003 13.5z" transform="translate(15 2)"/><path stroke-linecap="round" stroke-linejoin="round" d="M12.75 3.065A8.25 8.25 0 005.25 8.25v.75a8.25 8.25 0 0015 0V8.25a8.25 8.25 0 00-7.22-5.185z" /></svg>`;
+            } else if (weatherData.wind > 35) {
+                weatherDescription = 'Windy'; colorClass = 'text-slate-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>`;
+            } else {
+                weatherDescription = weatherData.temp > 28 ? 'Hot & Sunny' : 'Clear'; colorClass = 'text-yellow-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>`;
+            }
+            return `<div class="weather-icon-container inline-block ${colorClass}"><div class="w-8 h-8">${iconSvg}</div><div class="weather-tooltip"><strong>Forecast: ${weatherDescription}</strong><br>Temp: ${weatherData.temp}°C<br>Wind: ${weatherData.wind} km/h<br>Precip: ${weatherData.precip} mm</div></div>`;
+        }
+        
+        function generateSharpReport(prediction, home, away) {
+            if (!prediction || typeof prediction.homeValue !== 'number' || isNaN(prediction.homeValue)) return '';
+            const advantageTeam = prediction.homeValue > prediction.awayValue ? home : away;
+            const valueStrength = Math.max(prediction.homeValue, prediction.awayValue);
+            if (valueStrength < 5) return '';
+            return `<div class="sharp-report-container"><div class="title">SHARP REPORT</div><p class="text">The model sees a <strong class="text-yellow-300">${valueStrength.toFixed(1)}%</strong> value edge on the <span class="font-bold text-yellow-300">${advantageTeam}</span>, suggesting their odds are undervalued.</p></div>`;
+        }
+        
+        async function fetchAndDisplaySpecialPicks() {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/special-picks`);
+                if (!response.ok) throw new Error('Failed to fetch');
+                const { pickOfTheDay, parlay } = await response.json();
+                displaySpecialPicks(pickOfTheDay, parlay);
+            } catch (error) {
+                console.error("Could not fetch special picks", error);
+                specialPicksContainer.innerHTML = '<p class="text-center text-red-400 col-span-1 md:col-span-2">Could not load special picks.</p>';
+            }
+        }
 
-        for (const sportKey of sportKeys) {
-            const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
-            if (!map) continue;
+        function displaySpecialPicks(potd, parlay) {
+            let potdHtml = `<div class="special-pick-card"><div class="title">PICK OF THE DAY</div><div class="text-center text-gray-400 p-4">No high-value pick found.</div></div>`;
+            if (potd) {
+                const { game, prediction } = potd;
+                const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === prediction.winner)?.price ?? 'N/A';
+                potdHtml = `
+                    <div class="special-pick-card" id="potd-card">
+                        <div class="title">PICK OF THE DAY</div>
+                        <div class="px-4 pb-4">
+                            <p class="text-center text-sm text-gray-400 mb-2">${game.away_team} @ ${game.home_team}</p>
+                            <div class="prime-pick-container !mt-0">
+                                <div class="prime-pick-grid">
+                                    <div class="prime-pick-item">
+                                        <div class="prime-pick-label">Moneyline</div>
+                                        <div class="prime-pick-value">${prediction.winner}</div>
+                                        <div class="prime-pick-confidence">${prediction.strengthText}</div>
+                                        <p class="text-xl font-semibold text-yellow-400 mt-2">${winnerOdds}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 mt-4">
+                                <button class="potd-explanation-btn w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Why This Pick?</button>
+                                <button class="potd-ai-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Get AI Analysis</button>
+                            </div>
+                            <div class="explanation-box hidden mt-3"></div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            let parlayHtml = `<div class="special-pick-card"><div class="title">PARLAY OF THE DAY</div><div class="text-center text-gray-400 p-4">Not enough confident picks.</div></div>`;
+            if (parlay) {
+                const leg1 = parlay.legs[0];
+                const leg2 = parlay.legs[1];
+                parlayHtml = `
+                     <div class="special-pick-card" id="parlay-card">
+                        <div class="title">PARLAY OF THE DAY</div>
+                        <div class="px-4 pb-4">
+                            <div class="space-y-3">
+                                <div class="bg-slate-700/50 p-2 rounded-lg text-center">
+                                    <p class="text-xs text-gray-400">Leg 1</p>
+                                    <p class="font-bold text-white">${leg1.prediction.winner}</p>
+                                </div>
+                                <div class="bg-slate-700/50 p-2 rounded-lg text-center">
+                                    <p class="text-xs text-gray-400">Leg 2</p>
+                                    <p class="font-bold text-white">${leg2.prediction.winner}</p>
+                                </div>
+                            </div>
+                            <div class="mt-3 text-center">
+                                <p class="text-xs text-gray-400 uppercase">Total Odds</p>
+                                <p class="text-2xl font-bold text-yellow-400">${parlay.totalOdds}</p>
+                            </div>
+                            <div class="mt-3">
+                                <button class="parlay-ai-btn w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Get Parlay Analysis</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
 
-            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
-            const { data: espnData } = await axios.get(url);
+            specialPicksContainer.innerHTML = potdHtml + parlayHtml;
 
-            if (!espnData.events) continue;
+            if (potd) {
+                const potdCard = document.getElementById('potd-card');
+                potdCard.querySelector('.potd-explanation-btn').addEventListener('click', (e) => {
+                    const box = potdCard.querySelector('.explanation-box');
+                    box.classList.toggle('hidden');
+                    if (!box.classList.contains('hidden')) {
+                        box.innerHTML = generateExplanationHtml(potd.prediction.factors);
+                    }
+                });
+                potdCard.querySelector('.potd-ai-btn').addEventListener('click', (e) => {
+                    handleAiAnalysis(e.target, potd);
+                });
+            }
+            if (parlay) {
+                document.getElementById('parlay-card').querySelector('.parlay-ai-btn').addEventListener('click', (e) => {
+                    handleParlayAiAnalysis(e.target, parlay);
+                });
+            }
+        }
+        
+        async function handleAiAnalysis(button, gameData) {
+            button.disabled = true;
+            button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+            aiModalTitle.textContent = `AI Analysis: ${gameData.game.away_team} @ ${gameData.game.home_team}`;
+            aiModalContent.innerHTML = `<p>Generating analysis... please wait.</p>`;
+            aiModal.classList.add('flex');
+            aiModal.classList.remove('hidden');
+            try {
+                 const response = await fetch(`${API_ENDPOINT}/ai-analysis`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ game: gameData.game, prediction: gameData.prediction })
+                });
+                if (!response.ok) throw new Error('Server returned an error');
+                const { analysisHtml } = await response.json();
+                aiModalContent.innerHTML = analysisHtml;
+            } catch (error) {
+                console.error("AI Analysis Error:", error);
+                aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Get AI Analysis';
+            }
+        }
+        
+        async function handleParlayAiAnalysis(button, parlay) {
+            button.disabled = true;
+            button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+            aiModalTitle.textContent = `AI Parlay Analysis`;
+            aiModalContent.innerHTML = `<p>Generating parlay analysis... please wait.</p>`;
+            aiModal.classList.add('flex');
+            aiModal.classList.remove('hidden');
+            try {
+                 const response = await fetch(`${API_ENDPOINT}/parlay-ai-analysis`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parlay })
+                });
+                if (!response.ok) throw new Error('Server returned an error');
+                const { analysisHtml } = await response.json();
+                aiModalContent.innerHTML = analysisHtml;
+            } catch (error) {
+                console.error("Parlay AI Analysis Error:", error);
+                aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Get Parlay Analysis';
+            }
+        }
+        
+        async function handleHistoryClick(sportKey, sportName) {
+            historyModalTitle.textContent = `Recent ${sportName} Bet History`;
+            historyModalContent.innerHTML = `<p>Fetching recent bets...</p>`;
+            historyModal.classList.add('flex');
+            historyModal.classList.remove('hidden');
 
-            for (const prediction of pendingPredictions.filter(p => p.sportKey === sportKey)) {
-                const gameEvent = espnData.events.find(e => {
-                    const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
-                    const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
-                    const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                    const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
-                    if (!eventHome || !eventAway) return false;
+            try {
+                const response = await fetch(`${API_ENDPOINT}/recent-bets?sport=${sportKey}`);
+                if (!response.ok) throw new Error('Failed to fetch bet history.');
+                const bets = await response.json();
 
-                    const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
-                    const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
-                    return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
+                if (bets.length === 0) {
+                    historyModalContent.innerHTML = '<p>No completed bets found for this sport yet.</p>';
+                    return;
+                }
+
+                let tableHtml = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm text-left">
+                            <thead class="bg-gray-700 text-xs uppercase">
+                                <tr>
+                                    <th class="p-2">Date</th>
+                                    <th class="p-2">Matchup</th>
+                                    <th class="p-2">Our Pick</th>
+                                    <th class="p-2 text-center">Result</th>
+                                    <th class="p-2 text-right">P/L</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                bets.forEach(bet => {
+                    const gameDate = new Date(bet.gameDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    const resultClass = bet.status === 'win' ? 'text-green-400' : 'text-red-400';
+                    const profitClass = bet.profit > 0 ? 'text-green-400' : 'text-red-400';
+                    const profitSign = bet.profit > 0 ? '+' : '';
+
+                    tableHtml += `
+                        <tr class="border-b border-gray-700">
+                            <td class="p-2">${gameDate}</td>
+                            <td class="p-2">${bet.awayTeam} @ ${bet.homeTeam}</td>
+                            <td class="p-2 font-semibold">${bet.predictedWinner}</td>
+                            <td class="p-2 text-center font-bold ${resultClass}">${bet.status.toUpperCase()}</td>
+                            <td class="p-2 text-right font-semibold ${profitClass}">${profitSign}$${bet.profit.toFixed(2)}</td>
+                        </tr>
+                    `;
                 });
 
-                if (gameEvent && gameEvent.status.type.completed) {
-                    const competition = gameEvent.competitions[0];
-                    const winnerData = competition.competitors.find(c => c.winner === true);
-                    if (!winnerData) continue;
+                tableHtml += `</tbody></table></div>`;
+                historyModalContent.innerHTML = tableHtml;
 
-                    const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
-                    const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
-
-                    const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
-                    
-                    let profit = 0;
-                    if (result === 'win') {
-                        profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
-                    } else {
-                        profit = -10;
-                    }
-
-                    await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
-                    
-                    const updateField = result === 'win' 
-                        ? { $inc: { wins: 1, totalProfit: profit } }
-                        : { $inc: { losses: 1, totalProfit: profit } };
-                    
-                    await recordsCollection.updateOne(
-                        { sport: sportKey },
-                        updateField,
-                        { upsert: true }
-                    );
-                    reconciledCount++;
-                }
-            }
-        }
-        res.json({ message: `Reconciliation complete. Processed ${reconciledCount} predictions.` });
-    } catch (error) {
-        console.error("Reconciliation Error:", error);
-        res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
-    }
-});
-
-app.get('/api/recent-bets', async (req, res) => {
-    const { sport } = req.query;
-    if (!sport) {
-        return res.status(400).json({ error: "Sport parameter is required." });
-    }
-
-    try {
-        if (!predictionsCollection) await connectToDb();
-        
-        const recentBets = await predictionsCollection.find({
-            sportKey: sport,
-            status: { $in: ['win', 'loss'] }
-        })
-        .sort({ gameDate: -1 })
-        .limit(20)
-        .toArray();
-
-        for (const bet of recentBets) {
-            if (bet.game && bet.game.espnData && bet.game.espnData.competitions) {
-                const competition = bet.game.espnData.competitions[0];
-                if (competition && competition.competitors) {
-                    const winnerData = competition.competitors.find(c => c.winner === true);
-                    if(winnerData && winnerData.team) {
-                        bet.actualWinner = winnerData.team.displayName;
-                    }
-                }
+            } catch (error) {
+                console.error("History Modal Error:", error);
+                historyModalContent.innerHTML = `<p class="text-red-400">Could not load bet history. Please try again later.</p>`;
             }
         }
 
-        res.json(recentBets);
-    } catch (error) {
-        console.error("Recent Bets Error:", error);
-        res.status(500).json({ error: "Failed to fetch recent bets." });
-    }
-});
+        function formatGameDate(gameDate) {
+            const now = new Date();
+            const isToday = now.toDateString() === gameDate.toDateString();
+            const timeFormat = { hour: 'numeric', minute: '2-digit', hour12: true };
+            const timeString = gameDate.toLocaleTimeString([], timeFormat);
+            if (isToday) return `Today at ${timeString}`;
+            const dateFormat = { weekday: 'short', month: 'short', day: 'numeric' };
+            return `${gameDate.toLocaleDateString([], dateFormat)} at ${timeString}`;
+        }
 
+        function handleLogin() {
+            if (passwordInput.value.trim() === CORRECT_PASSWORD) {
+                loginError.classList.add('hidden');
+                loginScreen.style.display = 'none';
+                successAnimation.style.display = 'flex';
+                setTimeout(() => {
+                    successAnimation.style.display = 'none';
+                    appContainer.classList.remove('hidden');
+                    startApp();
+                }, 2000); 
+                if (rememberDevice.checked) localStorage.setItem('rememberedLogin', 'true');
+            } else {
+                loginError.classList.remove('hidden');
+            }
+        }
 
-app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
+        async function startApp() {
+            await initializeSportSelectionUI();
+            fetchAndDisplaySpecialPicks();
+            const firstSport = sportsDB[0];
+            if(firstSport) await handleSportSelection(firstSport.key);
+        }
 
-app.post('/api/ai-analysis', async (req, res) => {
-    try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        const { game, prediction } = req.body;
-        const { home_team, away_team } = game;
-        const { winner, factors } = prediction;
-        const homeRecord = factors['Record']?.homeStat || 'N/A';
-        const awayRecord = factors['Record']?.awayStat || 'N/A';
-        const homeL10 = factors['Recent Form (L10)']?.homeStat || 'N/A';
-        const awayL10 = factors['Recent Form (L10)']?.awayStat || 'N/A';
-        const homeSentiment = factors['Social Sentiment']?.homeStat || 'N/A';
-        const awaySentiment = factors['Social Sentiment']?.awayStat || 'N/A';
-        
-        const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game.
-            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
+        document.addEventListener('DOMContentLoaded', () => {
+            togglePassword.addEventListener('click', () => {
+                const isPassword = passwordInput.type === 'password';
+                passwordInput.type = isPassword ? 'text' : 'password';
+                togglePassword.textContent = isPassword ? '🔒' : '👁';
+            });
+            loginBtn.addEventListener('click', handleLogin);
+            passwordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleLogin(); });
 
-            Game: ${away_team} (${awayRecord}, ${awayL10} L10) @ ${home_team} (${homeRecord}, ${homeL10} L10)
-            Our Algorithm's Prediction: ${winner}
+            closeAiModalBtn.addEventListener('click', () => { aiModal.classList.add('hidden'); aiModal.classList.remove('flex'); });
+            aiModal.addEventListener('click', (e) => { if (e.target === aiModal) { aiModal.classList.add('hidden'); aiModal.classList.remove('flex'); } });
 
-            Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup.
-            2. An <hr> with class "border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-indigo-400 mb-2" titled "Social Sentiment Analysis". Follow it with a <p> with class "text-gray-300 mb-4". In this paragraph, explain that this score (Home: ${homeSentiment}, Away: ${awaySentiment}) is derived from recent discussions on sports betting forums like Reddit's r/sportsbook. Briefly interpret the scores - for example, does the higher score suggest the public is heavily favoring that team, or are the scores close, indicating a divided opinion?
-            4. An <hr> with class "border-gray-700 my-4".
-            5. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
-            6. An <hr> with class "border-gray-700 my-4".
-            7. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Bear Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks. Make key stats bold with <strong>.
-            8. An <hr> with class "border-gray-700 my-4".
-            9. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation.
-        `;
-
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
-        res.json({ analysisHtml });
-    } catch (error) {
-        console.error("AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate AI analysis." });
-    }
-});
-
-app.post('/api/parlay-ai-analysis', async (req, res) => {
-    try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        const { parlay } = req.body;
-        const leg1 = parlay.legs[0];
-        const leg2 = parlay.legs[1];
-
-        const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following 2-leg parlay.
-            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
-
-            Parlay Details:
-            - Leg 1: Pick ${leg1.prediction.winner} in the ${leg1.game.away_team} @ ${leg1.game.home_team} game.
-            - Leg 2: Pick ${leg2.prediction.winner} in the ${leg2.game.away_team} @ ${leg2.game.home_team} game.
-            - Total Odds: ${parlay.totalOdds}
-
-            Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Parlay Rationale". Follow it with a <p> with class="text-gray-300 mb-4" that explains what a parlay is (higher risk for a higher reward) and the overall strategy for this specific combination.
-            2. An <hr> with class="border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Leg 1 Breakdown: ${leg1.prediction.winner}". Follow it with a <p> briefly justifying this pick.
-            4. A <h4> with class "text-xl font-bold text-teal-400 mb-2 mt-3" titled "Leg 2 Breakdown: ${leg2.prediction.winner}". Follow it with a <p> briefly justifying this second pick.
-            5. An <hr> with class="border-gray-700 my-4".
-            6. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Associated Risks". Follow it with a <p> explaining the primary risks. Mention that both bets must win, and discuss the single biggest risk for each leg that could cause the parlay to fail.
-            7. An <hr> with class="border-gray-700 my-4".
-            8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
-        `;
-        
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
-        res.json({ analysisHtml });
-
-    } catch (error) {
-        console.error("Parlay AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
-    }
-});
-
-
-// This must be the last GET route to serve the frontend
-app.get('*', (req, res) => {
-    // --- FIX: Serve index.html from the correct parent 'public' directory ---
-    res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
-});
-
-const PORT = process.env.PORT || 10000;
-connectToDb().then(() => {
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-});
+            closeHistoryModalBtn.addEventListener('click', () => { historyModal.classList.add('hidden'); historyModal.classList.remove('flex'); });
+            historyModal.addEventListener('click', (e) => { if (e.target === historyModal) { historyModal.classList.add('hidden'); historyModal.classList.remove('flex'); } });
+            
+            if (localStorage.getItem('rememberedLogin') === 'true') {
+                loginScreen.style.display = 'none';
+                appContainer.classList.remove('hidden');
+                startApp();
+            }
+        });
+    </script>
+</body>
+</html>
