@@ -147,14 +147,14 @@ function extractStandings(node, stats) {
     if (node.standings && node.standings.entries) {
         for (const team of node.standings.entries) {
             const teamName = team.team.displayName;
+            
+            // --- FIX: Using the exact stat names found in the live ESPN API data ---
             const wins = team.stats.find(s => s.name === 'wins')?.displayValue || '0';
             const losses = team.stats.find(s => s.name === 'losses')?.displayValue || '0';
             const streak = team.stats.find(s => s.name === 'streak')?.displayValue || 'N/A';
-            
-            // --- UPDATED: More robust search for Last10, RPG, and ERA keys ---
-            const lastTen = team.stats.find(s => s.name === 'vsLast10' || s.name === 'recordLast10' || s.name === 'lastTenGames')?.displayValue || '0-0';
-            const runsPerGame = team.stats.find(s => s.name === 'runsPerGame' || s.name === 'rpg' || s.name === 'runsAvg')?.displayValue || '0';
-            const teamERA = team.stats.find(s => s.name === 'era' || s.name === 'earnedRunAverage' || s.name === 'pitchingEra')?.displayValue || '99.99';
+            const lastTen = team.stats.find(s => s.name === 'vsLast10')?.displayValue || '0-0';
+            const runsPerGame = team.stats.find(s => s.name === 'avgRuns')?.displayValue || '0';
+            const teamERA = team.stats.find(s => s.name === 'earnedRunAverage')?.displayValue || '99.99';
 
             stats[teamName] = { 
                 record: `${wins}-${losses}`, 
