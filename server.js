@@ -185,8 +185,12 @@ async function getTeamStatsFromAPI(sportKey) {
         };
         const map = sportLeagueMap[sportKey];
         if (!map) return {};
+
         try {
-            const url = `http://site.api.espn.com/apis/v2/sports/${map.sport}/${map.league}/standings`;
+            // --- FIX: Add the current year to the URL to get current standings ---
+            const currentYear = new Date().getFullYear();
+            const url = `http://site.api.espn.com/apis/v2/sports/${map.sport}/${map.league}/standings?year=${currentYear}`;
+            
             const { data } = await axios.get(url);
             const stats = {};
             if (data.children) {
