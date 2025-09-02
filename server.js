@@ -132,36 +132,27 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    const key = `odds_${sportKey}_3day_fetch_deduped`;
+    const key = `odds_${sportKey}_3day_fetch_v2`;
     return fetchData(key, async () => {
         try {
+            const allGames = [];
+            const gameIds = new Set();
+            const datesToFetch = [];
+
+            // --- FIX: Use UTC dates to avoid timezone issues ---
             const today = new Date();
-            const tomorrow = new Date(today);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const dayAfter = new Date(today);
-            dayAfter.setDate(dayAfter.getDate() + 2);
+            for (let i = 0; i < 3; i++) {
+                const targetDate = new Date(today);
+                targetDate.setUTCDate(today.getUTCDate() + i);
+                datesToFetch.push(targetDate.toISOString().split('T')[0]);
+            }
 
-            // Format date to YYYY-MM-DD for the API
-            const formatDateParam = (date) => {
-                const year = date.getFullYear();
-                const month = (date.getMonth() + 1).toString().padStart(2, '0');
-                const day = date.getDate().toString().padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            };
-
-            const dates = [formatDateParam(today), formatDateParam(tomorrow), formatDateParam(dayAfter)];
-            let allGames = [];
-            const gameIds = new Set(); // To store unique game IDs
-
-            // Create an array of promises for each API call
-            const requests = dates.map(date => 
+            const requests = datesToFetch.map(date => 
                 axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`)
             );
 
-            // Execute all requests in parallel
             const responses = await Promise.all(requests);
 
-            // Combine the results and de-duplicate
             for (const response of responses) {
                 for (const game of response.data) {
                     if (!gameIds.has(game.id)) {
