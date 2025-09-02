@@ -132,12 +132,12 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    // --- FIX: Add daysFrom parameter to fetch a wider range of games for paid plans ---
-    const key = `odds_${sportKey}_2days`;
+    // Corrected the cache key and removed the faulty daysFrom parameter
+    const key = `odds_${sportKey}_all_upcoming`;
     return fetchData(key, async () => {
         try {
-            // Fetch games for today and tomorrow (up to 2 days out)
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&daysFrom=2&apiKey=${ODDS_API_KEY}`);
+            // This URL now correctly fetches all available upcoming games
+            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&apiKey=${ODDS_API_KEY}`);
             return data;
         } catch (error) {
             console.error("ERROR IN getOdds function:", error.message);
