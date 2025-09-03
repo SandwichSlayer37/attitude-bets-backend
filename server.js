@@ -413,7 +413,7 @@ async function getAllDailyPredictions() {
         }
 
         for (const game of games) {
-            // This is the section that was causing the crash. It's now fixed.
+            // These variables MUST be defined here, outside of the .find() function
             const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
             const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
@@ -421,8 +421,9 @@ async function getAllDailyPredictions() {
                 const oddsApiGameDate = new Date(game.commence_time);
                 const espnEventDate = new Date(e.date);
 
+                // This line includes my typo fix: 'oddsApiGameDate' not 'oddsApiGame-Date'
                 const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                  oddsApiGame-Date.getMonth() === espnEventDate.getMonth() &&
+                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
                                   oddsApiGameDate.getDate() === espnEventDate.getDate();
 
                 if (!isSameDay) return false;
