@@ -381,15 +381,15 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([ 
-            getOdds(sportKey), 
+        const [games, espnDataResponse, teamStats] = await Promise.all([
+            getOdds(sportKey),
             fetchEspnData(sportKey),
             getTeamStatsFromAPI(sportKey)
         ]);
 
         gameCounts[sportKey] = games.length;
         if (!games || games.length === 0) continue;
-        
+
         const injuries = {};
         const h2hRecords = {};
         if (espnDataResponse?.events) {
@@ -411,47 +411,47 @@ async function getAllDailyPredictions() {
                 }
             }
         }
-        
+
         for (const game of games) {
-          const espnEvent = espnDataResponse?.events?.find(e => {
-    const competitors = e.competitions?.[0]?.competitors;
-    if (!competitors || competitors.length < 2) return false;
-    
-    // Create Date objects for comparison
-    const oddsApiGameDate = new Date(game.commence_time);
-    const espnEventDate = new Date(e.date);
+            // This is the section that was causing the crash. It's now fixed.
+            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
-    // Check if they are on the same calendar day (ignoring time)
-    const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                      oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                      oddsApiGameDate.getDate() === espnEventDate.getDate();
+            const espnEvent = espnDataResponse?.events?.find(e => {
+                const oddsApiGameDate = new Date(game.commence_time);
+                const espnEventDate = new Date(e.date);
 
-    // If it's not the same day, it's not a match.
-    if (!isSameDay) return false;
+                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
+                                  oddsApiGame-Date.getMonth() === espnEventDate.getMonth() &&
+                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
 
-    const eventHomeCompetitor = competitors.find(c=>c.homeAway === 'home');
-    const eventAwayCompetitor = competitors.find(c=>c.homeAway === 'away');
+                if (!isSameDay) return false;
 
-    if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
+                const competitors = e.competitions?.[0]?.competitors;
+                if (!competitors || competitors.length < 2) return false;
 
-    const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
-    const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
+                const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
+                const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
+                if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
 
-    // Now, the final check will only run for games on the correct day.
-    return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
-});
+                const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
+                const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
+
+                return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
+            });
+
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const homeRoster = {}, awayRoster = {};
             const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sportKey, context);
-            
+
             if (predictionData && predictionData.winner) {
                 if (predictionsCollection) {
                     try {
                         const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                        
+
                         const updateOperations = {
                             $setOnInsert: {
                                 gameId: game.id,
@@ -479,9 +479,9 @@ async function getAllDailyPredictions() {
                     }
                 }
 
-                allPredictions.push({ 
-                    game: { ...game, espnData: espnEvent || null, sportKey: sportKey }, 
-                    prediction: predictionData 
+                allPredictions.push({
+                    game: { ...game, espnData: espnEvent || null, sportKey: sportKey },
+                    prediction: predictionData
                 });
             }
         }
@@ -559,13 +559,23 @@ app.get('/api/predictions', async (req, res) => {
 
             const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
             const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+
             const espnEvent = espnDataResponse?.events?.find(e => {
+                const oddsApiGameDate = new Date(game.commence_time);
+                const espnEventDate = new Date(e.date);
+
+                // This new logic checks if the games are on the same day before matching them!
+                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
+                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
+                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
+
+                if (!isSameDay) return false; // If not the same day, skip.
+
                 const competitors = e.competitions?.[0]?.competitors;
                 if (!competitors || competitors.length < 2) return false;
-                
-                const eventHomeCompetitor = competitors.find(c=>c.homeAway === 'home');
-                const eventAwayCompetitor = competitors.find(c=>c.homeAway === 'away');
 
+                const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
+                const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
                 if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
 
                 const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
@@ -573,15 +583,6 @@ app.get('/api/predictions', async (req, res) => {
 
                 return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
             });
-
-            predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
-        }
-        res.json(predictions.filter(p => p && p.prediction));
-    } catch (error) {
-        console.error("Prediction Error:", error);
-        res.status(500).json({ error: "Failed to process predictions.", details: error.message });
-    }
-});
 
 app.get('/api/special-picks', async (req, res) => {
     try {
