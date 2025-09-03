@@ -142,7 +142,7 @@ async function getOdds(sportKey) {
             // --- DEFINITIVE FIX: Fetch a window of -1 to +2 days from the server's UTC date ---
             // This captures all relevant games regardless of user's timezone.
             const today = new Date();
-            for (let i = -1; i < 2; i++) { // Fetches yesterday, today, and tomorrow from server's perspective
+            for (let i = -1; i < 3; i++) { // Fetches yesterday, today, and tomorrow from server's perspective
                 const targetDate = new Date(today);
                 targetDate.setUTCDate(today.getUTCDate() + i);
                 datesToFetch.push(targetDate.toISOString().split('T')[0]);
