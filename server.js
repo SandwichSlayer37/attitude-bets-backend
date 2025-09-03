@@ -338,9 +338,14 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
 
+   // In server.js -> runPredictionEngine
     if (sportKey === 'baseball_mlb') {
         factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
-        factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA || 99.99).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA || 99.99).toFixed(2)} ERA` };
+        
+        // NEW: Only calculate Defensive Rating if BOTH teams have valid ERA data (i.e., not the 99.99 placeholder)
+        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
+            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
+        }
     }
 
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
