@@ -298,7 +298,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 
 async function scrapeFanGraphsHittingStats() {
     // We are using v2 of the cache key from the last step.
-    return fetchData('fangraphs_hitting_v2', async () => {
+    return fetchData('fangraphs_hitting_v3', async () => {
         try {
             console.log("Scraping FanGraphs for new hitting stats...");
             const currentYear = new Date().getFullYear();
