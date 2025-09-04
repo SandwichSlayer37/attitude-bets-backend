@@ -294,18 +294,23 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 }
 
 // --- NEW WEB SCRAPING FUNCTION ---
+// In server.js
+
 async function scrapeFanGraphsHittingStats() {
-    // We will cache these results for 6 hours (21600000 ms) to avoid scraping too often.
+    // We are using v2 of the cache key from the last step.
     return fetchData('fangraphs_hitting_v2', async () => {
         try {
             console.log("Scraping FanGraphs for new hitting stats...");
             const currentYear = new Date().getFullYear();
             const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts&rost=0&age=0&filter=&players=0&startdate=&enddate=`;
 
-            // 1. Fetch the HTML, now with a User-Agent header to look like a browser
+            // 1. Fetch the HTML with a full set of browser-like headers to avoid being blocked.
             const response = await axios.get(url, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept-Language': 'en-US,en;q=0.9',
                 }
             });
             const html = response.data;
@@ -324,7 +329,6 @@ async function scrapeFanGraphsHittingStats() {
 
                 // 5. Clean up the data
                 const wrcPlus = parseInt(wrcPlusRaw, 10);
-                // Use our existing map to standardize the team name
                 const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
                 
                 if (canonicalName && !isNaN(wrcPlus)) {
@@ -333,10 +337,9 @@ async function scrapeFanGraphsHittingStats() {
                 }
             });
             
-            // If the scraper found no teams, something is wrong with the page layout.
             if (Object.keys(hittingStats).length === 0) {
                  console.error("FanGraphs scraper failed to find any teams. The site's HTML may have changed.");
-                 return {}; // Return empty object on failure
+                 return {}; 
             }
 
             console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams.`);
@@ -344,9 +347,9 @@ async function scrapeFanGraphsHittingStats() {
 
         } catch (error) {
             console.error("Error during FanGraphs scrape:", error.message);
-            return {}; // Return an empty object on failure
+            return {}; 
         }
-    }, 21600000);
+    }, 21600000); 
 }
 
 async function runPredictionEngine(game, sportKey, context) {
