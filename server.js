@@ -296,15 +296,17 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 // --- NEW WEB SCRAPING FUNCTION ---
 // In server.js
 
+// In server.js
+
 async function scrapeFanGraphsHittingStats() {
-    // We are using v2 of the cache key from the last step.
-    return fetchData('fangraphs_hitting_v3', async () => {
+    // Bust the cache one last time by changing to v4
+    return fetchData('fangraphs_hitting_v4', async () => {
         try {
             console.log("Scraping FanGraphs for new hitting stats...");
             const currentYear = new Date().getFullYear();
-            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts&rost=0&age=0&filter=&players=0&startdate=&enddate=`;
+            // NEW: Using a cleaner, more stable URL to prevent 400 Bad Request errors.
+            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts`;
 
-            // 1. Fetch the HTML with a full set of browser-like headers to avoid being blocked.
             const response = await axios.get(url, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
@@ -315,24 +317,17 @@ async function scrapeFanGraphsHittingStats() {
             });
             const html = response.data;
 
-            // 2. Load the HTML into cheerio to parse it
             const $ = cheerio.load(html);
-
             const hittingStats = {};
-            // 3. Select the main data table and loop through each row
+            
             $('.rgMasterTable > tbody > tr').each((index, element) => {
                 const columns = $(element).find('td');
-
-                // 4. Extract the raw text from the columns we need
-                const teamNameRaw = $(columns[1]).text().trim(); // Team Name is in the 2nd column
-                const wrcPlusRaw = $(columns[8]).text().trim();  // wRC+ is in the 9th column
-
-                // 5. Clean up the data
+                const teamNameRaw = $(columns[1]).text().trim();
+                const wrcPlusRaw = $(columns[8]).text().trim();
                 const wrcPlus = parseInt(wrcPlusRaw, 10);
                 const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
                 
                 if (canonicalName && !isNaN(wrcPlus)) {
-                    // 6. Store the cleaned data
                     hittingStats[canonicalName] = { wrcPlus };
                 }
             });
