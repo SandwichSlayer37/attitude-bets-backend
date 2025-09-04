@@ -140,10 +140,8 @@ async function getOdds(sportKey) {
             const gameIds = new Set();
             const datesToFetch = [];
 
-            // --- DEFINITIVE FIX: Fetch a window of -1 to +2 days from the server's UTC date ---
-            // This captures all relevant games regardless of user's timezone.
             const today = new Date();
-            for (let i = -1; i < 3; i++) { // EXPANDED DATE WINDOW
+            for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
                 targetDate.setUTCDate(today.getUTCDate() + i);
                 datesToFetch.push(targetDate.toISOString().split('T')[0]);
@@ -172,19 +170,15 @@ async function getOdds(sportKey) {
     }, 900000); // Cache for 15 minutes
 }
 
-// --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
     return fetchData(`stats_api_${sportKey}_v3`, async () => {
-        // This new function only supports MLB for now.
         if (sportKey !== 'baseball_mlb') {
             return {};
         }
-
         const currentYear = new Date().getFullYear();
         const stats = {};
 
         try {
-            // Step 1: Initialize all MLB teams from a reliable source and get standings
             const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
             const { data: standingsData } = await axios.get(standingsUrl);
             if (standingsData.records) {
@@ -192,19 +186,17 @@ async function getTeamStatsFromAPI(sportKey) {
                     for (const teamRecord of record.teamRecords) {
                         const teamName = teamRecord.team.name;
                         const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-
                         stats[teamName] = {
                             record: `${teamRecord.wins}-${teamRecord.losses}`,
                             streak: teamRecord.streak?.streakCode || 'N/A',
                             lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                            runsPerGame: 0, // Default value
-                            teamERA: 99.99   // Default value
+                            runsPerGame: 0,
+                            teamERA: 99.99
                         };
                     }
                 }
             }
 
-            // Step 2: Get Detailed League-Wide Hitting and Pitching Stats
             const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
             const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
 
@@ -226,26 +218,19 @@ async function getTeamStatsFromAPI(sportKey) {
                     });
                 });
             }
-
             return stats;
-
         } catch (e) {
             console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            return stats; // Return whatever was successfully fetched
+            return stats;
         }
-    }, 3600000); // Cache for 1 hour
+    }, 3600000);
 }
 
 async function getWeatherData(teamName) {
-    if (!teamName) {
-        return null;
-    }
+    if (!teamName) return null;
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
-
-    if (!location) {
-        return null;
-    }
+    if (!location) return null;
 
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
@@ -317,8 +302,12 @@ async function scrapeFanGraphsHittingStats() {
             const currentYear = new Date().getFullYear();
             const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts&rost=0&age=0&filter=&players=0&startdate=&enddate=`;
 
-            // 1. Fetch the HTML from the FanGraphs leaderboard page
-            const response = await axios.get(url);
+            // 1. Fetch the HTML, now with a User-Agent header to look like a browser
+            const response = await axios.get(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
+                }
+            });
             const html = response.data;
 
             // 2. Load the HTML into cheerio to parse it
@@ -326,7 +315,6 @@ async function scrapeFanGraphsHittingStats() {
 
             const hittingStats = {};
             // 3. Select the main data table and loop through each row
-            // The selector targets the specific table grid on the FanGraphs page
             $('.rgMasterTable > tbody > tr').each((index, element) => {
                 const columns = $(element).find('td');
 
@@ -344,12 +332,18 @@ async function scrapeFanGraphsHittingStats() {
                     hittingStats[canonicalName] = { wrcPlus };
                 }
             });
+            
+            // If the scraper found no teams, something is wrong with the page layout.
+            if (Object.keys(hittingStats).length === 0) {
+                 console.error("FanGraphs scraper failed to find any teams. The site's HTML may have changed.");
+                 return {}; // Return empty object on failure
+            }
 
-            console.log(`Successfully scraped ${Object.keys(hittingStats).length} teams.`);
+            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams.`);
             return hittingStats;
 
         } catch (error) {
-            console.error("Error scraping FanGraphs:", error.message);
+            console.error("Error during FanGraphs scrape:", error.message);
             return {}; // Return an empty object on failure
         }
     }, 21600000);
