@@ -296,7 +296,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 // --- NEW WEB SCRAPING FUNCTION ---
 async function scrapeFanGraphsHittingStats() {
     // We will cache these results for 6 hours (21600000 ms) to avoid scraping too often.
-    return fetchData('fangraphs_hitting_v1', async () => {
+    return fetchData('fangraphs_hitting_v2', async () => {
         try {
             console.log("Scraping FanGraphs for new hitting stats...");
             const currentYear = new Date().getFullYear();
