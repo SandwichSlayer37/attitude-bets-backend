@@ -7,8 +7,6 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(cors());
@@ -141,8 +139,10 @@ async function getOdds(sportKey) {
             const gameIds = new Set();
             const datesToFetch = [];
 
+            // --- DEFINITIVE FIX: Fetch a window of -1 to +2 days from the server's UTC date ---
+            // This captures all relevant games regardless of user's timezone.
             const today = new Date();
-            for (let i = -1; i < 3; i++) {
+            for (let i = -1; i < 3; i++) { // EXPANDED DATE WINDOW
                 const targetDate = new Date(today);
                 targetDate.setUTCDate(today.getUTCDate() + i);
                 datesToFetch.push(targetDate.toISOString().split('T')[0]);
@@ -171,15 +171,19 @@ async function getOdds(sportKey) {
     }, 900000); // Cache for 15 minutes
 }
 
+// --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
     return fetchData(`stats_api_${sportKey}_v3`, async () => {
+        // This new function only supports MLB for now.
         if (sportKey !== 'baseball_mlb') {
             return {};
         }
+
         const currentYear = new Date().getFullYear();
         const stats = {};
 
         try {
+            // Step 1: Initialize all MLB teams from a reliable source and get standings
             const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
             const { data: standingsData } = await axios.get(standingsUrl);
             if (standingsData.records) {
@@ -187,17 +191,19 @@ async function getTeamStatsFromAPI(sportKey) {
                     for (const teamRecord of record.teamRecords) {
                         const teamName = teamRecord.team.name;
                         const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
+
                         stats[teamName] = {
                             record: `${teamRecord.wins}-${teamRecord.losses}`,
                             streak: teamRecord.streak?.streakCode || 'N/A',
                             lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                            runsPerGame: 0,
-                            teamERA: 99.99
+                            runsPerGame: 0, // Default value
+                            teamERA: 99.99   // Default value
                         };
                     }
                 }
             }
 
+            // Step 2: Get Detailed League-Wide Hitting and Pitching Stats
             const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
             const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
 
@@ -219,19 +225,26 @@ async function getTeamStatsFromAPI(sportKey) {
                     });
                 });
             }
+
             return stats;
+
         } catch (e) {
             console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            return stats;
+            return stats; // Return whatever was successfully fetched
         }
-    }, 3600000);
+    }, 3600000); // Cache for 1 hour
 }
 
 async function getWeatherData(teamName) {
-    if (!teamName) return null;
+    if (!teamName) {
+        return null;
+    }
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
-    if (!location) return null;
+
+    if (!location) {
+        return null;
+    }
 
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
@@ -294,69 +307,6 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-// --- NEW WEB SCRAPING FUNCTION ---
-// In server.js
-
-// In server.js
-
-// In server.js
-
-// In server.js
-
-async function scrapeFanGraphsHittingStats() {
-    // Bust the cache one last time by changing to v6
-    return fetchData('fangraphs_hitting_v6', async () => {
-        let browser = null;
-        try {
-            console.log("Launching Puppeteer to scrape FanGraphs...");
-            const currentYear = new Date().getFullYear();
-            // FINAL FIX: Using the modern, correct URL for the team leaderboards.
-            const url = `https://www.fangraphs.com/leaders/teams?pos=all&stats=bat&lg=all&season=${currentYear}&season1=${currentYear}&ind=0&team=ts`;
-
-            browser = await puppeteer.launch({
-                args: ['--no-sandbox', '--disable-setuid-sandbox'],
-            });
-
-            const page = await browser.newPage();
-            await page.goto(url, { waitUntil: 'networkidle2' });
-            const html = await page.content();
-            
-            await browser.close();
-
-            const $ = cheerio.load(html);
-            const hittingStats = {};
-            
-            // This selector is different for the new URL's table structure
-            $('.fg-data-grid.is-locked.is-fixed > tbody > tr').each((index, element) => {
-                const columns = $(element).find('td');
-                const teamNameRaw = $(columns[1]).text().trim();
-                const wrcPlusRaw = $(columns[8]).text().trim(); // wRC+ is still the 9th column (index 8)
-                const wrcPlus = parseInt(wrcPlusRaw, 10);
-                const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
-                
-                if (canonicalName && !isNaN(wrcPlus)) {
-                    hittingStats[canonicalName] = { wrcPlus };
-                }
-            });
-            
-            if (Object.keys(hittingStats).length === 0) {
-                 console.error("Puppeteer scraper failed to find any teams. The new URL's HTML may have changed.");
-                 return {}; 
-            }
-
-            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams with Puppeteer.`);
-            return hittingStats;
-
-        } catch (error) {
-            console.error("Error during Puppeteer scrape:", error.message);
-            if (browser) {
-                await browser.close();
-            }
-            return {}; 
-        }
-    }, 21600000); 
-}
-
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
     const weights = getDynamicWeights(sportKey);
@@ -388,17 +338,11 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
 
+   // In server.js -> runPredictionEngine
     if (sportKey === 'baseball_mlb') {
-        // UPGRADED: Using wRC+ from scraped data
-        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 }; // Default to average (100) if missing
-        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
-        factors['Offensive Rating'] = { 
-            value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, // Adjust weight as needed
-            homeStat: `${homeHitting.wrcPlus} wRC+`, 
-            awayStat: `${awayHitting.wrcPlus} wRC+` 
-        };
+        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
         
-        // UPGRADED: Only calculate Defensive Rating if BOTH teams have valid ERA data
+        // NEW: Only calculate Defensive Rating if BOTH teams have valid ERA data (i.e., not the 99.99 placeholder)
         if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
         }
@@ -442,11 +386,10 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey),
-            scrapeFanGraphsHittingStats() // Added scraping here
+            getTeamStatsFromAPI(sportKey)
         ]);
 
         gameCounts[sportKey] = games.length;
@@ -505,7 +448,7 @@ async function getAllDailyPredictions() {
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const homeRoster = {}, awayRoster = {};
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats }; // Added hittingStats
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
@@ -556,11 +499,10 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport),
-            scrapeFanGraphsHittingStats() // Added scraping here
+            getTeamStatsFromAPI(sport)
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
 
@@ -592,7 +534,7 @@ app.get('/api/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats }; // Added hittingStats
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
