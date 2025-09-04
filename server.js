@@ -301,37 +301,36 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 
 // In server.js
 
+// In server.js
+
 async function scrapeFanGraphsHittingStats() {
-    // We are busting the cache one last time to ensure this new function runs.
-    return fetchData('fangraphs_hitting_v5', async () => {
-        let browser = null; // Define browser outside the try block
+    // Bust the cache one last time by changing to v6
+    return fetchData('fangraphs_hitting_v6', async () => {
+        let browser = null;
         try {
             console.log("Launching Puppeteer to scrape FanGraphs...");
             const currentYear = new Date().getFullYear();
-            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts`;
-            
-            // 1. Launch a headless browser instance.
-            // These arguments are important for running in a server environment like Render.
+            // FINAL FIX: Using the modern, correct URL for the team leaderboards.
+            const url = `https://www.fangraphs.com/leaders/teams?pos=all&stats=bat&lg=all&season=${currentYear}&season1=${currentYear}&ind=0&team=ts`;
+
             browser = await puppeteer.launch({
                 args: ['--no-sandbox', '--disable-setuid-sandbox'],
             });
 
             const page = await browser.newPage();
-            // 2. Navigate to the page and wait for it to fully load
             await page.goto(url, { waitUntil: 'networkidle2' });
-
-            // 3. Get the final HTML content after JavaScript has run
             const html = await page.content();
             
-            await browser.close(); // Close the browser as soon as we have the content
+            await browser.close();
 
             const $ = cheerio.load(html);
             const hittingStats = {};
             
-            $('.rgMasterTable > tbody > tr').each((index, element) => {
+            // This selector is different for the new URL's table structure
+            $('.fg-data-grid.is-locked.is-fixed > tbody > tr').each((index, element) => {
                 const columns = $(element).find('td');
                 const teamNameRaw = $(columns[1]).text().trim();
-                const wrcPlusRaw = $(columns[8]).text().trim();
+                const wrcPlusRaw = $(columns[8]).text().trim(); // wRC+ is still the 9th column (index 8)
                 const wrcPlus = parseInt(wrcPlusRaw, 10);
                 const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
                 
@@ -341,7 +340,7 @@ async function scrapeFanGraphsHittingStats() {
             });
             
             if (Object.keys(hittingStats).length === 0) {
-                 console.error("Puppeteer scraper failed to find any teams. The site's HTML may have changed.");
+                 console.error("Puppeteer scraper failed to find any teams. The new URL's HTML may have changed.");
                  return {}; 
             }
 
@@ -351,7 +350,7 @@ async function scrapeFanGraphsHittingStats() {
         } catch (error) {
             console.error("Error during Puppeteer scrape:", error.message);
             if (browser) {
-                await browser.close(); // Ensure browser is closed on error
+                await browser.close();
             }
             return {}; 
         }
