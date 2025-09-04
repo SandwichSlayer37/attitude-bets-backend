@@ -7,6 +7,7 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
@@ -307,6 +308,53 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
+// --- NEW WEB SCRAPING FUNCTION ---
+async function scrapeFanGraphsHittingStats() {
+    // We will cache these results for 6 hours (21600000 ms) to avoid scraping too often.
+    return fetchData('fangraphs_hitting_v1', async () => {
+        try {
+            console.log("Scraping FanGraphs for new hitting stats...");
+            const currentYear = new Date().getFullYear();
+            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts&rost=0&age=0&filter=&players=0&startdate=&enddate=`;
+
+            // 1. Fetch the HTML from the FanGraphs leaderboard page
+            const response = await axios.get(url);
+            const html = response.data;
+
+            // 2. Load the HTML into cheerio to parse it
+            const $ = cheerio.load(html);
+
+            const hittingStats = {};
+            // 3. Select the main data table and loop through each row
+            // The selector targets the specific table grid on the FanGraphs page
+            $('.rgMasterTable > tbody > tr').each((index, element) => {
+                const columns = $(element).find('td');
+
+                // 4. Extract the raw text from the columns we need
+                const teamNameRaw = $(columns[1]).text().trim(); // Team Name is in the 2nd column
+                const wrcPlusRaw = $(columns[8]).text().trim();  // wRC+ is in the 9th column
+
+                // 5. Clean up the data
+                const wrcPlus = parseInt(wrcPlusRaw, 10);
+                // Use our existing map to standardize the team name
+                const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
+                
+                if (canonicalName && !isNaN(wrcPlus)) {
+                    // 6. Store the cleaned data
+                    hittingStats[canonicalName] = { wrcPlus };
+                }
+            });
+
+            console.log(`Successfully scraped ${Object.keys(hittingStats).length} teams.`);
+            return hittingStats;
+
+        } catch (error) {
+            console.error("Error scraping FanGraphs:", error.message);
+            return {}; // Return an empty object on failure
+        }
+    }, 21600000);
+}
+
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
     const weights = getDynamicWeights(sportKey);
@@ -338,11 +386,17 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
 
-   // In server.js -> runPredictionEngine
     if (sportKey === 'baseball_mlb') {
-        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
+        // UPGRADED: Using wRC+ from scraped data
+        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 }; // Default to average (100) if missing
+        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
+        factors['Offensive Rating'] = { 
+            value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, // Adjust weight as needed
+            homeStat: `${homeHitting.wrcPlus} wRC+`, 
+            awayStat: `${awayHitting.wrcPlus} wRC+` 
+        };
         
-        // NEW: Only calculate Defensive Rating if BOTH teams have valid ERA data (i.e., not the 99.99 placeholder)
+        // UPGRADED: Only calculate Defensive Rating if BOTH teams have valid ERA data
         if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
         }
@@ -386,10 +440,11 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey)
+            getTeamStatsFromAPI(sportKey),
+            scrapeFanGraphsHittingStats() // Added scraping here
         ]);
 
         gameCounts[sportKey] = games.length;
@@ -448,7 +503,7 @@ async function getAllDailyPredictions() {
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const homeRoster = {}, awayRoster = {};
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats }; // Added hittingStats
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
@@ -499,10 +554,11 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport)
+            getTeamStatsFromAPI(sport),
+            scrapeFanGraphsHittingStats() // Added scraping here
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
 
@@ -534,7 +590,7 @@ app.get('/api/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats }; // Added hittingStats
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
