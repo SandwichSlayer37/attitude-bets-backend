@@ -8,6 +8,7 @@ const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(cors());
@@ -298,24 +299,31 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
 
 // In server.js
 
-async function scrapeFanGraphsHittingStats() {
-    // Bust the cache one last time by changing to v4
-    return fetchData('fangraphs_hitting_v4', async () => {
-        try {
-            console.log("Scraping FanGraphs for new hitting stats...");
-            const currentYear = new Date().getFullYear();
-            // NEW: Using a cleaner, more stable URL to prevent 400 Bad Request errors.
-            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts`;
+// In server.js
 
-            const response = await axios.get(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                }
+async function scrapeFanGraphsHittingStats() {
+    // We are busting the cache one last time to ensure this new function runs.
+    return fetchData('fangraphs_hitting_v5', async () => {
+        let browser = null; // Define browser outside the try block
+        try {
+            console.log("Launching Puppeteer to scrape FanGraphs...");
+            const currentYear = new Date().getFullYear();
+            const url = `https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all&qual=0&type=8&season=${currentYear}&month=0&season1=${currentYear}&ind=0&team=0,ts`;
+            
+            // 1. Launch a headless browser instance.
+            // These arguments are important for running in a server environment like Render.
+            browser = await puppeteer.launch({
+                args: ['--no-sandbox', '--disable-setuid-sandbox'],
             });
-            const html = response.data;
+
+            const page = await browser.newPage();
+            // 2. Navigate to the page and wait for it to fully load
+            await page.goto(url, { waitUntil: 'networkidle2' });
+
+            // 3. Get the final HTML content after JavaScript has run
+            const html = await page.content();
+            
+            await browser.close(); // Close the browser as soon as we have the content
 
             const $ = cheerio.load(html);
             const hittingStats = {};
@@ -333,15 +341,18 @@ async function scrapeFanGraphsHittingStats() {
             });
             
             if (Object.keys(hittingStats).length === 0) {
-                 console.error("FanGraphs scraper failed to find any teams. The site's HTML may have changed.");
+                 console.error("Puppeteer scraper failed to find any teams. The site's HTML may have changed.");
                  return {}; 
             }
 
-            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams.`);
+            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams with Puppeteer.`);
             return hittingStats;
 
         } catch (error) {
-            console.error("Error during FanGraphs scrape:", error.message);
+            console.error("Error during Puppeteer scrape:", error.message);
+            if (browser) {
+                await browser.close(); // Ensure browser is closed on error
+            }
             return {}; 
         }
     }, 21600000); 
