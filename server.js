@@ -117,6 +117,19 @@ const getWinPct = (rec) => {
 }
 
 
+// --- DYNAMIC WEIGHTS ---
+function getDynamicWeights(sportKey) {
+    if (sportKey === 'baseball_mlb') {
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
+    }
+    if (sportKey === 'icehockey_nhl') {
+        // NEW ADVANCED NHL WEIGHTS
+        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
+    }
+    // Default / NFL
+    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
+}
+
 // --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
@@ -668,13 +681,14 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { home_team, away_team } = game;
         const { winner, factors } = prediction;
         
-        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made a prediction. Your task is to provide a detailed breakdown of this pick based on the data provided. Your response MUST be a valid JSON object with two keys: "bullCase" and "bearCase".
-        - "bullCase": A paragraph explaining the strongest arguments and data points that support our algorithm's prediction.
-        - "bearCase": A paragraph explaining the primary risks and counter-arguments that could cause this prediction to fail.`;
+        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so.
+        Your response MUST be a valid JSON object with two keys: "finalPick" and "analysisHtml".
+        - "finalPick": An object with a single key, "winner", containing the full team name of your final decision.
+        - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
         
         let dataSummary = `
             Matchup: ${away_team} at ${home_team}
-            Our Algorithm's Prediction: ${winner}
+            Our Algorithm's Initial Prediction: ${winner}
             Key Statistical Factors Considered:
         `;
 
@@ -691,15 +705,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const analysis = JSON.parse(cleanedJson);
 
-        if (analysis.bullCase && analysis.bearCase) {
-             const analysisHtml = `
-                <h4 class="text-xl font-bold text-teal-400 mb-2">Bull Case for ${winner}</h4>
-                <p class="text-gray-300 mb-4">${analysis.bullCase}</p>
-                <hr class="border-gray-700 my-4">
-                <h4 class="text-xl font-bold text-red-400 mb-2">Potential Risks</h4>
-                <p class="text-gray-300">${analysis.bearCase}</p>
-            `;
-            res.json({ analysisHtml });
+        if (analysis.finalPick && analysis.analysisHtml) {
+            res.json(analysis);
         } else {
             throw new Error("Invalid JSON response from Gemini for analysis.");
         }
