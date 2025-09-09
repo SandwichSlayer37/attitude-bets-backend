@@ -48,10 +48,10 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
-const SPORTS_DB = [
-    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 },
-    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 },
-    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 }
+const SPORTS_DB = [ 
+    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
+    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
+    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 } 
 ];
 
 const teamLocationMap = {
@@ -171,7 +171,7 @@ async function getOdds(sportKey) {
 
 // --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
-    return fetchData(`stats_api_${sportKey}_v3`, async () => {
+    return fetchData(`stats_api_${sportKey}_v5`, async () => { // Incremented version
         if (sportKey !== 'baseball_mlb') {
             return {};
         }
@@ -190,7 +190,7 @@ async function getTeamStatsFromAPI(sportKey) {
                             record: `${teamRecord.wins}-${teamRecord.losses}`,
                             streak: teamRecord.streak?.streakCode || 'N/A',
                             lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                            runsPerGame: 0,
+                            ops: 0, // NEW: Add default ops
                             teamERA: 99.99
                         };
                     }
@@ -206,11 +206,8 @@ async function getTeamStatsFromAPI(sportKey) {
                         const teamName = split.team.name;
                         if (stats[teamName]) {
                             if (statGroup.group.displayName === 'hitting') {
-                                const runs = split.stat.runs;
-                                const games = split.stat.gamesPlayed;
-                                if (games > 0) {
-                                    stats[teamName].runsPerGame = parseFloat((runs / games).toFixed(2));
-                                }
+                                // NEW: Capture OPS
+                                stats[teamName].ops = parseFloat(split.stat.ops);
                             } else if (statGroup.group.displayName === 'pitching') {
                                 stats[teamName].teamERA = parseFloat(split.stat.era);
                             }
@@ -218,6 +215,7 @@ async function getTeamStatsFromAPI(sportKey) {
                     });
                 });
             }
+            console.log("Successfully fetched and processed stats from MLB API.");
             return stats;
         } catch (e) {
             console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
@@ -301,8 +299,8 @@ async function runPredictionEngine(game, sportKey, context) {
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
 
-    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99.99 };
-    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99.99 };
+    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', ops: 0.700, teamERA: 99.99 };
+    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', ops: 0.700, teamERA: 99.99 };
 
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
@@ -325,7 +323,14 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
 
     if (sportKey === 'baseball_mlb') {
-        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
+        // NEW: Using OPS for Offensive Rating
+        const homeOps = homeStats.ops || 0.700; // Default to league average if missing
+        const awayOps = awayStats.ops || 0.700;
+        factors['Offensive Rating'] = { 
+            value: (homeOps - awayOps) * 100, // Multiply by 100 for more impact
+            homeStat: `${homeOps.toFixed(3)} OPS`, 
+            awayStat: `${awayOps.toFixed(3)} OPS` 
+        };
         
         if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
@@ -410,8 +415,8 @@ async function getAllDailyPredictions() {
                 const espnEventDate = new Date(e.date);
 
                 const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                    oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                    oddsApiGameDate.getDate() === espnEventDate.getDate();
+                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
+                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
 
                 if (!isSameDay) return false;
 
@@ -553,8 +558,8 @@ app.get('/api/predictions', async (req, res) => {
                 const espnEventDate = new Date(e.date);
 
                 const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                    oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                    oddsApiGameDate.getDate() === espnEventDate.getDate();
+                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
+                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
 
                 if (!isSameDay) return false;
 
@@ -624,7 +629,7 @@ app.get('/api/special-picks', async (req, res) => {
 
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
-                                (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
+                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
 
         if (goodPicks.length >= 2) {
             const leg1 = goodPicks[0];
@@ -826,7 +831,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().split('\`\`\`html').join('').split('\`\`\`').join('');
+        let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Analysis Error:", error);
@@ -860,11 +865,11 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
             7. An <hr> with class="border-gray-700 my-4".
             8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
         `;
-
+        
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().split('\`\`\`html').join('').split('\`\`\`').join('');
+        let analysisHtml = response.text().split('```html').join('').split('```').join('');
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -884,3 +889,4 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+ I want to make the app more robust and get rid of the 99.99 ERA. I will have the scraper fetch the ERA as well. Please update the scraper with this and provide all codes needed
