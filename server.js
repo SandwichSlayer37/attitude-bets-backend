@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Hybrid AI Prediction Engine
+// FINAL UPGRADED VERSION - Advanced NHL & Restored MLB
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
