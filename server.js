@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Switched to a reliable stats API
+// FINAL VERSION - Puppeteer completely removed for Render Free Tier
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -8,7 +8,7 @@ const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
-const puppeteer = require('puppeteer');
+// const puppeteer = require('puppeteer'); // REMOVED
 
 const app = express();
 app.use(cors());
@@ -184,7 +184,7 @@ async function getOdds(sportKey) {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v4`; // Increment version for new logic
+    const cacheKey = `stats_api_${sportKey}_v5`; // Increment version to switch back to API for MLB
     return fetchData(cacheKey, async () => {
         const stats = {};
 
@@ -207,6 +207,7 @@ async function getTeamStatsFromAPI(sportKey) {
                     }
                 }
 
+                // Switched back to MLB stats API instead of Puppeteer
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
                 if (leagueStatsData.stats) {
@@ -343,43 +344,10 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-async function scrapeFanGraphsHittingStats() {
-    return fetchData('fangraphs_hitting_v6', async () => {
-        let browser = null;
-        try {
-            console.log("Launching Puppeteer to scrape FanGraphs...");
-            const currentYear = new Date().getFullYear();
-            const url = `https://www.fangraphs.com/leaders/teams?pos=all&stats=bat&lg=all&season=${currentYear}&season1=${currentYear}&ind=0&team=ts`;
-            browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-            const page = await browser.newPage();
-            await page.goto(url, { waitUntil: 'networkidle2' });
-            const html = await page.content();
-            await browser.close();
-            const $ = cheerio.load(html);
-            const hittingStats = {};
-            $('.fg-data-grid.is-locked.is-fixed > tbody > tr').each((index, element) => {
-                const columns = $(element).find('td');
-                const teamNameRaw = $(columns[1]).text().trim();
-                const wrcPlusRaw = $(columns[8]).text().trim();
-                const wrcPlus = parseInt(wrcPlusRaw, 10);
-                const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
-                if (canonicalName && !isNaN(wrcPlus)) {
-                    hittingStats[canonicalName] = { wrcPlus };
-                }
-            });
-            if (Object.keys(hittingStats).length === 0) {
-                 console.error("Puppeteer scraper failed to find any teams. The new URL's HTML may have changed.");
-                 return {}; 
-            }
-            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams with Puppeteer.`);
-            return hittingStats;
-        } catch (error) {
-            console.error("Error during Puppeteer scrape:", error.message);
-            if (browser) await browser.close();
-            return {}; 
-        }
-    }, 21600000); 
-}
+// Puppeteer function is no longer needed and can be deleted or left commented out
+/*
+async function scrapeFanGraphsHittingStats() { ... }
+*/
 
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h } = context;
@@ -416,12 +384,15 @@ async function runPredictionEngine(game, sportKey, context) {
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
 
     } else if (sportKey === 'baseball_mlb') {
+        // MLB logic now uses API data, not Puppeteer
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 };
-        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
-        factors['Offensive Rating'] = { value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, homeStat: `${homeHitting.wrcPlus} wRC+`, awayStat: `${awayHitting.wrcPlus} wRC+` };
-        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
-            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
+        
+        if(homeStats.runsPerGame && awayStats.runsPerGame){
+             factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * weights.offensiveForm, homeStat: `${homeStats.runsPerGame} R/G`, awayStat: `${awayStats.runsPerGame} R/G` };
+        }
+       
+        if (homeStats.teamERA && awayStats.teamERA) {
+            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
 
@@ -461,11 +432,11 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        // Hitting stats (puppeteer call) is removed from this main loop
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey),
-            sportKey === 'baseball_mlb' ? scrapeFanGraphsHittingStats() : Promise.resolve({})
+            getTeamStatsFromAPI(sportKey)
         ]);
 
         gameCounts[sportKey] = games.length;
@@ -515,7 +486,7 @@ async function getAllDailyPredictions() {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats };
+            const context = { teamStats, weather, injuries, h2h, hittingStats: {} }; // Pass empty hittingStats
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
@@ -548,11 +519,11 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        // Hitting stats (puppeteer call) is removed from this main loop
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport),
-            sport === 'baseball_mlb' ? scrapeFanGraphsHittingStats() : Promise.resolve({})
+            getTeamStatsFromAPI(sport)
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
 
@@ -583,7 +554,7 @@ app.get('/api/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats };
+            const context = { teamStats, weather, injuries, h2h, hittingStats: {} }; // Pass empty hittingStats
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
