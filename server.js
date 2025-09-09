@@ -206,7 +206,7 @@ async function getTeamStatsFromAPI(sportKey) {
                         const teamName = split.team.name;
                         if (stats[teamName]) {
                             if (statGroup.group.displayName === 'hitting') {
-                                // NEW: Capture OPS
+                                // NEW: Capture OPS, removing the old RPG
                                 stats[teamName].ops = parseFloat(split.stat.ops);
                             } else if (statGroup.group.displayName === 'pitching') {
                                 stats[teamName].teamERA = parseFloat(split.stat.era);
@@ -889,4 +889,3 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
- I want to make the app more robust and get rid of the 99.99 ERA. I will have the scraper fetch the ERA as well. Please update the scraper with this and provide all codes needed
