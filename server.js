@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Advanced NHL & Restored MLB
+// FINAL UPGRADED VERSION - Hybrid AI Prediction Engine
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -116,19 +116,6 @@ const getWinPct = (rec) => {
     return totalGames > 0 ? rec.w / totalGames : 0;
 }
 
-
-// --- DYNAMIC WEIGHTS ---
-function getDynamicWeights(sportKey) {
-    if (sportKey === 'baseball_mlb') {
-        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
-    }
-    if (sportKey === 'icehockey_nhl') {
-        // NEW ADVANCED NHL WEIGHTS
-        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
-    }
-    // Default / NFL
-    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
-}
 
 // --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
@@ -356,38 +343,9 @@ async function fetchEspnData(sportKey) {
     }, 60000);
 }
 
-async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, sportKey) {
-    const key = `reddit_${[homeTeam, awayTeam].sort().join('_')}_${sportKey}`;
-    return fetchData(key, async () => {
-        try {
-            const createSearchQuery = (teamName) => `(${ (teamAliasMap[teamName] || [teamName.split(' ').pop()]).map(a => `"${a}"`).join(' OR ')})`;
-            const baseQuery = `${createSearchQuery(homeTeam)} OR ${createSearchQuery(awayTeam)}`;
-            const flair = flairMap[sportKey];
-            let results = await r.getSubreddit('sportsbook').search({ query: `flair:"${flair}" ${baseQuery}`, sort: 'new', time: 'month' });
-            if (results.length === 0) results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
-            if (results.length === 0) return { home: 5, away: 5 };
-            
-            let homeScore = 0, awayScore = 0;
-            const homeAliases = [homeTeam, ...(teamAliasMap[homeTeam] || [])].map(a => a.toLowerCase());
-            const awayAliases = [awayTeam, ...(teamAliasMap[awayTeam] || [])].map(a => a.toLowerCase());
-            results.forEach(post => {
-                const title = post.title.toLowerCase();
-                if (homeAliases.some(alias => title.includes(alias))) homeScore++;
-                if (awayAliases.some(alias => title.includes(alias))) awayScore++;
-            });
-
-            const totalScore = homeScore + awayScore;
-            if (totalScore === 0) return { home: 5, away: 5 };
-            return { home: 1 + (homeScore / totalScore) * 9, away: 1 + (awayScore / totalScore) * 9 };
-        } catch (e) {
-            console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
-            return { home: 5, away: 5 };
-        }
-    }, 1800000);
-}
-
+// RESTORED: Original weighted prediction engine
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
+    const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
 
@@ -397,7 +355,6 @@ async function runPredictionEngine(game, sportKey, context) {
     const homeStats = teamStats[homeCanonicalName] || {};
     const awayStats = teamStats[awayCanonicalName] || {};
     
-    const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
 
@@ -447,8 +404,7 @@ async function runPredictionEngine(game, sportKey, context) {
             factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
-
-    factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
+    
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
 
     for (const factor in factors) {
@@ -530,7 +486,7 @@ app.get('/api/predictions', async (req, res) => {
             
             const context = { 
                 teamStats, 
-                weather, 
+                weather,
                 injuries, 
                 h2h, 
                 allGames: games, 
@@ -560,74 +516,8 @@ app.get('/api/predictions', async (req, res) => {
     }
 });
 
-app.get('/api/special-picks', async (req, res) => {
-    try {
-        // This function will need to be updated to pass the new context to getAllDailyPredictions if special picks are for NHL
-        const { allPredictions, gameCounts } = await getAllDailyPredictions();
 
-        let sportsInSeason = 0;
-        for(const sport of SPORTS_DB) {
-            if(gameCounts[sport.key] >= sport.gameCountThreshold) {
-                sportsInSeason++;
-            }
-        }
-        const isPeakSeason = sportsInSeason >= 2;
-
-        const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
-        const potdValueThreshold = isPeakSeason ? 5 : 2.5;
-        const parlayConfidenceThreshold = 7.5;
-
-        const now = new Date();
-        const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-        const upcomingTodayPredictions = allPredictions.filter(p => {
-            const gameDate = new Date(p.game.commence_time);
-            return gameDate > now && gameDate < cutoff;
-        });
-
-        let pickOfTheDay = null;
-        let parlay = null;
-
-        const highValuePicks = upcomingTodayPredictions.filter(p => {
-            const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
-            return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
-        });
-
-        if (highValuePicks.length > 0) {
-            pickOfTheDay = highValuePicks.reduce((best, current) => {
-                const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
-                const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
-                const bestScore = best.prediction.confidence + bestValue;
-                const currentScore = current.prediction.confidence + currentValue;
-                return currentScore > bestScore ? current : best;
-            });
-        }
-
-        const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
-            .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
-                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
-
-        if (goodPicks.length >= 2) {
-            const leg1 = goodPicks[0];
-            const leg2 = goodPicks[1];
-
-            const odds1 = leg1.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg1.prediction.winner)?.price || 0;
-            const odds2 = leg2.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg2.prediction.winner)?.price || 0;
-
-            if (odds1 && odds2) {
-                parlay = {
-                    legs: [leg1, leg2],
-                    totalOdds: (odds1 * odds2).toFixed(2)
-                };
-            }
-        }
-
-        res.json({ pickOfTheDay, parlay });
-    } catch (error) {
-        console.error("Special Picks Error:", error);
-        res.status(500).json({ error: 'Failed to generate special picks.' });
-    }
-});
-
+// --- LEGACY ENDPOINTS (Special Picks, Records, AI Analysis etc.) ---
 
 app.get('/api/records', async (req, res) => {
     try {
@@ -777,93 +667,46 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { home_team, away_team } = game;
         const { winner, factors } = prediction;
-
-        // --- AI PROMPT REWRITE ---
-        const homeCanonical = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
-        const awayCanonical = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
         
-        const dataSummary = {
-            matchup: `${away_team} @ ${home_team}`,
-            prediction: winner,
-            record: `Home: ${factors['Record']?.homeStat || 'N/A'}, Away: ${factors['Record']?.awayStat || 'N/A'}`,
-            recentForm: `Home: ${factors['Recent Form (L10)']?.homeStat || factors['Hot Streak']?.homeStat || 'N/A'}, Away: ${factors['Recent Form (L10)']?.awayStat || factors['Hot Streak']?.awayStat || 'N/A'}`,
-            socialSentiment: `Home: ${factors['Social Sentiment']?.homeStat || 'N/A'}, Away: ${factors['Social Sentiment']?.awayStat || 'N/A'}`,
-            injuries: {
-                home: (factors['Injury Impact']?.injuries?.home || []).map(p => p.name).join(', ') || 'None',
-                away: (factors['Injury Impact']?.injuries?.away || []).map(p => p.name).join(', ') || 'None'
-            }
-        };
-
-        const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game based on the data summary provided.
-            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
-
-            Data Summary:
-            - Matchup: ${dataSummary.matchup}
-            - Our Algorithm's Prediction: ${dataSummary.prediction}
-            - Records: ${dataSummary.record}
-            - Recent Form / Streak: ${dataSummary.recentForm}
-            - Social Sentiment Score: ${dataSummary.socialSentiment}
-            - Key Injuries (Home): ${dataSummary.injuries.home}
-            - Key Injuries (Away): ${dataSummary.injuries.away}
-
-            Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup based on the data.
-            2. An <hr> with class "border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Mention key injuries if they are a factor. Make key stats bold with <strong>.
-            4. An <hr> with class "border-gray-700 my-4".
-            5. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Potential Risks". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks or counter-arguments. Mention key injuries if they are a factor.
-            6. An <hr> with class "border-gray-700 my-4".
-            7. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation, considering all the data provided.
+        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made a prediction. Your task is to provide a detailed breakdown of this pick based on the data provided. Your response MUST be a valid JSON object with two keys: "bullCase" and "bearCase".
+        - "bullCase": A paragraph explaining the strongest arguments and data points that support our algorithm's prediction.
+        - "bearCase": A paragraph explaining the primary risks and counter-arguments that could cause this prediction to fail.`;
+        
+        let dataSummary = `
+            Matchup: ${away_team} at ${home_team}
+            Our Algorithm's Prediction: ${winner}
+            Key Statistical Factors Considered:
         `;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Corrected Model Name
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
-        res.json({ analysisHtml });
+        for(const factor in factors) {
+            dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
+        }
+
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt
+        });
+        const result = await model.generateContent(dataSummary);
+        const responseText = result.response.text();
+        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const analysis = JSON.parse(cleanedJson);
+
+        if (analysis.bullCase && analysis.bearCase) {
+             const analysisHtml = `
+                <h4 class="text-xl font-bold text-teal-400 mb-2">Bull Case for ${winner}</h4>
+                <p class="text-gray-300 mb-4">${analysis.bullCase}</p>
+                <hr class="border-gray-700 my-4">
+                <h4 class="text-xl font-bold text-red-400 mb-2">Potential Risks</h4>
+                <p class="text-gray-300">${analysis.bearCase}</p>
+            `;
+            res.json({ analysisHtml });
+        } else {
+            throw new Error("Invalid JSON response from Gemini for analysis.");
+        }
+
     } catch (error) {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
-    }
-});
-
-app.post('/api/parlay-ai-analysis', async (req, res) => {
-    try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        const { parlay } = req.body;
-        const leg1 = parlay.legs[0];
-        const leg2 = parlay.legs[1];
-
-        const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following 2-leg parlay.
-            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
-
-            Parlay Details:
-            - Leg 1: Pick ${leg1.prediction.winner} in the ${leg1.game.away_team} @ ${leg1.game.home_team} game.
-            - Leg 2: Pick ${leg2.prediction.winner} in the ${leg2.game.away_team} @ ${leg2.game.home_team} game.
-            - Total Odds: ${parlay.totalOdds}
-
-            Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Parlay Rationale". Follow it with a <p> with class="text-gray-300 mb-4" that explains what a parlay is (higher risk for a higher reward) and the overall strategy for this specific combination.
-            2. An <hr> with class="border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Leg 1 Breakdown: ${leg1.prediction.winner}". Follow it with a <p> briefly justifying this pick.
-            4. A <h4> with class "text-xl font-bold text-teal-400 mb-2 mt-3" titled "Leg 2 Breakdown: ${leg2.prediction.winner}". Follow it with a <p> briefly justifying this second pick.
-            5. An <hr> with class="border-gray-700 my-4".
-            6. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Associated Risks". Follow it with a <p> explaining the primary risks. Mention that both bets must win, and discuss the single biggest risk for each leg that could cause the parlay to fail.
-            7. An <hr> with class="border-gray-700 my-4".
-            8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
-        `;
-
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Corrected Model Name
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
-        res.json({ analysisHtml });
-
-    } catch (error) {
-        console.error("Parlay AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
 
