@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- FIX 1: Corrected Static File Pathing ---
-const publicPath = path.join(__dirname, '..', 'public');
+const publicPath = path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
 
