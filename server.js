@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Advanced NHL & Restored MLB
+// FINAL UPGRADED VERSION - Hybrid AI Prediction Engine
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -13,7 +13,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// --- FIX 1: Corrected Static File Pathing ---
+const publicPath = path.join(__dirname, '..', 'public');
+app.use(express.static(publicPath));
+
 
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -116,19 +119,6 @@ const getWinPct = (rec) => {
     return totalGames > 0 ? rec.w / totalGames : 0;
 }
 
-
-// --- DYNAMIC WEIGHTS ---
-function getDynamicWeights(sportKey) {
-    if (sportKey === 'baseball_mlb') {
-        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
-    }
-    if (sportKey === 'icehockey_nhl') {
-        // NEW ADVANCED NHL WEIGHTS
-        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
-    }
-    // Default / NFL
-    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
-}
 
 // --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
@@ -698,12 +688,12 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt
+            systemInstruction: systemPrompt,
+            generationConfig: { responseMimeType: "application/json" }
         });
         const result = await model.generateContent(dataSummary);
         const responseText = result.response.text();
-        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const analysis = JSON.parse(cleanedJson);
+        const analysis = JSON.parse(responseText);
 
         if (analysis.finalPick && analysis.analysisHtml) {
             res.json(analysis);
@@ -720,7 +710,7 @@ app.post('/api/ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
 const PORT = process.env.PORT || 10000;
