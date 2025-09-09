@@ -7,6 +7,8 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
 const app = express();
 app.use(cors());
@@ -60,7 +62,7 @@ const teamLocationMap = {
     // NFL
     'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
     // NHL
-    'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 29.4270, lon: -98.4385 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 }
+    'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 32.7905, lon: -96.8103 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 }
 };
 
 const teamAliasMap = {
@@ -69,7 +71,7 @@ const teamAliasMap = {
     // NFL
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
     // NHL
-    'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'], 'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Hurricanes'], 'Chicago Blackhawks': ['Blackhawks'], 'Colorado Avalanche': ['Avalanche'], 'Columbus Blue Jackets': ['Blue Jackets'], 'Dallas Stars': ['Stars'], 'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'], 'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators'], 'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders'], 'New York Rangers': ['Rangers'], 'Ottawa Senators': ['Senators'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins'], 'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning'], 'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks'], 'Vegas Golden Knights': ['Golden Knights'], 'Washington Capitals': ['Capitals'], 'Winnipeg Jets': ['Jets']
+    'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'], 'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Hurricanes', 'Canes'], 'Chicago Blackhawks': ['Blackhawks'], 'Colorado Avalanche': ['Avalanche', 'Avs'], 'Columbus Blue Jackets': ['Blue Jackets', 'CBJ'], 'Dallas Stars': ['Stars'], 'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'], 'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators', 'Preds'], 'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders', 'Isles'], 'New York Rangers': ['Rangers'], 'Ottawa Senators': ['Senators', 'Sens'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins', 'Pens'], 'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning', 'Bolts'], 'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks', 'Nucks'], 'Vegas Golden Knights': ['Golden Knights', 'Knights'], 'Washington Capitals': ['Capitals', 'Caps'], 'Winnipeg Jets': ['Jets']
 };
 
 const canonicalTeamNameMap = {};
@@ -105,19 +107,31 @@ const dataCache = new Map();
 
 // --- HELPER FUNCTIONS ---
 const parseRecord = (rec) => {
-    if (!rec || typeof rec !== 'string') return { w: 0, l: 0 };
+    if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
     const parts = rec.split('-');
-    if (parts.length < 2) return { w: 0, l: 0 };
+    if (parts.length < 2) return { w: 0, l: 0, otl: 0 };
     const wins = parseInt(parts[0], 10);
     const losses = parseInt(parts[1], 10);
-    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0 };
-    return { w: wins, l: losses };
+    const otl = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0, otl: 0 };
+    return { w: wins, l: losses, otl: otl };
 };
-const getWinPct = (rec) => (rec.w + rec.l) > 0 ? rec.w / (rec.w + rec.l) : 0;
+const getWinPct = (rec) => {
+    const totalGames = rec.w + rec.l + (rec.otl || 0);
+    return totalGames > 0 ? rec.w / totalGames : 0;
+}
+
 
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
-    if (sportKey === 'baseball_mlb') return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
+    if (sportKey === 'baseball_mlb') {
+        return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
+    }
+    if (sportKey === 'icehockey_nhl') {
+        // NHL SPECIFIC WEIGHTS
+        return { record: 8, hotStreak: 9, h2h: 9, newsSentiment: 8, injuryImpact: 12, offensiveForm: 10, defensiveForm: 10, specialTeams: 13, value: 5 };
+    }
+    // Default / NFL
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
@@ -132,7 +146,7 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    const key = `odds_${sportKey}_final_window_fix`;
+    const key = `odds_${sportKey}_final_window_fix`; // New key to bust the cache
     return fetchData(key, async () => {
         try {
             const allGames = [];
@@ -166,62 +180,100 @@ async function getOdds(sportKey) {
             console.error("ERROR IN getOdds function:", error.message);
             return [];
         }
-    }, 900000);
+    }, 900000); // Cache for 15 minutes
 }
 
-// --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
-    return fetchData(`stats_api_${sportKey}_v5`, async () => { // Incremented version
-        if (sportKey !== 'baseball_mlb') {
-            return {};
-        }
-        const currentYear = new Date().getFullYear();
+    const cacheKey = `stats_api_${sportKey}_v4`; // Increment version for new logic
+    return fetchData(cacheKey, async () => {
         const stats = {};
 
-        try {
-            const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
-            const { data: standingsData } = await axios.get(standingsUrl);
-            if (standingsData.records) {
-                for (const record of standingsData.records) {
-                    for (const teamRecord of record.teamRecords) {
-                        const teamName = teamRecord.team.name;
-                        const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                        stats[teamName] = {
-                            record: `${teamRecord.wins}-${teamRecord.losses}`,
-                            streak: teamRecord.streak?.streakCode || 'N/A',
-                            lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                            ops: 0, // NEW: Add default ops
-                            teamERA: 99.99
+        if (sportKey === 'baseball_mlb') {
+            const currentYear = new Date().getFullYear();
+            try {
+                const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
+                const { data: standingsData } = await axios.get(standingsUrl);
+                if (standingsData.records) {
+                    for (const record of standingsData.records) {
+                        for (const teamRecord of record.teamRecords) {
+                            const teamName = teamRecord.team.name;
+                            const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
+                            stats[teamName] = {
+                                record: `${teamRecord.wins}-${teamRecord.losses}`,
+                                streak: teamRecord.streak?.streakCode || 'N/A',
+                                lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
+                            };
+                        }
+                    }
+                }
+
+                const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
+                const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
+                if (leagueStatsData.stats) {
+                    leagueStatsData.stats.forEach(statGroup => {
+                        statGroup.splits.forEach(split => {
+                            const teamName = split.team.name;
+                            if (stats[teamName]) {
+                                if (statGroup.group.displayName === 'hitting') {
+                                    const runs = split.stat.runs;
+                                    const games = split.stat.gamesPlayed;
+                                    stats[teamName].runsPerGame = games > 0 ? parseFloat((runs / games).toFixed(2)) : 0;
+                                } else if (statGroup.group.displayName === 'pitching') {
+                                    stats[teamName].teamERA = parseFloat(split.stat.era);
+                                }
+                            }
+                        });
+                    });
+                }
+                return stats;
+            } catch (e) {
+                console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
+                return stats;
+            }
+        } else if (sportKey === 'icehockey_nhl') {
+            try {
+                // Fetch standings and detailed stats in parallel
+                const [standingsResponse, teamStatsResponse] = await Promise.all([
+                    axios.get('https://api-web.nhle.com/v1/standings/now'),
+                    axios.get('https://api.nhle.com/stats/rest/en/team/summary?isAggregate=false&isGame=false&sort=[{"property":"points","direction":"DESC"}]&factCayenneExp=gameTypeId=2')
+                ]);
+
+                const standingsData = standingsResponse.data.standings;
+                const teamStatsData = teamStatsResponse.data.data;
+
+                // Process standings first
+                for (const standing of standingsData) {
+                    const teamName = standing.teamName.default;
+                    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                    if (canonicalName) {
+                        stats[canonicalName] = {
+                            record: `${standing.wins}-${standing.losses}-${standing.otLosses}`,
+                            streak: standing.streakCode,
                         };
                     }
                 }
-            }
 
-            const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
-            const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
+                // Merge detailed stats
+                for (const team of teamStatsData) {
+                    const teamName = team.teamFullName;
+                    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                    if (stats[canonicalName]) {
+                        stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
+                        stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
+                        stats[canonicalName].powerPlayPct = team.powerPlayPct;
+                        stats[canonicalName].penaltyKillPct = team.penaltyKillPct;
+                    }
+                }
+                
+                return stats;
 
-            if (leagueStatsData.stats) {
-                leagueStatsData.stats.forEach(statGroup => {
-                    statGroup.splits.forEach(split => {
-                        const teamName = split.team.name;
-                        if (stats[teamName]) {
-                            if (statGroup.group.displayName === 'hitting') {
-                                // NEW: Capture OPS, removing the old RPG
-                                stats[teamName].ops = parseFloat(split.stat.ops);
-                            } else if (statGroup.group.displayName === 'pitching') {
-                                stats[teamName].teamERA = parseFloat(split.stat.era);
-                            }
-                        }
-                    });
-                });
+            } catch (e) {
+                console.error(`Could not fetch stats from NHL API for ${sportKey}: ${e.message}`);
+                return {}; // Return empty if API fails
             }
-            console.log("Successfully fetched and processed stats from MLB API.");
-            return stats;
-        } catch (e) {
-            console.error(`Could not fetch stats from MLB-StatsAPI for ${sportKey}: ${e.message}`);
-            return stats;
         }
-    }, 3600000);
+        return {}; // Return empty for other sports for now
+    }, 3600000); // 1-hour cache
 }
 
 async function getWeatherData(teamName) {
@@ -269,7 +321,7 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
                 results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
             }
             if (results.length === 0) {
-                return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
+                 return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
             }
             let homeScore = 0, awayScore = 0;
             const homeAliases = [homeTeam, ...(teamAliasMap[homeTeam] || [])].map(a => a.toLowerCase());
@@ -291,47 +343,83 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
+async function scrapeFanGraphsHittingStats() {
+    return fetchData('fangraphs_hitting_v6', async () => {
+        let browser = null;
+        try {
+            console.log("Launching Puppeteer to scrape FanGraphs...");
+            const currentYear = new Date().getFullYear();
+            const url = `https://www.fangraphs.com/leaders/teams?pos=all&stats=bat&lg=all&season=${currentYear}&season1=${currentYear}&ind=0&team=ts`;
+            browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            const page = await browser.newPage();
+            await page.goto(url, { waitUntil: 'networkidle2' });
+            const html = await page.content();
+            await browser.close();
+            const $ = cheerio.load(html);
+            const hittingStats = {};
+            $('.fg-data-grid.is-locked.is-fixed > tbody > tr').each((index, element) => {
+                const columns = $(element).find('td');
+                const teamNameRaw = $(columns[1]).text().trim();
+                const wrcPlusRaw = $(columns[8]).text().trim();
+                const wrcPlus = parseInt(wrcPlusRaw, 10);
+                const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
+                if (canonicalName && !isNaN(wrcPlus)) {
+                    hittingStats[canonicalName] = { wrcPlus };
+                }
+            });
+            if (Object.keys(hittingStats).length === 0) {
+                 console.error("Puppeteer scraper failed to find any teams. The new URL's HTML may have changed.");
+                 return {}; 
+            }
+            console.log(`Successfully scraped wRC+ for ${Object.keys(hittingStats).length} teams with Puppeteer.`);
+            return hittingStats;
+        } catch (error) {
+            console.error("Error during Puppeteer scrape:", error.message);
+            if (browser) await browser.close();
+            return {}; 
+        }
+    }, 21600000); 
+}
+
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
+    const { teamStats, injuries, h2h } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
 
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
 
-    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', ops: 0.700, teamERA: 99.99 };
-    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', ops: 0.700, teamERA: 99.99 };
+    const homeStats = teamStats[homeCanonicalName] || {};
+    const awayStats = teamStats[awayCanonicalName] || {};
 
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
 
-    let homeInjuryImpact = 0;
-    const homeInjuries = injuries[homeCanonicalName] || [];
-    homeInjuries.forEach(player => {
-        homeInjuryImpact += 1;
-    });
-
-    let awayInjuryImpact = 0;
-    const awayInjuries = injuries[awayCanonicalName] || [];
-    awayInjuries.forEach(player => {
-        awayInjuryImpact += 1;
-    });
+    let homeInjuryImpact = (injuries[homeCanonicalName] || []).length;
+    let awayInjuryImpact = (injuries[awayCanonicalName] || []).length;
 
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
-    factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
-
-    if (sportKey === 'baseball_mlb') {
-        // NEW: Using OPS for Offensive Rating
-        const homeOps = homeStats.ops || 0.700; // Default to league average if missing
-        const awayOps = awayStats.ops || 0.700;
-        factors['Offensive Rating'] = { 
-            value: (homeOps - awayOps) * 100, // Multiply by 100 for more impact
-            homeStat: `${homeOps.toFixed(3)} OPS`, 
-            awayStat: `${awayOps.toFixed(3)} OPS` 
-        };
+    
+    if (sportKey === 'icehockey_nhl') {
+        // --- COMPLEX NHL LOGIC ---
+        const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
+        const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
+        factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal) * weights.hotStreak, homeStat: homeStats.streak, awayStat: awayStats.streak };
         
+        factors['Offensive Form'] = { value: (homeStats.goalsForPerGame - awayStats.goalsForPerGame) * weights.offensiveForm, homeStat: `${homeStats.goalsForPerGame?.toFixed(2)} G/GP`, awayStat: `${awayStats.goalsForPerGame?.toFixed(2)} G/GP` };
+        factors['Defensive Form'] = { value: (awayStats.goalsAgainstPerGame - homeStats.goalsAgainstPerGame) * weights.defensiveForm, homeStat: `${homeStats.goalsAgainstPerGame?.toFixed(2)} GA/GP`, awayStat: `${awayStats.goalsAgainstPerGame?.toFixed(2)} GA/GP` };
+
+        const homeSpecialTeams = (homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0);
+        const awaySpecialTeams = (awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0);
+        factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
+
+    } else if (sportKey === 'baseball_mlb') {
+        factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
+        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 };
+        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
+        factors['Offensive Rating'] = { value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, homeStat: `${homeHitting.wrcPlus} wRC+`, awayStat: `${awayHitting.wrcPlus} wRC+` };
         if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
         }
@@ -339,7 +427,7 @@ async function runPredictionEngine(game, sportKey, context) {
 
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
     const injuryValue = (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5);
-    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuries.length} players`, awayStat: `${awayInjuries.length} players`, injuries: { home: homeInjuries, away: awayInjuries } };
+    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
 
     for (const factor in factors) {
         if (factors[factor].value && !isNaN(factors[factor].value)) {
@@ -357,16 +445,14 @@ async function runPredictionEngine(game, sportKey, context) {
         homeValue = homePower - homeImpliedProb;
         awayValue = ((100-homePower) - (1/awayOdds) * 100);
         factors['Betting Value'] = { value: homeValue * (weights.value / 5), homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
-        if (!isNaN(factors['Betting Value'].value)) {
-            homeScore += factors['Betting Value'].value;
-        }
+        if (!isNaN(factors['Betting Value'].value)) homeScore += factors['Betting Value'].value;
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
+    return { winner, strengthText, confidence, factors, weather: context.weather, homeValue, awayValue };
 }
 
 async function getAllDailyPredictions() {
@@ -375,10 +461,11 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey)
+            getTeamStatsFromAPI(sportKey),
+            sportKey === 'baseball_mlb' ? scrapeFanGraphsHittingStats() : Promise.resolve({})
         ]);
 
         gameCounts[sportKey] = games.length;
@@ -413,60 +500,33 @@ async function getAllDailyPredictions() {
             const espnEvent = espnDataResponse?.events?.find(e => {
                 const oddsApiGameDate = new Date(game.commence_time);
                 const espnEventDate = new Date(e.date);
-
-                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
-
+                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() && oddsApiGameDate.getMonth() === espnEventDate.getMonth() && oddsApiGameDate.getDate() === espnEventDate.getDate();
                 if (!isSameDay) return false;
-
                 const competitors = e.competitions?.[0]?.competitors;
                 if (!competitors || competitors.length < 2) return false;
-
                 const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
                 const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
                 if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
-
                 const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
                 const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
-
                 return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
             });
 
             const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
+            const gameId = `${game.away_team}@${home.team_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const homeRoster = {}, awayRoster = {};
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
+            const context = { teamStats, weather, injuries, h2h, hittingStats };
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
                 if (predictionsCollection) {
                     try {
                         const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-
                         const updateOperations = {
-                            $setOnInsert: {
-                                gameId: game.id,
-                                sportKey: sportKey,
-                                homeTeam: game.home_team,
-                                awayTeam: game.away_team,
-                                gameDate: game.commence_time,
-                                odds: winnerOdds || null,
-                                status: 'pending',
-                                createdAt: new Date()
-                            },
-                            $set: {
-                                predictedWinner: predictionData.winner,
-                            }
+                            $setOnInsert: { gameId: game.id, sportKey: sportKey, homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time, odds: winnerOdds || null, status: 'pending', createdAt: new Date() },
+                            $set: { predictedWinner: predictionData.winner }
                         };
-
-                        await predictionsCollection.updateOne(
-                            { gameId: game.id },
-                            updateOperations,
-                            { upsert: true }
-                        );
-
+                        await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
                     } catch (dbError) {
                         console.error("Failed to save prediction from getAllDailyPredictions to DB:", dbError);
                     }
@@ -488,10 +548,11 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport)
+            getTeamStatsFromAPI(sport),
+            sport === 'baseball_mlb' ? scrapeFanGraphsHittingStats() : Promise.resolve({})
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
 
@@ -519,30 +580,18 @@ app.get('/api/predictions', async (req, res) => {
 
         const predictions = [];
         for (const game of games) {
-            const homeRoster = {}, awayRoster = {};
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
+            const context = { teamStats, weather, injuries, h2h, hittingStats };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
                 try {
                     const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
                     const updateOperations = {
-                        $setOnInsert: {
-                            gameId: game.id,
-                            sportKey: sport,
-                            homeTeam: game.home_team,
-                            awayTeam: game.away_team,
-                            gameDate: game.commence_time,
-                            odds: winnerOdds || null,
-                            status: 'pending',
-                            createdAt: new Date()
-                        },
-                        $set: {
-                            predictedWinner: predictionData.winner,
-                        }
+                        $setOnInsert: { gameId: game.id, sportKey: sport, homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time, odds: winnerOdds || null, status: 'pending', createdAt: new Date() },
+                        $set: { predictedWinner: predictionData.winner }
                     };
                     await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
                 } catch (dbError) {
@@ -556,24 +605,15 @@ app.get('/api/predictions', async (req, res) => {
             const espnEvent = espnDataResponse?.events?.find(e => {
                 const oddsApiGameDate = new Date(game.commence_time);
                 const espnEventDate = new Date(e.date);
-
-                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
-
+                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() && oddsApiGameDate.getMonth() === espnEventDate.getMonth() && oddsApiGameDate.getDate() === espnEventDate.getDate();
                 if (!isSameDay) return false;
-
                 const competitors = e.competitions?.[0]?.competitors;
                 if (!competitors || competitors.length < 2) return false;
-
                 const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
                 const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
-
                 if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
-
                 const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
                 const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
-
                 return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
             });
 
@@ -804,8 +844,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { winner, factors } = prediction;
         const homeRecord = factors['Record']?.homeStat || 'N/A';
         const awayRecord = factors['Record']?.awayStat || 'N/A';
-        const homeL10 = factors['Recent Form (L10)']?.homeStat || 'N/A';
-        const awayL10 = factors['Recent Form (L10)']?.awayStat || 'N/A';
+        const homeL10 = factors['Recent Form (L10)']?.homeStat || factors['Hot Streak']?.homeStat || 'N/A';
+        const awayL10 = factors['Recent Form (L10)']?.awayStat || factors['Hot Streak']?.awayStat || 'N/A';
         const homeSentiment = factors['Social Sentiment']?.homeStat || 'N/A';
         const awaySentiment = factors['Social Sentiment']?.awayStat || 'N/A';
 
@@ -813,7 +853,7 @@ app.post('/api/ai-analysis', async (req, res) => {
             Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game.
             Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
 
-            Game: ${away_team} (${awayRecord}, ${awayL10} L10) @ ${home_team} (${homeRecord}, ${homeL10} L10)
+            Game: ${away_team} (${awayRecord}, ${awayL10} Streak) @ ${home_team} (${homeRecord}, ${homeL10} Streak)
             Our Algorithm's Prediction: ${winner}
 
             Generate the following HTML structure:
@@ -865,7 +905,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
             7. An <hr> with class="border-gray-700 my-4".
             8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
         `;
-        
+
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
