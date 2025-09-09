@@ -513,7 +513,7 @@ async function getAllDailyPredictions() {
             });
 
             const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${home.team_team}`;
+            const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const context = { teamStats, weather, injuries, h2h, hittingStats };
             const predictionData = await runPredictionEngine(game, sportKey, context);
@@ -929,3 +929,4 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
