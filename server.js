@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Switched to a reliable stats API
+// FINAL UPGRADED VERSION - Advanced NHL & Restored MLB
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -93,10 +93,6 @@ const flairMap = {
     'icehockey_nhl': 'NHL Bets and Picks',
     'americanfootball_nfl': 'NFL Bets and Picks'
 };
-const espnTeamAbbreviations = {
-    'Arizona Diamondbacks': 'ARI', 'Atlanta Braves': 'ATL', 'Baltimore Orioles': 'BAL', 'Boston Red Sox': 'BOS', 'Chicago Cubs': 'CHC', 'Chicago White Sox': 'CHW', 'Cincinnati Reds': 'CIN', 'Cleveland Guardians': 'CLE', 'Colorado Rockies': 'COL', 'Detroit Tigers': 'DET', 'Houston Astros': 'HOU', 'Kansas City Royals': 'KC', 'Los Angeles Angels': 'LAA', 'Los Angeles Dodgers': 'LAD', 'Miami Marlins': 'MIA', 'Milwaukee Brewers': 'MIL', 'Minnesota Twins': 'MIN', 'New York Mets': 'NYM', 'New York Yankees': 'NYY', 'Oakland Athletics': 'OAK', 'Philadelphia Phillies': 'PHI', 'Pittsburgh Pirates': 'PIT', 'San Diego Padres': 'SD', 'San Francisco Giants': 'SF', 'Seattle Mariners': 'SEA', 'St. Louis Cardinals': 'STL', 'Tampa Bay Rays': 'TB', 'Texas Rangers': 'TEX', 'Toronto Blue Jays': 'TOR', 'Washington Nationals': 'WSH',
-    'Arizona Cardinals': 'ARI', 'Atlanta Falcons': 'ATL', 'Baltimore Ravens': 'BAL', 'Buffalo Bills': 'BUF', 'Carolina Panthers': 'CAR', 'Chicago Bears': 'CHI', 'Cincinnati Bengals': 'CIN', 'Cleveland Browns': 'CLE', 'Dallas Cowboys': 'DAL', 'Denver Broncos': 'DEN', 'Detroit Lions': 'DET', 'Green Bay Packers': 'GB', 'Houston Texans': 'HOU', 'Indianapolis Colts': 'IND', 'Jacksonville Jaguars': 'JAX', 'Kansas City Chiefs': 'KC', 'Las Vegas Raiders': 'LV', 'Los Angeles Chargers': 'LAC', 'Los Angeles Rams': 'LAR', 'Miami Dolphins': 'MIA', 'Minnesota Vikings': 'MIN', 'New England Patriots': 'NE', 'New Orleans Saints': 'NO', 'New York Giants': 'NYG', 'New York Jets': 'NYJ', 'Philadelphia Eagles': 'PHI', 'Pittsburgh Steelers': 'PIT', 'San Francisco 49ers': 'SF', 'Seattle Seahawks': 'SEA', 'Tampa Bay Buccaneers': 'TB', 'Tennessee Titans': 'TEN', 'Washington Commanders': 'WSH'
-};
 const FUTURES_PICKS_DB = {
     'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
@@ -124,11 +120,11 @@ const getWinPct = (rec) => {
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
-        return { record: 6, fatigue: 8, momentum: 3, matchup: 12, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 8, defensiveForm: 8, h2h: 12, weather: 8 };
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
     }
     if (sportKey === 'icehockey_nhl') {
-        // NHL SPECIFIC WEIGHTS
-        return { record: 8, hotStreak: 9, h2h: 9, newsSentiment: 8, injuryImpact: 12, offensiveForm: 10, defensiveForm: 10, specialTeams: 13, value: 5 };
+        // NEW ADVANCED NHL WEIGHTS
+        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
     }
     // Default / NFL
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
@@ -145,7 +141,7 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
 }
 
 async function getOdds(sportKey) {
-    const key = `odds_${sportKey}_final_window_fix`; // New key to bust the cache
+    const key = `odds_${sportKey}`;
     return fetchData(key, async () => {
         try {
             const allGames = [];
@@ -162,9 +158,7 @@ async function getOdds(sportKey) {
             const requests = datesToFetch.map(date =>
                 axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`)
             );
-
             const responses = await Promise.all(requests);
-
             for (const response of responses) {
                 for (const game of response.data) {
                     if (!gameIds.has(game.id)) {
@@ -173,20 +167,41 @@ async function getOdds(sportKey) {
                     }
                 }
             }
-
             return allGames;
         } catch (error) {
             console.error("ERROR IN getOdds function:", error.message);
             return [];
         }
-    }, 900000); // Cache for 15 minutes
+    }, 900000);
+}
+
+// NEW: Function to get all goalie stats for the season
+async function getGoalieStats() {
+    const cacheKey = `nhl_goalie_stats_v1`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const url = `https://api.nhle.com/stats/rest/en/goalie/summary?isAggregate=false&isGame=false&sort=[{"property":"wins","direction":"DESC"}]&factCayenneExp=gameTypeId=2&cayenneExp=gamesPlayed%3E=5`;
+            const { data } = await axios.get(url);
+            const goalieStats = {};
+            data.data.forEach(goalie => {
+                goalieStats[goalie.goalieFullName] = {
+                    gaa: goalie.goalsAgainstAverage,
+                    svPct: goalie.savePct,
+                    wins: goalie.wins
+                };
+            });
+            return goalieStats;
+        } catch (e) {
+            console.error("Could not fetch goalie stats:", e.message);
+            return {};
+        }
+    }, 86400000); // Cache for 24 hours
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v5`; // Increment version for new logic
+    const cacheKey = `stats_api_${sportKey}_v7_both_sports`; // Increment version for new logic
     return fetchData(cacheKey, async () => {
         const stats = {};
-
         if (sportKey === 'baseball_mlb') {
             const currentYear = new Date().getFullYear();
             try {
@@ -196,29 +211,31 @@ async function getTeamStatsFromAPI(sportKey) {
                     for (const record of standingsData.records) {
                         for (const teamRecord of record.teamRecords) {
                             const teamName = teamRecord.team.name;
-                            const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                            stats[teamName] = {
-                                record: `${teamRecord.wins}-${teamRecord.losses}`,
-                                streak: teamRecord.streak?.streakCode || 'N/A',
-                                lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                            };
+                            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                            if(canonicalName) {
+                                const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
+                                stats[canonicalName] = {
+                                    record: `${teamRecord.wins}-${teamRecord.losses}`,
+                                    streak: teamRecord.streak?.streakCode || 'N/A',
+                                    lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
+                                };
+                            }
                         }
                     }
                 }
 
-                const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
+                const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats/league?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
                 if (leagueStatsData.stats) {
                     leagueStatsData.stats.forEach(statGroup => {
                         statGroup.splits.forEach(split => {
                             const teamName = split.team.name;
-                            if (stats[teamName]) {
+                            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                            if (stats[canonicalName]) {
                                 if (statGroup.group.displayName === 'hitting') {
-                                    const runs = split.stat.runs;
-                                    const games = split.stat.gamesPlayed;
-                                    stats[teamName].runsPerGame = games > 0 ? parseFloat((runs / games).toFixed(2)) : 0;
+                                    stats[canonicalName].runsPerGame = split.stat.runsPerGame;
                                 } else if (statGroup.group.displayName === 'pitching') {
-                                    stats[teamName].teamERA = parseFloat(split.stat.era);
+                                    stats[canonicalName].teamERA = parseFloat(split.stat.era);
                                 }
                             }
                         });
@@ -237,49 +254,73 @@ async function getTeamStatsFromAPI(sportKey) {
                 ]);
 
                 if (standingsResponse.data.standings) {
-                    for (const standing of standingsResponse.data.standings) {
-                        const teamName = standing.teamName.default;
-                        const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                    standingsResponse.data.standings.forEach(s => {
+                        const canonicalName = canonicalTeamNameMap[s.teamName.default.toLowerCase()];
                         if (canonicalName) {
-                            stats[canonicalName] = {
-                                record: `${standing.wins}-${standing.losses}-${standing.otLosses}`,
-                                streak: standing.streakCode || 'N/A',
-                            };
+                            stats[canonicalName] = { record: `${s.wins}-${s.losses}-${s.otLosses}`, streak: s.streakCode || 'N/A' };
                         }
-                    }
+                    });
                 }
-
-                if(teamStatsResponse.data.data) {
-                    for (const team of teamStatsResponse.data.data) {
-                        const teamName = team.teamFullName;
-                        const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                        if (stats[canonicalName]) {
-                            stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
-                            stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
-                            stats[canonicalName].powerPlayPct = team.powerPlayPercentage; // FIX: API uses powerPlayPercentage
-                            stats[canonicalName].penaltyKillPct = team.penaltyKillPercentage; // FIX: API uses penaltyKillPercentage
-                        } else {
-                            // If not in standings (pre-season), create a record
-                             stats[canonicalName] = {
-                                record: '0-0-0',
-                                streak: 'N/A',
-                                goalsForPerGame: team.goalsForPerGame,
-                                goalsAgainstPerGame: team.goalsAgainstPerGame,
-                                powerPlayPct: team.powerPlayPercentage,
-                                penaltyKillPct: team.penaltyKillPercentage,
-                            };
-                        }
-                    }
+                if (teamStatsResponse.data.data) {
+                    teamStatsResponse.data.data.forEach(team => {
+                        const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                        if (!stats[canonicalName]) stats[canonicalName] = { record: '0-0-0', streak: 'N/A' };
+                        stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
+                        stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
+                        stats[canonicalName].powerPlayPct = team.powerPlayPercentage;
+                        stats[canonicalName].penaltyKillPct = team.penaltyKillPercentage;
+                        stats[canonicalName].faceoffWinPct = team.faceoffWinPercentage;
+                    });
                 }
                 return stats;
-
             } catch (e) {
-                console.error(`Could not fetch stats from NHL API for ${sportKey}: ${e.message}`);
+                console.error(`Could not fetch stats from NHL API: ${e.message}`);
                 return {};
             }
         }
         return {};
     }, 3600000);
+}
+
+// NEW: Function to analyze team fatigue from the schedule
+function calculateFatigue(teamName, allGames, currentGameDate) {
+    const oneDay = 1000 * 60 * 60 * 24;
+    const fourDays = oneDay * 4;
+
+    const recentGames = allGames.filter(g => {
+        const gameDate = new Date(g.commence_time);
+        return (g.home_team === teamName || g.away_team === teamName) && gameDate < currentGameDate;
+    }).sort((a, b) => new Date(b.commence_time) - new Date(a.commence_time));
+
+    let fatigueScore = 0;
+    if (recentGames.length === 0) return fatigueScore;
+
+    // Check for back-to-back
+    const lastGame = recentGames[0];
+    if ((currentGameDate - new Date(lastGame.commence_time)) / (1000 * 60 * 60) <= 30) {
+        fatigueScore += 5;
+    }
+
+    // Check for 3 games in 4 nights
+    const gamesInLast4Days = recentGames.filter(g => (currentGameDate - new Date(g.commence_time)) <= fourDays).length;
+    if (gamesInLast4Days >= 2) { // 2 previous games + current game = 3
+        fatigueScore += 3;
+    }
+
+    // Check road trip length
+    let roadTripLength = 0;
+    for (const game of recentGames) {
+        if (game.away_team === teamName) {
+            roadTripLength++;
+        } else {
+            break; // Road trip is broken by a home game
+        }
+    }
+    if (roadTripLength >= 3) {
+        fatigueScore += roadTripLength; // Add 1 point for each game in a long road trip
+    }
+
+    return fatigueScore;
 }
 
 
@@ -288,11 +329,9 @@ async function getWeatherData(teamName) {
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
     const location = teamLocationMap[canonicalName];
     if (!location) return null;
-
     return fetchData(`weather_${location.lat}_${location.lon}`, async () => {
         try {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`;
-            const { data } = await axios.get(url);
+            const { data } = await axios.get(`https://api.open-meteo.com/v1/forecast?latitude=${location.lat}&longitude=${location.lon}&current=temperature_2m,precipitation,wind_speed_10m&wind_speed_unit=kmh`);
             return { temp: data.current.temperature_2m, wind: data.current.wind_speed_10m, precip: data.current.precipitation };
         } catch (e) {
             console.error(`Could not fetch weather for ${teamName}: ${e.message}`);
@@ -303,14 +342,13 @@ async function getWeatherData(teamName) {
 
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
-        const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
+        const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
         if (!map) return null;
         try {
-            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard`;
-            const { data } = await axios.get(url);
+            const { data } = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/${map}/scoreboard`);
             return data;
         } catch (error) {
-            console.error(`Could not fetch ESPN scoreboard for ${sportKey}. Error:`, error.message);
+            console.error(`Could not fetch ESPN scoreboard for ${sportKey}:`, error.message);
             return null;
         }
     }, 60000);
@@ -324,12 +362,9 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
             const baseQuery = `${createSearchQuery(homeTeam)} OR ${createSearchQuery(awayTeam)}`;
             const flair = flairMap[sportKey];
             let results = await r.getSubreddit('sportsbook').search({ query: `flair:"${flair}" ${baseQuery}`, sort: 'new', time: 'month' });
-            if (results.length === 0) {
-                results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
-            }
-            if (results.length === 0) {
-                 return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
-            }
+            if (results.length === 0) results = await r.getSubreddit('sportsbook').search({ query: baseQuery, sort: 'new', time: 'month' });
+            if (results.length === 0) return { home: 5, away: 5 };
+            
             let homeScore = 0, awayScore = 0;
             const homeAliases = [homeTeam, ...(teamAliasMap[homeTeam] || [])].map(a => a.toLowerCase());
             const awayAliases = [awayTeam, ...(teamAliasMap[awayTeam] || [])].map(a => a.toLowerCase());
@@ -338,10 +373,9 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
                 if (homeAliases.some(alias => title.includes(alias))) homeScore++;
                 if (awayAliases.some(alias => title.includes(alias))) awayScore++;
             });
+
             const totalScore = homeScore + awayScore;
-            if (totalScore === 0) {
-                 return { home: 1 + (getWinPct(parseRecord(homeStats.record)) * 9), away: 1 + (getWinPct(parseRecord(awayStats.record)) * 9) };
-            }
+            if (totalScore === 0) return { home: 5, away: 5 };
             return { home: 1 + (homeScore / totalScore) * 9, away: 1 + (awayScore / totalScore) * 9 };
         } catch (e) {
             console.error(`Reddit API error for ${awayTeam} @ ${homeTeam}:`, e.message);
@@ -350,9 +384,8 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, injuries, h2h } = context;
+    const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
 
@@ -361,7 +394,7 @@ async function runPredictionEngine(game, sportKey, context) {
 
     const homeStats = teamStats[homeCanonicalName] || {};
     const awayStats = teamStats[awayCanonicalName] || {};
-
+    
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
     const factors = {};
@@ -384,19 +417,37 @@ async function runPredictionEngine(game, sportKey, context) {
         const awaySpecialTeams = (awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0);
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
 
+        factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)) * weights.faceoffAdvantage, homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
+
+        const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
+        const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
+        factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
+
+        const homeGoalieName = probableStarters[homeCanonicalName];
+        const awayGoalieName = probableStarters[awayCanonicalName];
+        const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
+        const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
+
+        let goalieValue = 0;
+        let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
+        if(homeGoalieStats && awayGoalieStats) {
+            const gaaDiff = awayGoalieStats.gaa - homeGoalieStats.gaa; // Lower is better
+            const svPctDiff = homeGoalieStats.svPct - awayGoalieStats.svPct; // Higher is better
+            goalieValue = (gaaDiff * 5) + (svPctDiff * 100);
+            homeGoalieDisplay = `${homeGoalieName.split(' ')[1]} ${homeGoalieStats.svPct.toFixed(3)}`;
+            awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
+        }
+        factors['Goalie Matchup'] = { value: goalieValue * (weights.goalieMatchup / 10), homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     } else if (sportKey === 'baseball_mlb') {
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 };
-        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
-        factors['Offensive Rating'] = { value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, homeStat: `${homeHitting.wrcPlus} wRC+`, awayStat: `${awayHitting.wrcPlus} wRC+` };
-        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
-            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
+        factors['Offensive Form'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * weights.offensiveForm, homeStat: `${homeStats.runsPerGame?.toFixed(2)} R/G`, awayStat: `${awayStats.runsPerGame?.toFixed(2)} R/G` };
+        if (homeStats.teamERA && awayStats.teamERA) {
+            factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
 
     factors['Social Sentiment'] = { value: (redditSentiment.home - redditSentiment.away) * weights.newsSentiment, homeStat: `${redditSentiment.home.toFixed(1)}/10`, awayStat: `${redditSentiment.away.toFixed(1)}/10` };
-    const injuryValue = (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5);
-    factors['Injury Impact'] = { value: injuryValue, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
 
     for (const factor in factors) {
         if (factors[factor].value && !isNaN(factors[factor].value)) {
@@ -418,122 +469,44 @@ async function runPredictionEngine(game, sportKey, context) {
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
+    
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, weather: context.weather, homeValue, awayValue };
 }
 
-async function getAllDailyPredictions() {
-    const allPredictions = [];
-    const gameCounts = {};
-
-    for (const sport of SPORTS_DB) {
-        const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([
-            getOdds(sportKey),
-            fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey)
-        ]);
-
-        gameCounts[sportKey] = games.length;
-        if (!games || games.length === 0) continue;
-
-        const injuries = {};
-        const h2hRecords = {};
-        if (espnDataResponse?.events) {
-            for (const event of espnDataResponse.events) {
-                const competition = event.competitions?.[0];
-                if (!competition) continue;
-                for (const competitor of competition.competitors) {
-                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    injuries[canonicalName] = fullInjuries;
-                }
-                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-                if (competition.series && homeTeam && awayTeam) {
-                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            }
-        }
-
-        for (const game of games) {
-            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-
-            const espnEvent = espnDataResponse?.events?.find(e => {
-                const oddsApiGameDate = new Date(game.commence_time);
-                const espnEventDate = new Date(e.date);
-                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() && oddsApiGameDate.getMonth() === espnEventDate.getMonth() && oddsApiGameDate.getDate() === espnEventDate.getDate();
-                if (!isSameDay) return false;
-                const competitors = e.competitions?.[0]?.competitors;
-                if (!competitors || competitors.length < 2) return false;
-                const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
-                const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
-                if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
-                const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
-                const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
-                return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
-            });
-
-            const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
-            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats: {} };
-            const predictionData = await runPredictionEngine(game, sportKey, context);
-
-            if (predictionData && predictionData.winner) {
-                if (predictionsCollection) {
-                    try {
-                        const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                        const updateOperations = {
-                            $setOnInsert: { gameId: game.id, sportKey: sportKey, homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time, odds: winnerOdds || null, status: 'pending', createdAt: new Date() },
-                            $set: { predictedWinner: predictionData.winner }
-                        };
-                        await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
-                    } catch (dbError) {
-                        console.error("Failed to save prediction from getAllDailyPredictions to DB:", dbError);
-                    }
-                }
-
-                allPredictions.push({
-                    game: { ...game, espnData: espnEvent || null, sportKey: sportKey },
-                    prediction: predictionData
-                });
-            }
-        }
-    }
-    return { allPredictions, gameCounts };
-}
-
-// --- API ENDPOINTS ---
-
+// --- MAIN PREDICTION CONTROLLER ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
+
     try {
         const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
             getTeamStatsFromAPI(sport)
         ]);
-        if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
+
+        const goalieStats = sport === 'icehockey_nhl' ? await getGoalieStats() : {};
+
+        if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}.` }); }
 
         const injuries = {};
         const h2hRecords = {};
+        const probableStarters = {}; 
         if (espnDataResponse?.events) {
-             for (const event of espnDataResponse.events) {
+             espnDataResponse.events.forEach(event => {
                 const competition = event.competitions?.[0];
-                if (!competition) continue;
-                for (const competitor of competition.competitors) {
+                if (!competition) return;
+                competition.competitors.forEach(competitor => {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    const fullInjuries = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    injuries[canonicalName] = fullInjuries;
-                }
+                    injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                    
+                    if (sport === 'icehockey_nhl' && competitor.probablePitcher) { 
+                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
+                    }
+                });
                 const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
                 const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
                 if (competition.series && homeTeam && awayTeam) {
@@ -542,46 +515,38 @@ app.get('/api/predictions', async (req, res) => {
                     const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
                     h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
                 }
-            }
+            });
         }
 
         const predictions = [];
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
-            const gameId = `${game.away_team}@${game.home_team}`;
-            const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats: {} };
-            const predictionData = await runPredictionEngine(game, sport, context);
-
-            if (predictionData && predictionData.winner && predictionsCollection) {
-                try {
-                    const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                    const updateOperations = {
-                        $setOnInsert: { gameId: game.id, sportKey: sport, homeTeam: game.home_team, awayTeam: game.away_team, gameDate: game.commence_time, odds: winnerOdds || null, status: 'pending', createdAt: new Date() },
-                        $set: { predictedWinner: predictionData.winner }
-                    };
-                    await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
-                } catch (dbError) {
-                    console.error("Failed to save prediction to DB:", dbError);
-                }
-            }
-
+            const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
+            
             const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
             const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-
+            
+            const context = { 
+                teamStats, 
+                weather, 
+                injuries, 
+                h2h, 
+                allGames: games, 
+                goalieStats, 
+                probableStarters: {
+                    [gameHomeCanonical]: probableStarters[gameHomeCanonical],
+                    [gameAwayCanonical]: probableStarters[gameAwayCanonical]
+                } 
+            };
+            const predictionData = await runPredictionEngine(game, sport, context);
+            
             const espnEvent = espnDataResponse?.events?.find(e => {
-                const oddsApiGameDate = new Date(game.commence_time);
-                const espnEventDate = new Date(e.date);
-                const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() && oddsApiGameDate.getMonth() === espnEventDate.getMonth() && oddsApiGameDate.getDate() === espnEventDate.getDate();
-                if (!isSameDay) return false;
                 const competitors = e.competitions?.[0]?.competitors;
-                if (!competitors || competitors.length < 2) return false;
-                const eventHomeCompetitor = competitors.find(c => c.homeAway === 'home');
-                const eventAwayCompetitor = competitors.find(c => c.homeAway === 'away');
-                if (!eventHomeCompetitor || !eventAwayCompetitor) return false;
-                const eventHomeCanonical = canonicalTeamNameMap[eventHomeCompetitor.team.displayName.toLowerCase()];
-                const eventAwayCanonical = canonicalTeamNameMap[eventAwayCompetitor.team.displayName.toLowerCase()];
-                return (eventHomeCanonical === gameHomeCanonical && eventAwayCanonical === gameAwayCanonical);
+                if (!competitors) return false;
+                const home = competitors.find(c => c.homeAway === 'home');
+                const away = competitors.find(c => c.homeAway === 'away');
+                if (!home || !away) return false;
+                return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === gameHomeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === gameAwayCanonical);
             });
 
             predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
@@ -595,6 +560,7 @@ app.get('/api/predictions', async (req, res) => {
 
 app.get('/api/special-picks', async (req, res) => {
     try {
+        // This function will need to be updated to pass the new context to getAllDailyPredictions if special picks are for NHL
         const { allPredictions, gameCounts } = await getAllDailyPredictions();
 
         let sportsInSeason = 0;
