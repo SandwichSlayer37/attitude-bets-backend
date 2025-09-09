@@ -815,7 +815,7 @@ app.post('/api/ai-analysis', async (req, res) => {
             7. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation, considering all the data provided.
         `;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Corrected Model Name
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let analysisHtml = response.text().split('```html').join('').split('```').join('');
@@ -853,7 +853,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
             8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
         `;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Corrected Model Name
         const result = await model.generateContent(prompt);
         const response = await result.response;
         let analysisHtml = response.text().split('```html').join('').split('```').join('');
