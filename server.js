@@ -1,4 +1,4 @@
-// FINAL VERSION - Puppeteer completely removed for Render Free Tier
+// FINAL UPGRADED VERSION - Switched to a reliable stats API
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -8,7 +8,6 @@ const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cheerio = require('cheerio');
-// const puppeteer = require('puppeteer'); // REMOVED
 
 const app = express();
 app.use(cors());
@@ -184,7 +183,7 @@ async function getOdds(sportKey) {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v5`; // Increment version to switch back to API for MLB
+    const cacheKey = `stats_api_${sportKey}_v5`; // Increment version for new logic
     return fetchData(cacheKey, async () => {
         const stats = {};
 
@@ -207,7 +206,6 @@ async function getTeamStatsFromAPI(sportKey) {
                     }
                 }
 
-                // Switched back to MLB stats API instead of Puppeteer
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
                 if (leagueStatsData.stats) {
@@ -233,49 +231,57 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
-                // Fetch standings and detailed stats in parallel
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get('https://api-web.nhle.com/v1/standings/now'),
                     axios.get('https://api.nhle.com/stats/rest/en/team/summary?isAggregate=false&isGame=false&sort=[{"property":"points","direction":"DESC"}]&factCayenneExp=gameTypeId=2')
                 ]);
 
-                const standingsData = standingsResponse.data.standings;
-                const teamStatsData = teamStatsResponse.data.data;
-
-                // Process standings first
-                for (const standing of standingsData) {
-                    const teamName = standing.teamName.default;
-                    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                    if (canonicalName) {
-                        stats[canonicalName] = {
-                            record: `${standing.wins}-${standing.losses}-${standing.otLosses}`,
-                            streak: standing.streakCode,
-                        };
+                if (standingsResponse.data.standings) {
+                    for (const standing of standingsResponse.data.standings) {
+                        const teamName = standing.teamName.default;
+                        const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                        if (canonicalName) {
+                            stats[canonicalName] = {
+                                record: `${standing.wins}-${standing.losses}-${standing.otLosses}`,
+                                streak: standing.streakCode || 'N/A',
+                            };
+                        }
                     }
                 }
 
-                // Merge detailed stats
-                for (const team of teamStatsData) {
-                    const teamName = team.teamFullName;
-                    const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                    if (stats[canonicalName]) {
-                        stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
-                        stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
-                        stats[canonicalName].powerPlayPct = team.powerPlayPct;
-                        stats[canonicalName].penaltyKillPct = team.penaltyKillPct;
+                if(teamStatsResponse.data.data) {
+                    for (const team of teamStatsResponse.data.data) {
+                        const teamName = team.teamFullName;
+                        const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                        if (stats[canonicalName]) {
+                            stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
+                            stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
+                            stats[canonicalName].powerPlayPct = team.powerPlayPercentage; // FIX: API uses powerPlayPercentage
+                            stats[canonicalName].penaltyKillPct = team.penaltyKillPercentage; // FIX: API uses penaltyKillPercentage
+                        } else {
+                            // If not in standings (pre-season), create a record
+                             stats[canonicalName] = {
+                                record: '0-0-0',
+                                streak: 'N/A',
+                                goalsForPerGame: team.goalsForPerGame,
+                                goalsAgainstPerGame: team.goalsAgainstPerGame,
+                                powerPlayPct: team.powerPlayPercentage,
+                                penaltyKillPct: team.penaltyKillPercentage,
+                            };
+                        }
                     }
                 }
-                
                 return stats;
 
             } catch (e) {
                 console.error(`Could not fetch stats from NHL API for ${sportKey}: ${e.message}`);
-                return {}; // Return empty if API fails
+                return {};
             }
         }
-        return {}; // Return empty for other sports for now
-    }, 3600000); // 1-hour cache
+        return {};
+    }, 3600000);
 }
+
 
 async function getWeatherData(teamName) {
     if (!teamName) return null;
@@ -344,10 +350,6 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-// Puppeteer function is no longer needed and can be deleted or left commented out
-/*
-async function scrapeFanGraphsHittingStats() { ... }
-*/
 
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h } = context;
@@ -371,7 +373,6 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
     
     if (sportKey === 'icehockey_nhl') {
-        // --- COMPLEX NHL LOGIC ---
         const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
         const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
         factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal) * weights.hotStreak, homeStat: homeStats.streak, awayStat: awayStats.streak };
@@ -384,15 +385,12 @@ async function runPredictionEngine(game, sportKey, context) {
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
 
     } else if (sportKey === 'baseball_mlb') {
-        // MLB logic now uses API data, not Puppeteer
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-        
-        if(homeStats.runsPerGame && awayStats.runsPerGame){
-             factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * weights.offensiveForm, homeStat: `${homeStats.runsPerGame} R/G`, awayStat: `${awayStats.runsPerGame} R/G` };
-        }
-       
-        if (homeStats.teamERA && awayStats.teamERA) {
-            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
+        const homeHitting = context.hittingStats[homeCanonicalName] || { wrcPlus: 100 };
+        const awayHitting = context.hittingStats[awayCanonicalName] || { wrcPlus: 100 };
+        factors['Offensive Rating'] = { value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, homeStat: `${homeHitting.wrcPlus} wRC+`, awayStat: `${awayHitting.wrcPlus} wRC+` };
+        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
+            factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
         }
     }
 
@@ -432,7 +430,6 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        // Hitting stats (puppeteer call) is removed from this main loop
         const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
@@ -486,7 +483,7 @@ async function getAllDailyPredictions() {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats: {} }; // Pass empty hittingStats
+            const context = { teamStats, weather, injuries, h2h, hittingStats: {} };
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
@@ -519,7 +516,6 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        // Hitting stats (puppeteer call) is removed from this main loop
         const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
@@ -554,7 +550,7 @@ app.get('/api/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, hittingStats: {} }; // Pass empty hittingStats
+            const context = { teamStats, weather, injuries, h2h, hittingStats: {} };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
@@ -892,7 +888,6 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    // --- FIX: Serve index.html from the correct parent 'public' directory ---
     res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
