@@ -775,30 +775,44 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { home_team, away_team } = game;
         const { winner, factors } = prediction;
-        const homeRecord = factors['Record']?.homeStat || 'N/A';
-        const awayRecord = factors['Record']?.awayStat || 'N/A';
-        const homeL10 = factors['Recent Form (L10)']?.homeStat || factors['Hot Streak']?.homeStat || 'N/A';
-        const awayL10 = factors['Recent Form (L10)']?.awayStat || factors['Hot Streak']?.awayStat || 'N/A';
-        const homeSentiment = factors['Social Sentiment']?.homeStat || 'N/A';
-        const awaySentiment = factors['Social Sentiment']?.awayStat || 'N/A';
+
+        // --- AI PROMPT REWRITE ---
+        const homeCanonical = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
+        const awayCanonical = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
+        
+        const dataSummary = {
+            matchup: `${away_team} @ ${home_team}`,
+            prediction: winner,
+            record: `Home: ${factors['Record']?.homeStat || 'N/A'}, Away: ${factors['Record']?.awayStat || 'N/A'}`,
+            recentForm: `Home: ${factors['Recent Form (L10)']?.homeStat || factors['Hot Streak']?.homeStat || 'N/A'}, Away: ${factors['Recent Form (L10)']?.awayStat || factors['Hot Streak']?.awayStat || 'N/A'}`,
+            socialSentiment: `Home: ${factors['Social Sentiment']?.homeStat || 'N/A'}, Away: ${factors['Social Sentiment']?.awayStat || 'N/A'}`,
+            injuries: {
+                home: (factors['Injury Impact']?.injuries?.home || []).map(p => p.name).join(', ') || 'None',
+                away: (factors['Injury Impact']?.injuries?.away || []).map(p => p.name).join(', ') || 'None'
+            }
+        };
 
         const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game.
+            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following game based on the data summary provided.
             Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
 
-            Game: ${away_team} (${awayRecord}, ${awayL10} Streak) @ ${home_team} (${homeRecord}, ${homeL10} Streak)
-            Our Algorithm's Prediction: ${winner}
+            Data Summary:
+            - Matchup: ${dataSummary.matchup}
+            - Our Algorithm's Prediction: ${dataSummary.prediction}
+            - Records: ${dataSummary.record}
+            - Recent Form / Streak: ${dataSummary.recentForm}
+            - Social Sentiment Score: ${dataSummary.socialSentiment}
+            - Key Injuries (Home): ${dataSummary.injuries.home}
+            - Key Injuries (Away): ${dataSummary.injuries.away}
 
             Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup.
+            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a <p> with class "text-gray-300 mb-4" summarizing the matchup based on the data.
             2. An <hr> with class "border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-indigo-400 mb-2" titled "Social Sentiment Analysis". Follow it with a <p> with class "text-gray-300 mb-4". In this paragraph, explain that this score (Home: ${homeSentiment}, Away: ${awaySentiment}) is derived from recent discussions on sports betting forums like Reddit's r/sportsbook. Briefly interpret the scores - for example, does the higher score suggest the public is heavily favoring that team, or are the scores close, indicating a divided opinion?
+            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Mention key injuries if they are a factor. Make key stats bold with <strong>.
             4. An <hr> with class "border-gray-700 my-4".
-            5. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Bull Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining why our prediction is solid. Make key stats bold with <strong>.
+            5. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Potential Risks". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks or counter-arguments. Mention key injuries if they are a factor.
             6. An <hr> with class "border-gray-700 my-4".
-            7. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Bear Case for ${winner}". Follow it with a <ul class="list-disc list-inside space-y-2 mb-4 text-gray-300"> with two or three <li> bullet points explaining the risks. Make key stats bold with <strong>.
-            8. An <hr> with class "border-gray-700 my-4".
-            9. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation.
+            7. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your recommendation, considering all the data provided.
         `;
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
