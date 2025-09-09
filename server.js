@@ -17,7 +17,6 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
-const SCRAPER_DATABASE_URL = process.env.SCRAPER_DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -49,10 +48,10 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
-const SPORTS_DB = [ 
-    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
-    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
-    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 } 
+const SPORTS_DB = [
+    { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 },
+    { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 },
+    { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 }
 ];
 
 const teamLocationMap = {
@@ -170,6 +169,7 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
+// --- NEW, RELIABLE STATS API FUNCTION FOR MLB ---
 async function getTeamStatsFromAPI(sportKey) {
     return fetchData(`stats_api_${sportKey}_v3`, async () => {
         if (sportKey !== 'baseball_mlb') {
@@ -293,55 +293,16 @@ async function getRedditSentiment(homeTeam, awayTeam, homeStats, awayStats, spor
     }, 1800000);
 }
 
-// --- NEW FUNCTION TO FETCH SCRAPED DATA ---
-async function getScrapedHittingStats() {
-    // Cache this for 1 hour to reduce DB calls
-    return fetchData('scraped_hitting_stats_v1', async () => {
-        try {
-            if (!SCRAPER_DATABASE_URL) {
-                console.log("SCRAPER_DATABASE_URL not set. Skipping scraped stats.");
-                return {};
-            }
-            const client = new MongoClient(SCRAPER_DATABASE_URL);
-            await client.connect();
-            const db = client.db("scraped_data");
-            const collection = db.collection("fangraphs_hitting");
-
-            const result = await collection.findOne({ _id: "latest_mlb_hitting" });
-            await client.close();
-
-            if (result && result.data) {
-                 // Important: We need to match FanGraphs names to our canonical names
-                 const statsWithCanonicalNames = {};
-                 for (const teamNameRaw in result.data) {
-                    const canonicalName = canonicalTeamNameMap[teamNameRaw.toLowerCase()];
-                    if(canonicalName) {
-                        statsWithCanonicalNames[canonicalName] = result.data[teamNameRaw];
-                    }
-                 }
-                 console.log("Successfully fetched scraped stats from DB.");
-                 return statsWithCanonicalNames;
-            }
-            console.log("No scraped stats found in DB.");
-            return {};
-        } catch (error) {
-            console.error("Could not fetch scraped stats from DB:", error);
-            return {};
-        }
-    }, 3600000);
-}
-
-
 async function runPredictionEngine(game, sportKey, context) {
-    const { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats } = context;
+    const { teamStats, weather, injuries, h2h, homeRoster, awayRoster } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
 
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
 
-    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
-    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99 };
+    const homeStats = teamStats[homeCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99.99 };
+    const awayStats = teamStats[awayCanonicalName] || { record: 'N/A', streak: 'N/A', lastTen: 'N/A', runsPerGame: 0, teamERA: 99.99 };
 
     const redditSentiment = await getRedditSentiment(home_team, away_team, homeStats, awayStats, sportKey);
     let homeScore = 50, awayScore = 50;
@@ -364,16 +325,8 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
 
     if (sportKey === 'baseball_mlb') {
-        // UPGRADED: Using wRC+ from scraped data
-        const homeHitting = hittingStats[homeCanonicalName] || { wrcPlus: 100 }; // Default to average (100) if missing
-        const awayHitting = hittingStats[awayCanonicalName] || { wrcPlus: 100 };
-        factors['Offensive Rating'] = { 
-            value: (homeHitting.wrcPlus - awayHitting.wrcPlus) * 0.5, // Adjust weight as needed
-            homeStat: `${homeHitting.wrcPlus} wRC+`, 
-            awayStat: `${awayHitting.wrcPlus} wRC+` 
-        };
+        factors['Offensive Rating'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * (weights.offensiveForm || 5), homeStat: `${(homeStats.runsPerGame || 0).toFixed(2)} RPG`, awayStat: `${(awayStats.runsPerGame || 0).toFixed(2)} RPG` };
         
-        // UPGRADED: Only calculate Defensive Rating if BOTH teams have valid ERA data
         if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Rating'] = { value: (awayStats.teamERA - homeStats.teamERA) * (weights.defensiveForm || 5), homeStat: `${(homeStats.teamERA).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA).toFixed(2)} ERA` };
         }
@@ -417,11 +370,10 @@ async function getAllDailyPredictions() {
 
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sportKey),
             fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey),
-            getScrapedHittingStats() // Using the new DB fetch function
+            getTeamStatsFromAPI(sportKey)
         ]);
 
         gameCounts[sportKey] = games.length;
@@ -458,8 +410,8 @@ async function getAllDailyPredictions() {
                 const espnEventDate = new Date(e.date);
 
                 const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
+                                    oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
+                                    oddsApiGameDate.getDate() === espnEventDate.getDate();
 
                 if (!isSameDay) return false;
 
@@ -480,7 +432,7 @@ async function getAllDailyPredictions() {
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
             const homeRoster = {}, awayRoster = {};
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats };
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sportKey, context);
 
             if (predictionData && predictionData.winner) {
@@ -531,11 +483,10 @@ app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats, hittingStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport),
-            getScrapedHittingStats() // Using the new DB fetch function
+            getTeamStatsFromAPI(sport)
         ]);
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}. The season may be over.` }); }
 
@@ -567,7 +518,7 @@ app.get('/api/predictions', async (req, res) => {
             const weather = await getWeatherData(game.home_team);
             const gameId = `${game.away_team}@${game.home_team}`;
             const h2h = h2hRecords[gameId] || { home: '0-0', away: '0-0' };
-            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster, hittingStats };
+            const context = { teamStats, weather, injuries, h2h, homeRoster, awayRoster };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
@@ -602,8 +553,8 @@ app.get('/api/predictions', async (req, res) => {
                 const espnEventDate = new Date(e.date);
 
                 const isSameDay = oddsApiGameDate.getFullYear() === espnEventDate.getFullYear() &&
-                                  oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
-                                  oddsApiGameDate.getDate() === espnEventDate.getDate();
+                                    oddsApiGameDate.getMonth() === espnEventDate.getMonth() &&
+                                    oddsApiGameDate.getDate() === espnEventDate.getDate();
 
                 if (!isSameDay) return false;
 
@@ -673,7 +624,7 @@ app.get('/api/special-picks', async (req, res) => {
 
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
-                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
+                                (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
 
         if (goodPicks.length >= 2) {
             const leg1 = goodPicks[0];
@@ -754,7 +705,7 @@ app.get('/api/reconcile-results', async (req, res) => {
                     const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
                     const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
                     const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                    const eventAway = e.competitors[0].competitors.find(c => c.homeAway === 'away');
+                    const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
                     if (!eventHome || !eventAway) return false;
 
                     const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
@@ -875,7 +826,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
+        let analysisHtml = response.text().split('\`\`\`html').join('').split('\`\`\`').join('');
         res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Analysis Error:", error);
@@ -913,7 +864,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        let analysisHtml = response.text().split('```html').join('').split('```').join('');
+        let analysisHtml = response.text().split('\`\`\`html').join('').split('\`\`\`').join('');
         res.json({ analysisHtml });
 
     } catch (error) {
