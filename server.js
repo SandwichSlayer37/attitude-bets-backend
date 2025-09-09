@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- FIX 1: Corrected Static File Pathing ---
-const publicPath = path.join(__dirname, 'public');
+const publicPath = path.join(__dirname, '..', 'public');
 app.use(express.static(publicPath));
 
 
@@ -119,6 +119,20 @@ const getWinPct = (rec) => {
     return totalGames > 0 ? rec.w / totalGames : 0;
 }
 
+
+// --- DYNAMIC WEIGHTS ---
+// FIX 2: Restored the missing getDynamicWeights function
+function getDynamicWeights(sportKey) {
+    if (sportKey === 'baseball_mlb') {
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
+    }
+    if (sportKey === 'icehockey_nhl') {
+        // NEW ADVANCED NHL WEIGHTS
+        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
+    }
+    // Default / NFL
+    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
+}
 
 // --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
