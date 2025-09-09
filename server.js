@@ -199,7 +199,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v7_both_sports`; // Increment version for new logic
+    const cacheKey = `stats_api_${sportKey}_v8_mlb_fix`; // Increment version for new logic
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -226,15 +226,15 @@ async function getTeamStatsFromAPI(sportKey) {
 
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats/league?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
-                if (leagueStatsData.stats) {
+                 if (leagueStatsData.stats) {
                     leagueStatsData.stats.forEach(statGroup => {
                         statGroup.splits.forEach(split => {
                             const teamName = split.team.name;
                             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
                             if (stats[canonicalName]) {
-                                if (statGroup.group.displayName === 'hitting') {
+                                if (statGroup.group.displayName === 'hitting' && split.stat) {
                                     stats[canonicalName].runsPerGame = split.stat.runsPerGame;
-                                } else if (statGroup.group.displayName === 'pitching') {
+                                } else if (statGroup.group.displayName === 'pitching' && split.stat) {
                                     stats[canonicalName].teamERA = parseFloat(split.stat.era);
                                 }
                             }
