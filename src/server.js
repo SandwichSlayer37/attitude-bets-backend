@@ -89,12 +89,6 @@ Object.keys(teamLocationMap).forEach(canonicalName => {
     if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
 });
 
-
-const flairMap = {
-    'baseball_mlb': 'MLB Bets and Picks',
-    'icehockey_nhl': 'NHL Bets and Picks',
-    'americanfootball_nfl': 'NFL Bets and Picks'
-};
 const FUTURES_PICKS_DB = {
     'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
@@ -118,17 +112,14 @@ const getWinPct = (rec) => {
     return totalGames > 0 ? rec.w / totalGames : 0;
 }
 
-
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
     }
     if (sportKey === 'icehockey_nhl') {
-        // NEW ADVANCED NHL WEIGHTS
         return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
     }
-    // Default / NFL
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
@@ -149,7 +140,7 @@ async function getOdds(sportKey) {
             const allGames = [];
             const gameIds = new Set();
             const datesToFetch = [];
-
+            
             const today = new Date();
             for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
@@ -162,10 +153,12 @@ async function getOdds(sportKey) {
             );
             const responses = await Promise.all(requests);
             for (const response of responses) {
-                for (const game of response.data) {
-                    if (!gameIds.has(game.id)) {
-                        allGames.push(game);
-                        gameIds.add(game.id);
+                if(response.data) {
+                    for (const game of response.data) {
+                        if (!gameIds.has(game.id)) {
+                            allGames.push(game);
+                            gameIds.add(game.id);
+                        }
                     }
                 }
             }
@@ -177,7 +170,6 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
-// NEW: Function to get all goalie stats for the season
 async function getGoalieStats() {
     const cacheKey = `nhl_goalie_stats_v1`;
     return fetchData(cacheKey, async () => {
@@ -197,11 +189,11 @@ async function getGoalieStats() {
             console.error("Could not fetch goalie stats:", e.message);
             return {};
         }
-    }, 86400000); // Cache for 24 hours
+    }, 86400000);
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v9_mlb_refined_fix`; // Increment version for new logic
+    const cacheKey = `stats_api_${sportKey}_v10_ops_fix`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -220,6 +212,8 @@ async function getTeamStatsFromAPI(sportKey) {
                                     record: `${teamRecord.wins}-${teamRecord.losses}`,
                                     streak: teamRecord.streak?.streakCode || 'N/A',
                                     lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
+                                    ops: 0.700, // Default OPS
+                                    teamERA: 99.99
                                 };
                             }
                         }
@@ -235,9 +229,7 @@ async function getTeamStatsFromAPI(sportKey) {
                             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
                             if (stats[canonicalName]) {
                                 if (statGroup.group.displayName === 'hitting' && split.stat) {
-                                    const runs = split.stat.runs;
-                                    const games = split.stat.gamesPlayed;
-                                    stats[canonicalName].runsPerGame = games > 0 ? parseFloat((runs / games).toFixed(2)) : 0;
+                                    stats[canonicalName].ops = parseFloat(split.stat.ops);
                                 } else if (statGroup.group.displayName === 'pitching' && split.stat) {
                                     stats[canonicalName].teamERA = parseFloat(split.stat.era);
                                 }
@@ -286,47 +278,36 @@ async function getTeamStatsFromAPI(sportKey) {
     }, 3600000);
 }
 
-// NEW: Function to analyze team fatigue from the schedule
 function calculateFatigue(teamName, allGames, currentGameDate) {
     const oneDay = 1000 * 60 * 60 * 24;
     const fourDays = oneDay * 4;
-
     const recentGames = allGames.filter(g => {
         const gameDate = new Date(g.commence_time);
         return (g.home_team === teamName || g.away_team === teamName) && gameDate < currentGameDate;
     }).sort((a, b) => new Date(b.commence_time) - new Date(a.commence_time));
-
     let fatigueScore = 0;
     if (recentGames.length === 0) return fatigueScore;
-
-    // Check for back-to-back
     const lastGame = recentGames[0];
     if ((currentGameDate - new Date(lastGame.commence_time)) / (1000 * 60 * 60) <= 30) {
         fatigueScore += 5;
     }
-
-    // Check for 3 games in 4 nights
     const gamesInLast4Days = recentGames.filter(g => (currentGameDate - new Date(g.commence_time)) <= fourDays).length;
-    if (gamesInLast4Days >= 2) { // 2 previous games + current game = 3
+    if (gamesInLast4Days >= 2) { 
         fatigueScore += 3;
     }
-
-    // Check road trip length
     let roadTripLength = 0;
     for (const game of recentGames) {
         if (game.away_team === teamName) {
             roadTripLength++;
         } else {
-            break; // Road trip is broken by a home game
+            break;
         }
     }
     if (roadTripLength >= 3) {
-        fatigueScore += roadTripLength; // Add 1 point for each game in a long road trip
+        fatigueScore += roadTripLength;
     }
-
     return fatigueScore;
 }
-
 
 async function getWeatherData(teamName) {
     if (!teamName) return null;
@@ -358,55 +339,42 @@ async function fetchEspnData(sportKey) {
     }, 60000);
 }
 
-// RESTORED: Original weighted prediction engine
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
-
     const homeCanonicalName = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonicalName = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
-
     const homeStats = teamStats[homeCanonicalName] || {};
     const awayStats = teamStats[awayCanonicalName] || {};
-    
     let homeScore = 50, awayScore = 50;
     const factors = {};
-
     let homeInjuryImpact = (injuries[homeCanonicalName] || []).length;
     let awayInjuryImpact = (injuries[awayCanonicalName] || []).length;
-
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
-    
     if (sportKey === 'icehockey_nhl') {
         const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
         const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
         factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal) * weights.hotStreak, homeStat: homeStats.streak, awayStat: awayStats.streak };
-        
         factors['Offensive Form'] = { value: (homeStats.goalsForPerGame - awayStats.goalsForPerGame) * weights.offensiveForm, homeStat: `${homeStats.goalsForPerGame?.toFixed(2)} G/GP`, awayStat: `${awayStats.goalsForPerGame?.toFixed(2)} G/GP` };
         factors['Defensive Form'] = { value: (awayStats.goalsAgainstPerGame - homeStats.goalsAgainstPerGame) * weights.defensiveForm, homeStat: `${homeStats.goalsAgainstPerGame?.toFixed(2)} GA/GP`, awayStat: `${awayStats.goalsAgainstPerGame?.toFixed(2)} GA/GP` };
-
         const homeSpecialTeams = (homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0);
         const awaySpecialTeams = (awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0);
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
-
         factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)) * weights.faceoffAdvantage, homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
-
         const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
         const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
         factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
-
         const homeGoalieName = probableStarters[homeCanonicalName];
         const awayGoalieName = probableStarters[awayCanonicalName];
         const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
         const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
-
         let goalieValue = 0;
         let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
         if(homeGoalieStats && awayGoalieStats) {
-            const gaaDiff = awayGoalieStats.gaa - homeGoalieStats.gaa; // Lower is better
-            const svPctDiff = homeGoalieStats.svPct - awayGoalieStats.svPct; // Higher is better
+            const gaaDiff = awayGoalieStats.gaa - homeGoalieStats.gaa;
+            const svPctDiff = homeGoalieStats.svPct - awayGoalieStats.svPct;
             goalieValue = (gaaDiff * 5) + (svPctDiff * 100);
             homeGoalieDisplay = `${homeGoalieName.split(' ')[1]} ${homeGoalieStats.svPct.toFixed(3)}`;
             awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
@@ -414,21 +382,24 @@ async function runPredictionEngine(game, sportKey, context) {
         factors['Goalie Matchup'] = { value: goalieValue * (weights.goalieMatchup / 10), homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     } else if (sportKey === 'baseball_mlb') {
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-        factors['Offensive Form'] = { value: (homeStats.runsPerGame - awayStats.runsPerGame) * weights.offensiveForm, homeStat: `${homeStats.runsPerGame?.toFixed(2)} R/G`, awayStat: `${awayStats.runsPerGame?.toFixed(2)} R/G` };
-        if (homeStats.teamERA && awayStats.teamERA) {
+        const homeOps = homeStats.ops || 0.700;
+        const awayOps = awayStats.ops || 0.700;
+        factors['Offensive Form'] = { 
+            value: (homeOps - awayOps) * 100,
+            homeStat: `${homeOps.toFixed(3)} OPS`, 
+            awayStat: `${awayOps.toFixed(3)} OPS` 
+        };
+        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
             factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
-    
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
-
     for (const factor in factors) {
         if (factors[factor].value && !isNaN(factors[factor].value)) {
             homeScore += factors[factor].value;
             awayScore -= factors[factor].value;
         }
     }
-
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 'N/A', awayValue = 'N/A';
@@ -442,18 +413,84 @@ async function runPredictionEngine(game, sportKey, context) {
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
-    
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, weather: context.weather, homeValue, awayValue };
 }
 
-// --- MAIN PREDICTION CONTROLLER ---
+async function getAllDailyPredictions() {
+    const allPredictions = [];
+    const gameCounts = {};
+
+    for (const sport of SPORTS_DB) {
+        const sportKey = sport.key;
+        const [games, espnDataResponse, teamStats] = await Promise.all([
+            getOdds(sportKey),
+            fetchEspnData(sportKey),
+            getTeamStatsFromAPI(sportKey)
+        ]);
+
+        gameCounts[sportKey] = games.length;
+        if (!games || games.length === 0) continue;
+        
+        const goalieStats = sportKey === 'icehockey_nhl' ? await getGoalieStats() : {};
+        const injuries = {};
+        const h2hRecords = {};
+        const probableStarters = {};
+
+        if (espnDataResponse?.events) {
+            espnDataResponse.events.forEach(event => {
+                const competition = event.competitions?.[0];
+                if (!competition) return;
+                competition.competitors.forEach(competitor => {
+                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
+                    injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                    if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) { 
+                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
+                    }
+                });
+                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
+                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
+                if (competition.series && homeTeam && awayTeam) {
+                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
+                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
+                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
+                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
+                }
+            });
+        }
+        
+        for (const game of games) {
+            const weather = await getWeatherData(game.home_team);
+            const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
+            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+            const context = { 
+                teamStats, weather, injuries, h2h, allGames: games, goalieStats,
+                probableStarters: {
+                    [gameHomeCanonical]: probableStarters[gameHomeCanonical],
+                    [gameAwayCanonical]: probableStarters[gameAwayCanonical]
+                }
+            };
+            const predictionData = await runPredictionEngine(game, sportKey, context);
+            
+            if (predictionData && predictionData.winner) {
+                allPredictions.push({ 
+                    game: { ...game, sportKey: sportKey }, 
+                    prediction: predictionData 
+                });
+            }
+        }
+    }
+    return { allPredictions, gameCounts };
+}
+
+// --- API ENDPOINTS ---
+
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
-
     try {
         const [games, espnDataResponse, teamStats] = await Promise.all([
             getOdds(sport),
@@ -462,7 +499,6 @@ app.get('/api/predictions', async (req, res) => {
         ]);
 
         const goalieStats = sport === 'icehockey_nhl' ? await getGoalieStats() : {};
-
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}.` }); }
 
         const injuries = {};
@@ -475,7 +511,6 @@ app.get('/api/predictions', async (req, res) => {
                 competition.competitors.forEach(competitor => {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    
                     if (sport === 'icehockey_nhl' && competitor.probablePitcher) { 
                         probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
                     }
@@ -495,24 +530,41 @@ app.get('/api/predictions', async (req, res) => {
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
             const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
-            
             const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
             const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-            
             const context = { 
-                teamStats, 
-                weather,
-                injuries, 
-                h2h, 
-                allGames: games, 
-                goalieStats, 
+                teamStats, weather, injuries, h2h, allGames: games, goalieStats, 
                 probableStarters: {
                     [gameHomeCanonical]: probableStarters[gameHomeCanonical],
                     [gameAwayCanonical]: probableStarters[gameAwayCanonical]
                 } 
             };
             const predictionData = await runPredictionEngine(game, sport, context);
-            
+
+            if (predictionData && predictionData.winner && predictionsCollection) {
+                try {
+                    const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
+                    const updateOperations = {
+                        $setOnInsert: {
+                            gameId: game.id,
+                            sportKey: sport,
+                            homeTeam: game.home_team,
+                            awayTeam: game.away_team,
+                            gameDate: game.commence_time,
+                            odds: winnerOdds || null,
+                            status: 'pending',
+                            createdAt: new Date()
+                        },
+                        $set: {
+                            predictedWinner: predictionData.winner,
+                        }
+                    };
+                    await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
+                } catch (dbError) {
+                    console.error("Failed to save prediction to DB:", dbError);
+                }
+            }
+
             const espnEvent = espnDataResponse?.events?.find(e => {
                 const competitors = e.competitions?.[0]?.competitors;
                 if (!competitors) return false;
@@ -531,8 +583,73 @@ app.get('/api/predictions', async (req, res) => {
     }
 });
 
+app.get('/api/special-picks', async (req, res) => {
+    try {
+        const { allPredictions, gameCounts } = await getAllDailyPredictions();
 
-// --- LEGACY ENDPOINTS (Special Picks, Records, AI Analysis etc.) ---
+        let sportsInSeason = 0;
+        for(const sport of SPORTS_DB) {
+            if(gameCounts[sport.key] >= sport.gameCountThreshold) {
+                sportsInSeason++;
+            }
+        }
+        const isPeakSeason = sportsInSeason >= 2;
+
+        const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
+        const potdValueThreshold = isPeakSeason ? 5 : 2.5;
+        const parlayConfidenceThreshold = 7.5;
+
+        const now = new Date();
+        const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        const upcomingTodayPredictions = allPredictions.filter(p => {
+            const gameDate = new Date(p.game.commence_time);
+            return gameDate > now && gameDate < cutoff;
+        });
+
+        let pickOfTheDay = null;
+        let parlay = null;
+
+        const highValuePicks = upcomingTodayPredictions.filter(p => {
+            const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
+            return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
+        });
+
+        if (highValuePicks.length > 0) {
+            pickOfTheDay = highValuePicks.reduce((best, current) => {
+                const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
+                const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
+                const bestScore = best.prediction.confidence + bestValue;
+                const currentScore = current.prediction.confidence + currentValue;
+                return currentScore > bestScore ? current : best;
+            });
+        }
+
+        const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
+            .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
+                             (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
+
+        if (goodPicks.length >= 2) {
+            const leg1 = goodPicks[0];
+            let leg2 = goodPicks.find(p => p.game.id !== leg1.game.id);
+            if (leg2) {
+                const odds1 = leg1.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg1.prediction.winner)?.price || 0;
+                const odds2 = leg2.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg2.prediction.winner)?.price || 0;
+
+                if (odds1 && odds2) {
+                    parlay = {
+                        legs: [leg1, leg2],
+                        totalOdds: (odds1 * odds2).toFixed(2)
+                    };
+                }
+            }
+        }
+
+        res.json({ pickOfTheDay, parlay });
+    } catch (error) {
+        console.error("Special Picks Error:", error);
+        res.status(500).json({ error: 'Failed to generate special picks.' });
+    }
+});
 
 app.get('/api/records', async (req, res) => {
     try {
@@ -680,7 +797,6 @@ app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
-        const { home_team, away_team } = game;
         const { winner, factors } = prediction;
         
         const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so.
@@ -690,7 +806,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
         
         let dataSummary = `
-            Matchup: ${away_team} at ${home_team}
+            Matchup: ${game.away_team} at ${game.home_team}
             Our Algorithm's Initial Prediction: ${winner}
             Key Statistical Factors Considered:
         `;
@@ -698,7 +814,6 @@ app.post('/api/ai-analysis', async (req, res) => {
         for(const factor in factors) {
             dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
         }
-
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
@@ -707,16 +822,53 @@ app.post('/api/ai-analysis', async (req, res) => {
         const responseText = result.response.text();
         const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
         const analysis = JSON.parse(cleanedJson);
-
         if (analysis.finalPick && analysis.analysisHtml) {
             res.json(analysis);
         } else {
             throw new Error("Invalid JSON response from Gemini for analysis.");
         }
-
     } catch (error) {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
+    }
+});
+
+app.post('/api/parlay-ai-analysis', async (req, res) => {
+    try {
+        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
+        const { parlay } = req.body;
+        const leg1 = parlay.legs[0];
+        const leg2 = parlay.legs[1];
+
+        const prompt = `
+            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following 2-leg parlay.
+            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
+
+            Parlay Details:
+            - Leg 1: Pick ${leg1.prediction.winner} in the ${leg1.game.away_team} @ ${leg1.game.home_team} game.
+            - Leg 2: Pick ${leg2.prediction.winner} in the ${leg2.game.away_team} @ ${leg2.game.home_team} game.
+            - Total Odds: ${parlay.totalOdds}
+
+            Generate the following HTML structure:
+            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Parlay Rationale". Follow it with a <p> with class="text-gray-300 mb-4" that explains what a parlay is (higher risk for a higher reward) and the overall strategy for this specific combination.
+            2. An <hr> with class="border-gray-700 my-4".
+            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Leg 1 Breakdown: ${leg1.prediction.winner}". Follow it with a <p> briefly justifying this pick.
+            4. A <h4> with class "text-xl font-bold text-teal-400 mb-2 mt-3" titled "Leg 2 Breakdown: ${leg2.prediction.winner}". Follow it with a <p> briefly justifying this second pick.
+            5. An <hr> with class="border-gray-700 my-4".
+            6. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Associated Risks". Follow it with a <p> explaining the primary risks. Mention that both bets must win, and discuss the single biggest risk for each leg that could cause the parlay to fail.
+            7. An <hr> with class="border-gray-700 my-4".
+            8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
+        `;
+        
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+        let analysisHtml = responseText.replace(/```html/g, '').replace(/```/g, '').trim();
+        res.json({ analysisHtml });
+
+    } catch (error) {
+        console.error("Parlay AI Analysis Error:", error);
+        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
 
@@ -730,4 +882,3 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
-
