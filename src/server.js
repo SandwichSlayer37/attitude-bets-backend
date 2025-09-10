@@ -1,4 +1,4 @@
-// FINAL UPGRADED VERSION - Hybrid AI Prediction Engine
+// FINAL, STABLE & FEATURE-COMPLETE VERSION
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -13,9 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // Corrected static file pathing to work on Render
-// FIX APPLIED: Changed 'public' to 'Public' to match case-sensitive folder name.
-const publicPath = path.join(__dirname, '..', 'Public');
-app.use(express.static(publicPath));
+app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 
 // --- API & DATA CONFIG ---
@@ -65,11 +63,8 @@ const teamLocationMap = {
 };
 
 const teamAliasMap = {
-    // MLB
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
-    // NFL
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
-    // NHL
     'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'], 'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Hurricanes', 'Canes'], 'Chicago Blackhawks': ['Blackhawks'], 'Colorado Avalanche': ['Avalanche', 'Avs'], 'Columbus Blue Jackets': ['Blue Jackets', 'CBJ'], 'Dallas Stars': ['Stars'], 'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'], 'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators', 'Preds'], 'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders', 'Isles'], 'New York Rangers': ['Rangers'], 'Ottawa Senators': ['Senators', 'Sens'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins', 'Pens'], 'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning', 'Bolts'], 'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks', 'Nucks'], 'Vegas Golden Knights': ['Golden Knights', 'Knights'], 'Washington Capitals': ['Capitals', 'Caps'], 'Winnipeg Jets': ['Jets']
 };
 
@@ -186,6 +181,10 @@ async function getGoalieStats() {
             }
             return goalieStats;
         } catch (e) {
+            if (e.response && e.response.status === 404) {
+                console.log(`NHL Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
+                return {};
+            }
             console.error("Could not fetch goalie stats:", e.message);
             return {};
         }
@@ -193,7 +192,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v13_robust_handling`; // Updated cache key
+    const cacheKey = `stats_api_${sportKey}_v_final_robust`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -239,13 +238,12 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
-                // FIX: If a 404 error occurs, treat it as "no data available" and return empty stats.
                 if (e.response && e.response.status === 404) {
                     console.log(`MLB API returned 404 for ${sportKey}, likely an off-day. Proceeding gracefully.`);
-                    return {}; // Return empty object, not an error
+                    return {};
                 }
                 console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
-                return stats; // Return whatever was partially fetched
+                return stats;
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
@@ -277,10 +275,9 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
-                // FIX: If a 404 error occurs, treat it as "offseason" and return empty stats.
                 if (e.response && e.response.status === 404) {
                     console.log(`NHL API returned 404 for ${sportKey}, likely offseason. Proceeding gracefully.`);
-                    return {}; // Return empty object, not an error
+                    return {};
                 }
                 console.error(`Could not fetch stats from NHL API: ${e.message}`);
                 return {};
@@ -428,7 +425,7 @@ async function runPredictionEngine(game, sportKey, context) {
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    return { winner, strengthText, confidence, factors, weather: context.weather, homeValue, awayValue };
+    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
 
 async function getAllDailyPredictions() {
@@ -808,16 +805,15 @@ app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
-        const { winner, factors } = prediction;
         
         const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so. Your response MUST be a valid JSON object and nothing else. Do not include markdown formatting or any text outside the JSON structure. The JSON object must have two keys: "finalPick" and "analysisHtml". - "finalPick": An object with a single key, "winner", containing the full team name of your final decision. - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
         
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Initial Prediction: ${winner}\nKey Statistical Factors Considered:\n`;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Initial Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
 
-        for(const factor in factors) {
-            dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
+        for(const factor in prediction.factors) {
+            dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
         }
-        // FIX: Enabled JSON Mode for reliable AI responses
+        
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
@@ -827,14 +823,12 @@ app.post('/api/ai-analysis', async (req, res) => {
         });
 
         const result = await model.generateContent(dataSummary);
-        // With JSON mode, the response text is guaranteed to be a valid JSON string
         const analysis = JSON.parse(result.response.text());
 
         if (analysis.finalPick && analysis.analysisHtml) {
             return res.json(analysis);
         }
 
-        // This error will now only be thrown if the AI returns a valid but empty/wrong JSON structure
         throw new Error("AI response did not contain the expected JSON structure.");
 
     } catch (error) {
@@ -867,11 +861,10 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
-
