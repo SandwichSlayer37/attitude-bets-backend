@@ -12,6 +12,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Corrected static file pathing to work on Render
+const publicPath = path.join(__dirname, '..', 'public');
+app.use(express.static(publicPath));
+
+
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -115,7 +120,6 @@ const getWinPct = (rec) => {
 
 
 // --- DYNAMIC WEIGHTS ---
-// FIX 2: Restored the missing getDynamicWeights function
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
