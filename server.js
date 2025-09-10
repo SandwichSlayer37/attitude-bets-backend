@@ -684,7 +684,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { winner, factors } = prediction;
         
         const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so.
-        Your response MUST be a valid JSON object with two keys: "finalPick" and "analysisHtml".
+        Your response MUST be a valid JSON object and nothing else. Do not include markdown formatting or any text outside the JSON structure.
+        The JSON object must have two keys: "finalPick" and "analysisHtml".
         - "finalPick": An object with a single key, "winner", containing the full team name of your final decision.
         - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
         
@@ -700,7 +701,7 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt
+            systemInstruction: systemPrompt,
         });
         const result = await model.generateContent(dataSummary);
         const responseText = result.response.text();
