@@ -193,7 +193,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v12_final_merge`;
+    const cacheKey = `stats_api_${sportKey}_v13_robust_handling`; // Updated cache key
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -239,12 +239,16 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
+                // FIX: If a 404 error occurs, treat it as "no data available" and return empty stats.
+                if (e.response && e.response.status === 404) {
+                    console.log(`MLB API returned 404 for ${sportKey}, likely an off-day. Proceeding gracefully.`);
+                    return {}; // Return empty object, not an error
+                }
                 console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
-                return stats;
+                return stats; // Return whatever was partially fetched
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
-                // FIX: Generate today's date in YYYY-MM-DD format for the NHL API
                 const today = new Date().toISOString().slice(0, 10);
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
@@ -273,6 +277,11 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
+                // FIX: If a 404 error occurs, treat it as "offseason" and return empty stats.
+                if (e.response && e.response.status === 404) {
+                    console.log(`NHL API returned 404 for ${sportKey}, likely offseason. Proceeding gracefully.`);
+                    return {}; // Return empty object, not an error
+                }
                 console.error(`Could not fetch stats from NHL API: ${e.message}`);
                 return {};
             }
