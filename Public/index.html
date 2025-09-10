@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attitude Sports Bets</title>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; }
+        #login-screen, #success-animation { display: flex; align-items: center; justify-content: center; height: 100vh; width: 100vw; position: fixed; top: 0; left: 0; background: linear-gradient(135deg, #1f2937, #111827); z-index: 100; }
+        .login-card { background: #1f2937; padding: 2rem; border-radius: 1rem; box-shadow: 0 0 20px rgba(0,0,0,0.6); width: 100%; max-width: 400px; }
+        .password-wrapper { position: relative; }
+        .toggle-password { position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); cursor: pointer; color: #9ca3af; }
+        #success-animation { display: none; background: #111827; }
+        .success-checkmark { width: 120px; height: 120px; border-radius: 50%; display: block; stroke-width: 4; stroke: #4ade80; stroke-miterlimit: 10; box-shadow: inset 0px 0px 0px #4ade80; animation: scale .5s ease-in-out .2s both, fill .5s ease-in-out .7s both; }
+        .success-checkmark__circle { stroke-dasharray: 166; stroke-dashoffset: 166; stroke-width: 4; stroke-miterlimit: 10; stroke: #4ade80; fill: none; animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards; }
+        .success-checkmark__check { transform-origin: 50% 50%; stroke-dasharray: 48; stroke-dashoffset: 48; animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards; }
+        @keyframes stroke { 100% { stroke-dashoffset: 0; } }
+        @keyframes scale { 0%, 100% { transform: none; } 50% { transform: scale3d(1.1, 1.1, 1); } }
+        @keyframes fill { 100% { box-shadow: inset 0px 0px 0px 60px #4ade80; } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .card-gradient { background: linear-gradient(145deg, #1f2937, #374151); position: relative; transition: box-shadow 0.3s ease-in-out, transform 0.3s ease-in-out; border: 1px solid #374151; }
+        .card-highlight { box-shadow: 0 0 25px rgba(59, 130, 246, 0.7); border-color: #3b82f6; transform: scale(1.02); }
+        .live-badge { position: absolute; top: 1rem; right: 1rem; background-color: #ef4444; color: white; padding: 0.25rem 0.75rem; border-radius: 6px; font-size: 0.75rem; font-weight: 700; animation: pulse 2s infinite; z-index: 10; }
+        .explanation-box { background-color: rgba(0, 0, 0, 0.25); border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: #d1d5db; border-left: 3px solid #3b82f6; }
+        .explanation-item { display: grid; grid-template-columns: 1fr 2fr 1fr; align-items: center; text-align: center; padding: 8px 0; border-bottom: 1px solid #374151; }
+        .explanation-item:last-child { border-bottom: none; }
+        .factor-label { font-weight: 700; color: #67e8f9; }
+        .stat-text { color: #ffffff; display: flex; justify-content: center; align-items: center; gap: 0.5rem; }
+        .date-display { background-color: rgba(255, 255, 255, 0.1); color: #e5e7eb; font-weight: 600; font-size: 0.75rem; padding: 4px 8px; border-radius: 9999px; }
+        .sport-selector-card { background-color: #273142; border: 2px solid transparent; border-radius: 12px; padding-top: 1.5rem; text-align: center; cursor: pointer; transition: all 0.2s ease-in-out; position: relative; overflow: hidden; }
+        .sport-selector-card:hover { background-color: #313e54; }
+        .sport-selector-card.active { border-color: #3b82f6; background-color: #313e54; }
+        .sport-icon { height: 80px; width: auto; margin: 0 auto 1rem; }
+        .record-container { background-color: rgba(0,0,0,0.3); padding: 0.75rem; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }
+        .record-stat { text-align: center; }
+        .record-stat .value { font-size: 1.25rem; font-weight: 700; color: white; }
+        .record-stat .label { font-size: 0.7rem; font-weight: 500; color: #9ca3af; text-transform: uppercase; }
+        .profit-container { padding: 0.5rem; text-align: center; }
+        .profit-container .label { font-size: 0.7rem; font-weight: 500; color: #9ca3af; text-transform: uppercase; }
+        .profit-container .value { font-size: 1.5rem; font-weight: 700; }
+        .futures-pick-card { background-color: #273142; border-radius: 12px; padding: 1rem; text-align: center; }
+        .futures-pick-card .label { font-size: 0.8rem; font-weight: 600; color: #9ca3af; }
+        .futures-pick-card .team { font-size: 1.25rem; font-weight: 700; }
+        .prime-pick-container { background-color: rgba(30, 41, 59, 0.7); border: 1px solid #3b82f6; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+        .prime-pick-title { color: #60a5fa; font-weight: 700; font-size: 1rem; text-align: center; margin-bottom: 1rem; letter-spacing: 1px; }
+        .prime-pick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; }
+        .prime-pick-item { text-align: center; }
+        .prime-pick-label { font-size: 0.75rem; font-weight: 600; color: #9ca3af; text-transform: uppercase; margin-bottom: 0.25rem; }
+        .prime-pick-value { font-size: 1.1rem; font-weight: bold; color: #ffffff; }
+        .prime-pick-confidence { font-size: 0.8rem; color: #9ca3af; }
+        .weather-icon-container { position: relative; display: inline-block; cursor: pointer; }
+        .weather-tooltip { visibility: hidden; width: 160px; background-color: #1f2937; color: #fff; text-align: left; border-radius: 6px; padding: 8px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -80px; opacity: 0; transition: opacity 0.3s; font-size: 0.8rem; border: 1px solid #374151; }
+        .weather-icon-container:hover .weather-tooltip { visibility: visible; opacity: 1; }
+        .sharp-report-container { background-color: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 8px; padding: 0.75rem; margin-top: 1rem; }
+        .sharp-report-container .title { color: #10b981; font-weight: 700; font-size: 0.9rem; text-align: center; margin-bottom: 0.5rem; }
+        .sharp-report-container .text { font-size: 0.8rem; color: #d1d5db; text-align: center; }
+        .special-pick-card { background: linear-gradient(145deg, #1f2937, #374151); border: 1px solid #4a5568; border-radius: 12px; }
+        .special-pick-card .title { font-size: 1rem; font-weight: 700; color: #a0aec0; text-align: center; padding-top: 1rem; padding-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px; background-color: rgba(0,0,0,0.2); border-top-left-radius: 12px; border-top-right-radius: 12px; }
+        .modal-backdrop { background-color: rgba(0, 0, 0, 0.75); }
+        .history-btn { background-color: rgba(255, 255, 255, 0.1); border: 1px solid #4a5568; color: #cbd5e1; font-size: 0.75rem; font-weight: 600; padding: 4px 10px; border-radius: 6px; margin-top: 0.5rem; transition: background-color 0.2s; }
+        .history-btn:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .view-injuries-btn { background: none; border: none; color: #60a5fa; text-decoration: underline; font-size: 0.75rem; cursor: pointer; font-weight: 600; }
+    </style>
+</head>
+<body class="bg-slate-900 text-gray-200">
+
+    <div id="login-screen">
+        <div class="login-card">
+            <h2 class="text-2xl font-bold text-white mb-4 text-center">Login</h2>
+            <div class="mb-4 password-wrapper">
+                <input type="password" id="password-input" placeholder="Enter Password" class="w-full p-2 rounded bg-gray-800 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <span id="toggle-password" class="toggle-password">👁</span>
+            </div>
+            <div class="mb-4 flex items-center">
+                <input type="checkbox" id="remember-device" class="mr-2 h-4 w-4 rounded text-blue-600 focus:ring-blue-500">
+                <label for="remember-device" class="text-gray-300 text-sm">Remember this device</label>
+            </div>
+            <button id="login-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded transition-colors duration-200">Login</button>
+            <p id="login-error" class="text-red-400 text-sm mt-2 hidden text-center">Incorrect password. Try again.</p>
+        </div>
+    </div>
+    
+    <div id="success-animation" class="hidden">
+        <svg class="success-checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52"><circle class="success-checkmark__circle" cx="26" cy="26" r="25" fill="none"/><path class="success-checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/></svg>
+    </div>
+
+    <div id="app-container" class="hidden">
+        <div class="container mx-auto p-4 md:p-8 max-w-5xl">
+            <header class="text-center mb-8">
+                <img src="logo.png" alt="Attitude Sports Bets Logo" class="mx-auto h-52">
+                <h1 class="text-4xl font-bold text-gray-200 tracking-wider mt-3">ATTITUDE</h1>
+                <h2 class="text-lg font-medium text-gray-400 tracking-widest -mt-1">SPORTS BETS</h2>
+                <p class="text-gray-400 mt-4">Hybrid AI Prediction Algorithm</p>
+            </header>
+
+            <main>
+                <div id="special-picks-ui" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"></div>
+                
+                <div class="flex justify-center items-center mb-8">
+                    <div id="sport-selection-ui" class="grid grid-cols-2 md:grid-cols-3 gap-6"></div>
+                </div>
+
+                <div id="futures-picks-ui" class="grid grid-cols-2 gap-6 mb-8 hidden"></div>
+
+                <div id="loading-indicator" class="text-center my-12 hidden">
+                    <div class="inline-block animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500"></div>
+                    <p class="mt-4 text-gray-400">Fetching predictions from server...</p>
+                </div>
+                <div id="games-container" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+                <div id="error-message" class="text-center my-8 text-red-400 hidden"></div>
+            </main>
+        </div>
+    </div>
+    
+    <div id="ai-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="ai-modal-title">AI Expert Analysis</h2>
+                    <button id="close-ai-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="ai-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="history-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="history-modal-title">Recent Bet History</h2>
+                    <button id="close-history-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="history-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="injury-modal" class="fixed inset-0 z-50 items-center justify-center p-4 hidden modal-backdrop">
+        <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-auto overflow-hidden">
+            <div class="p-6">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold text-white" id="injury-modal-title">Injury Report</h2>
+                    <button id="close-injury-modal-btn" class="text-gray-400 hover:text-white text-3xl">&times;</button>
+                </div>
+                <div id="injury-modal-content" class="text-gray-300 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        const API_ENDPOINT = 'http://localhost:10000/api'; // Use this for local testing
+        // const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
+        const CORRECT_PASSWORD = "droptheattitude37";
+
+        // --- DOM Elements ---
+        const loginScreen = document.getElementById('login-screen');
+        const successAnimation = document.getElementById('success-animation');
+        const appContainer = document.getElementById('app-container');
+        const passwordInput = document.getElementById('password-input');
+        const togglePassword = document.getElementById('toggle-password');
+        const loginBtn = document.getElementById('login-btn');
+        const loginError = document.getElementById('login-error');
+        const rememberDevice = document.getElementById('remember-device');
+        
+        const specialPicksContainer = document.getElementById('special-picks-ui');
+        const sportSelectionContainer = document.getElementById('sport-selection-ui');
+        const futuresPicksContainer = document.getElementById('futures-picks-ui');
+        const gamesContainer = document.getElementById('games-container');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorMessage = document.getElementById('error-message');
+
+        const aiModal = document.getElementById('ai-modal');
+        const aiModalTitle = document.getElementById('ai-modal-title');
+        const aiModalContent = document.getElementById('ai-modal-content');
+        const closeAiModalBtn = document.getElementById('close-ai-modal-btn');
+        
+        const historyModal = document.getElementById('history-modal');
+        const historyModalTitle = document.getElementById('history-modal-title');
+        const historyModalContent = document.getElementById('history-modal-content');
+        const closeHistoryModalBtn = document.getElementById('close-history-modal-btn');
+
+        const injuryModal = document.getElementById('injury-modal');
+        const injuryModalTitle = document.getElementById('injury-modal-title');
+        const injuryModalContent = document.getElementById('injury-modal-content');
+        const closeInjuryModalBtn = document.getElementById('close-injury-modal-btn');
+        
+        
+        // --- Data & State ---
+        const teamLogosDB = {
+            // MLB
+            'Arizona Diamondbacks': 'https://a.espncdn.com/i/teamlogos/mlb/500/ari.png', 'Atlanta Braves': 'https://a.espncdn.com/i/teamlogos/mlb/500/atl.png', 'Baltimore Orioles': 'https://a.espncdn.com/i/teamlogos/mlb/500/bal.png', 'Boston Red Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/bos.png', 'Chicago Cubs': 'https://a.espncdn.com/i/teamlogos/mlb/500/chc.png', 'Chicago White Sox': 'https://a.espncdn.com/i/teamlogos/mlb/500/chw.png', 'Cincinnati Reds': 'https://a.espncdn.com/i/teamlogos/mlb/500/cin.png', 'Cleveland Guardians': 'https://a.espncdn.com/i/teamlogos/mlb/500/cle.png', 'Colorado Rockies': 'https://a.espncdn.com/i/teamlogos/mlb/500/col.png', 'Detroit Tigers': 'https://a.espncdn.com/i/teamlogos/mlb/500/det.png', 'Houston Astros': 'https://a.espncdn.com/i/teamlogos/mlb/500/hou.png', 'Kansas City Royals': 'https://a.espncdn.com/i/teamlogos/mlb/500/kc.png', 'Los Angeles Angels': 'https://a.espncdn.com/i/teamlogos/mlb/500/laa.png', 'Los Angeles Dodgers': 'https://a.espncdn.com/i/teamlogos/mlb/500/la.png', 'Miami Marlins': 'https://a.espncdn.com/i/teamlogos/mlb/500/mia.png', 'Milwaukee Brewers': 'https://a.espncdn.com/i/teamlogos/mlb/500/mil.png', 'Minnesota Twins': 'https://a.espncdn.com/i/teamlogos/mlb/500/min.png', 'New York Mets': 'https://a.espncdn.com/i/teamlogos/mlb/500/nym.png', 'New York Yankees': 'https://a.espncdn.com/i/teamlogos/mlb/500/nyy.png', 'Oakland Athletics': 'https://a.espncdn.com/i/teamlogos/mlb/500/oak.png', 'Philadelphia Phillies': 'https://a.espncdn.com/i/teamlogos/mlb/500/phi.png', 'Pittsburgh Pirates': 'https://a.espncdn.com/i/teamlogos/mlb/500/pit.png', 'San Diego Padres': 'https://a.espncdn.com/i/teamlogos/mlb/500/sd.png', 'San Francisco Giants': 'https://a.espncdn.com/i/teamlogos/mlb/500/sf.png', 'Seattle Mariners': 'https://a.espncdn.com/i/teamlogos/mlb/500/sea.png', 'St. Louis Cardinals': 'https://a.espncdn.com/i/teamlogos/mlb/500/stl.png', 'Tampa Bay Rays': 'https://a.espncdn.com/i/teamlogos/mlb/500/tb.png', 'Texas Rangers': 'https://a.espncdn.com/i/teamlogos/mlb/500/tex.png', 'Toronto Blue Jays': 'https://a.espncdn.com/i/teamlogos/mlb/500/tor.png', 'Washington Nationals': 'https://a.espncdn.com/i/teamlogos/mlb/500/wsh.png',
+            // NFL
+            'Arizona Cardinals': 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png', 'Atlanta Falcons': 'https://a.espncdn.com/i/teamlogos/nfl/500/atl.png', 'Baltimore Ravens': 'https://a.espncdn.com/i/teamlogos/nfl/500/bal.png', 'Buffalo Bills': 'https://a.espncdn.com/i/teamlogos/nfl/500/buf.png', 'Carolina Panthers': 'https://a.espncdn.com/i/teamlogos/nfl/500/car.png', 'Chicago Bears': 'https://a.espncdn.com/i/teamlogos/nfl/500/chi.png', 'Cincinnati Bengals': 'https://a.espncdn.com/i/teamlogos/nfl/500/cin.png', 'Cleveland Browns': 'https://a.espncdn.com/i/teamlogos/nfl/500/cle.png', 'Dallas Cowboys': 'https://a.espncdn.com/i/teamlogos/nfl/500/dal.png', 'Denver Broncos': 'https://a.espncdn.com/i/teamlogos/nfl/500/den.png', 'Detroit Lions': 'https://a.espncdn.com/i/teamlogos/nfl/500/det.png', 'Green Bay Packers': 'https://a.espncdn.com/i/teamlogos/nfl/500/gb.png', 'Houston Texans': 'https://a.espncdn.com/i/teamlogos/nfl/500/hou.png', 'Indianapolis Colts': 'https://a.espncdn.com/i/teamlogos/nfl/500/ind.png', 'Jacksonville Jaguars': 'https://a.espncdn.com/i/teamlogos/nfl/500/jax.png', 'Kansas City Chiefs': 'https://a.espncdn.com/i/teamlogos/nfl/500/kc.png', 'Las Vegas Raiders': 'https://a.espncdn.com/i/teamlogos/nfl/500/lv.png', 'Los Angeles Chargers': 'https://a.espncdn.com/i/teamlogos/nfl/500/lac.png', 'Los Angeles Rams': 'https://a.espncdn.com/i/teamlogos/nfl/500/lar.png', 'Miami Dolphins': 'https://a.espncdn.com/i/teamlogos/nfl/500/mia.png', 'Minnesota Vikings': 'https://a.espncdn.com/i/teamlogos/nfl/500/min.png', 'New England Patriots': 'https://a.espncdn.com/i/teamlogos/nfl/500/ne.png', 'New Orleans Saints': 'https://a.espncdn.com/i/teamlogos/nfl/500/no.png', 'New York Giants': 'https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png', 'New York Jets': 'https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png', 'Philadelphia Eagles': 'https://a.espncdn.com/i/teamlogos/nfl/500/phi.png', 'Pittsburgh Steelers': 'https://a.espncdn.com/i/teamlogos/nfl/500/pit.png', 'San Francisco 49ers': 'https://a.espncdn.com/i/teamlogos/nfl/500/sf.png', 'Seattle Seahawks': 'https://a.espncdn.com/i/teamlogos/nfl/500/sea.png', 'Tampa Bay Buccaneers': 'https://a.espncdn.com/i/teamlogos/nfl/500/tb.png', 'Tennessee Titans': 'https://a.espncdn.com/i/teamlogos/nfl/500/ten.png', 'Washington Commanders': 'https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png',
+            // NHL
+            'Anaheim Ducks': 'https://a.espncdn.com/i/teamlogos/nhl/500/ana.png', 'Arizona Coyotes': 'https://a.espncdn.com/i/teamlogos/nhl/500/ari.png', 'Boston Bruins': 'https://a.espncdn.com/i/teamlogos/nhl/500/bos.png', 'Buffalo Sabres': 'https://a.espncdn.com/i/teamlogos/nhl/500/buf.png', 'Calgary Flames': 'https://a.espncdn.com/i/teamlogos/nhl/500/cgy.png', 'Carolina Hurricanes': 'https://a.espncdn.com/i/teamlogos/nhl/500/car.png', 'Chicago Blackhawks': 'https://a.espncdn.com/i/teamlogos/nhl/500/chi.png', 'Colorado Avalanche': 'https://a.espncdn.com/i/teamlogos/nhl/500/col.png', 'Columbus Blue Jackets': 'https://a.espncdn.com/i/teamlogos/nhl/500/cbj.png', 'Dallas Stars': 'https://a.espncdn.com/i/teamlogos/nhl/500/dal.png', 'Detroit Red Wings': 'https://a.espncdn.com/i/teamlogos/nhl/500/det.png', 'Edmonton Oilers': 'https://a.espncdn.com/i/teamlogos/nhl/500/edm.png', 'Florida Panthers': 'https://a.espncdn.com/i/teamlogos/nhl/500/fla.png', 'Los Angeles Kings': 'https://a.espncdn.com/i/teamlogos/nhl/500/la.png', 'Minnesota Wild': 'https://a.espncdn.com/i/teamlogos/nhl/500/min.png', 'Montreal Canadiens': 'https://a.espncdn.com/i/teamlogos/nhl/500/mtl.png', 'Nashville Predators': 'https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png', 'New Jersey Devils': 'https://a.espncdn.com/i/teamlogos/nhl/500/nj.png', 'New York Islanders': 'https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png', 'New York Rangers': 'https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png', 'Ottawa Senators': 'https://a.espncdn.com/i/teamlogos/nhl/500/ott.png', 'Philadelphia Flyers': 'https://a.espncdn.com/i/teamlogos/nhl/500/phi.png', 'Pittsburgh Penguins': 'https://a.espncdn.com/i/teamlogos/nhl/500/pit.png', 'San Jose Sharks': 'https://a.espncdn.com/i/teamlogos/nhl/500/sj.png', 'Seattle Kraken': 'https://a.espncdn.com/i/teamlogos/nhl/500/sea.png', 'St. Louis Blues': 'https://a.espncdn.com/i/teamlogos/nhl/500/stl.png', 'Tampa Bay Lightning': 'https://a.espncdn.com/i/teamlogos/nhl/500/tb.png', 'Toronto Maple Leafs': 'https://a.espncdn.com/i/teamlogos/nhl/500/tor.png', 'Vancouver Canucks': 'https://a.espncdn.com/i/teamlogos/nhl/500/van.png', 'Vegas Golden Knights': 'https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png', 'Washington Capitals': 'https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png', 'Winnipeg Jets': 'https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png'
+        };
+        const sportsDB = [ 
+            { key: 'baseball_mlb', name: 'MLB', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png' }, 
+            { key: 'icehockey_nhl', name: 'NHL', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png' }, 
+            { key: 'americanfootball_nfl', name: 'NFL', icon: 'https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png' } 
+        ];
+        let allGamesData = {}; 
+        let recordsData = {};
+
+        async function initializeSportSelectionUI() {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/records`);
+                if (!response.ok) throw new Error('Failed to fetch records');
+                recordsData = await response.json();
+            } catch (e) {
+                console.error("Could not fetch records", e);
+            }
+
+            sportSelectionContainer.innerHTML = '';
+            sportsDB.forEach(sport => {
+                const history = recordsData[sport.key] || { wins: 0, losses: 0, totalProfit: 0 };
+                const total = history.wins + history.losses;
+                const pct = total > 0 ? Math.round((history.wins / total) * 100) : '-';
+                const profitColor = history.totalProfit >= 0 ? 'text-green-400' : 'text-red-400';
+                const profitSign = history.totalProfit > 0 ? '+' : '';
+
+                const card = document.createElement('div');
+                card.className = 'sport-selector-card';
+                card.dataset.sport = sport.key;
+                card.innerHTML = `
+                    <img src="${sport.icon}" alt="${sport.name} Logo" class="sport-icon">
+                    <div class="record-container">
+                        <h4 class="text-white font-bold mb-2">Prediction Record</h4>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="record-stat"><div class="value">${history.wins}-${history.losses}</div><div class="label">W-L</div></div>
+                            <div class="record-stat"><div class="value">${pct}%</div><div class="label">Win %</div></div>
+                        </div>
+                        <div class="profit-container mt-2 border-t border-gray-700">
+                             <div class="label">P/L (Based on $10 Bets)</div>
+                             <div class="value ${profitColor}">${profitSign}$${history.totalProfit.toFixed(2)}</div>
+                        </div>
+                        <button class="history-btn" data-sport="${sport.key}">View History</button>
+                    </div>`;
+                card.querySelector('.history-btn').addEventListener('click', (e) => {
+                    e.stopPropagation(); // Prevents sport selection from firing
+                    handleHistoryClick(sport.key, sport.name);
+                });
+                card.addEventListener('click', () => handleSportSelection(sport.key));
+                sportSelectionContainer.appendChild(card);
+            });
+        }
+
+        async function handleSportSelection(sportKey) {
+            document.querySelectorAll('.sport-selector-card').forEach(card => card.classList.toggle('active', card.dataset.sport === sportKey));
+            gamesContainer.innerHTML = ''; 
+            loadingIndicator.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`${API_ENDPOINT}/predictions?sport=${sportKey}`);
+                if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+                
+                const data = await response.json();
+                allGamesData[sportKey] = data; 
+                displayGames(sportKey);
+                displayFuturesPicks(sportKey);
+            } catch (error) {
+                console.error("Failed to fetch predictions:", error);
+                errorMessage.textContent = "Could not load predictions from the server. Please try again in a minute.";
+                errorMessage.classList.remove('hidden');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        function displayGames(sportKey) {
+            gamesContainer.innerHTML = '';
+            const data = allGamesData[sportKey];
+
+            if (data.message) {
+                errorMessage.textContent = data.message;
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+
+            const activeGames = data.filter(gameData => {
+                const gameState = gameData.game.espnData?.status?.type?.state;
+                return gameState !== 'post' && gameState !== 'final';
+            });
+             
+            const sortedGames = activeGames.sort((a, b) => {
+                const aIsLive = a.game.espnData?.status?.type?.state === 'in';
+                const bIsLive = b.game.espnData?.status?.type?.state === 'in';
+                if (aIsLive && !bIsLive) return -1;
+                if (!aIsLive && bIsLive) return 1;
+                return new Date(a.game.commence_time) - new Date(b.game.commence_time);
+            });
+
+            if (sortedGames.length === 0) {
+                 errorMessage.textContent = `No upcoming or live games found for ${sportsDB.find(s=>s.key === sportKey).name}.`;
+                 errorMessage.classList.remove('hidden');
+                 return;
+            }
+
+            sortedGames.forEach(gameData => {
+                const gameCard = document.createElement('div');
+                gameCard.className = 'card-gradient rounded-lg p-6 shadow-lg';
+                gameCard.id = `game-card-${gameData.game.id}`;
+                renderGameCard(gameCard, gameData, sportKey);
+                gamesContainer.appendChild(gameCard);
+            });
+        }
+        
+        async function displayFuturesPicks(sportKey) {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/futures`);
+                const allPicks = await response.json();
+                const picks = allPicks[sportKey];
+                if (!picks) {
+                    futuresPicksContainer.classList.add('hidden');
+                    return;
+                }
+                futuresPicksContainer.innerHTML = `
+                    <div class="futures-pick-card">
+                        <div class="label">Championship Pick</div>
+                        <div class="team">${picks.championship}</div>
+                    </div>
+                    <div class="futures-pick-card">
+                        <div class="label">Team to Watch</div>
+                        <div class="team">${picks.hotPick}</div>
+                    </div>
+                `;
+                futuresPicksContainer.classList.remove('hidden');
+            } catch (e) {
+                console.error("Could not load futures picks", e);
+                futuresPicksContainer.classList.add('hidden');
+            }
+        }
+
+        function renderGameCard(cardElement, data, sportKey) {
+            const { game, prediction } = data;
+            const { home_team, away_team, espnData } = game;
+            const { winner, strengthText, factors, weather } = prediction;
+
+            const competition = espnData?.competitions?.[0];
+            const espnStatus = competition?.status;
+            const gameState = espnStatus?.type?.state;
+            const isLive = gameState === 'in';
+
+            let middleContentHtml = '<div class="text-2xl font-bold text-gray-500 text-center">@</div>';
+            if (isLive && competition) {
+                const home = competition.competitors.find(c => c.homeAway === 'home');
+                const away = competition.competitors.find(c => c.homeAway === 'away');
+                const scoreHtml = `<div class="text-3xl font-bold text-white">${away?.score ?? '0'} - ${home?.score ?? '0'}</div>`;
+                const liveStatusContent = `<div class="text-sm font-semibold text-red-400 mb-1">${espnStatus?.type?.detail || 'Live'}</div>`;
+                middleContentHtml = `${liveStatusContent}${scoreHtml}`;
+            }
+
+            const awayLogo = teamLogosDB[away_team] || `https://placehold.co/64x64/2d3748/ffffff?text=??`;
+            const homeLogo = teamLogosDB[home_team] || `https://placehold.co/64x64/2d3748/ffffff?text=??`;
+            
+            const bookmaker = game.bookmakers?.[0];
+            const homeOdds = bookmaker?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===home_team)?.price ?? 'N/A';
+            const awayOdds = bookmaker?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===away_team)?.price ?? 'N/A';
+            
+            const teamRecordAway = factors['Record']?.awayStat || 'N/A';
+            const teamRecordHome = factors['Record']?.homeStat || 'N/A';
+            
+            const gameDateHtml = game.commence_time 
+                ? `<div class="date-display">${formatGameDate(new Date(game.commence_time))}</div>`
+                : '';
+            
+            cardElement.innerHTML = `
+                ${isLive ? '<div class="live-badge">LIVE</div>' : ''}
+                
+                <div class="flex justify-between items-center mb-2 h-8">
+                    <div class="w-1/3">
+                        ${gameDateHtml}
+                    </div>
+                    <div class="w-1/3 text-center">
+                        ${generateWeatherIconHtml(weather, sportKey)}
+                    </div>
+                    <div class="w-1/3">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 items-center mb-4">
+                    <div class="text-center">
+                        <img src="${awayLogo}" class="h-16 mx-auto mb-2" alt="${away_team} logo">
+                        <p class="font-bold text-lg">${away_team}</p>
+                        <p class="text-gray-400 text-sm">${teamRecordAway}</p>
+                        <p class="text-xl font-semibold text-yellow-400 mt-1">${awayOdds}</p>
+                    </div>
+                    
+                    <div class="text-center h-16 flex flex-col justify-center">${middleContentHtml}</div>
+                    
+                    <div class="text-center">
+                        <img src="${homeLogo}" class="h-16 mx-auto mb-2" alt="${home_team} logo">
+                        <p class="font-bold text-lg">${home_team}</p>
+                        <p class="text-gray-400 text-sm">${teamRecordHome}</p>
+                        <p class="text-xl font-semibold text-yellow-400 mt-1">${homeOdds}</p>
+                    </div>
+                </div>
+                
+                ${generateSharpReport(prediction, home_team, away_team)}
+
+                <div class="prime-pick-container">
+                    <div class="prime-pick-title">PRIME PICKS</div>
+                    <div class="prime-pick-grid">
+                        <div class="prime-pick-item">
+                            <div class="prime-pick-label">Moneyline</div>
+                            <div class="prime-pick-value">${winner}</div>
+                            <div class="prime-pick-confidence">${strengthText}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2 mt-4">
+                    <button class="explanation-btn w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg">Why This Pick?</button>
+                    <button class="ai-analysis-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Get AI Analysis</button>
+                </div>
+                <div class="explanation-box hidden mt-3"></div>
+            `;
+            cardElement.querySelector('.explanation-btn').addEventListener('click', (e) => {
+                const box = e.target.closest('.card-gradient').querySelector('.explanation-box');
+                box.classList.toggle('hidden');
+                if (!box.classList.contains('hidden')) {
+                    box.innerHTML = generateExplanationHtml(factors, sportKey);
+                }
+            });
+            cardElement.querySelector('.ai-analysis-btn').addEventListener('click', (e) => {
+                handleAiAnalysis(e.target, data, cardElement); // Pass cardElement
+            });
+        }
+        
+        function generateExplanationHtml(factors, sportKey) {
+            // UPDATED to handle all sports including new NHL factors
+            const factorOrder = {
+                'baseball_mlb': ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Form', 'Defensive Form', 'Social Sentiment', 'Injury Impact', 'Betting Value'],
+                'icehockey_nhl': ['Record', 'Hot Streak', 'Goalie Matchup', 'H2H (Season)', 'Offensive Form', 'Defensive Form', 'Special Teams', 'Faceoff Advantage', 'Fatigue', 'Social Sentiment', 'Injury Impact', 'Betting Value'],
+                'americanfootball_nfl': ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Rating', 'Defensive Rating', 'Social Sentiment', 'Injury Impact', 'Betting Value']
+            }[sportKey];
+            
+            let html = '<div class="space-y-2"><h4 class="font-bold text-center text-white mb-2">Key Factor Breakdown</h4>';
+            factorOrder.forEach(factorName => {
+                const data = factors[factorName];
+                if (data) {
+                    html += `<div class="explanation-item">
+                                <div class="stat-text text-xs">${data.awayStat || 'N/A'}</div>
+                                <div class="factor-label">${factorName}</div>
+                                <div class="stat-text text-xs">${data.homeStat || 'N/A'}</div>
+                             </div>`;
+                }
+            });
+            return html + '</div>';
+        }
+        
+        function generateWeatherIconHtml(weatherData, sportKey) {
+            if (sportKey === 'icehockey_nhl' || !weatherData) return '';
+            let iconSvg = '';
+            let colorClass = 'text-gray-400';
+            let weatherDescription = 'Clear';
+            if (weatherData.precip > 0.5) {
+                weatherDescription = 'Rain'; colorClass = 'text-blue-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 0010.5 21z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 12a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 0015.75 12z" /><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.5a5.25 5.25 0 00-1.223-3.433c-1.396-1.396-3.433-1.396-4.829 0-1.396 1.396-1.396 3.433 0 4.829s3.433 1.396 4.829 0A5.226 5.226 0 003 13.5z" transform="translate(15 2)"/><path stroke-linecap="round" stroke-linejoin="round" d="M12.75 3.065A8.25 8.25 0 005.25 8.25v.75a8.25 8.25 0 0015 0V8.25a8.25 8.25 0 00-7.22-5.185z" /></svg>`;
+            } else if (weatherData.wind > 35) {
+                weatherDescription = 'Windy'; colorClass = 'text-slate-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>`;
+            } else {
+                weatherDescription = weatherData.temp > 28 ? 'Hot & Sunny' : 'Clear'; colorClass = 'text-yellow-400';
+                iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>`;
+            }
+            return `<div class="weather-icon-container inline-block ${colorClass}"><div class="w-8 h-8">${iconSvg}</div><div class="weather-tooltip"><strong>Forecast: ${weatherDescription}</strong><br>Temp: ${weatherData.temp}°C<br>Wind: ${weatherData.wind} km/h<br>Precip: ${weatherData.precip} mm</div></div>`;
+        }
+        
+        function generateSharpReport(prediction, home, away) {
+            if (!prediction || typeof prediction.homeValue !== 'number' || isNaN(prediction.homeValue)) return '';
+            const advantageTeam = prediction.homeValue > prediction.awayValue ? home : away;
+            const valueStrength = Math.max(Math.abs(prediction.homeValue), Math.abs(prediction.awayValue));
+            if (valueStrength < 5) return '';
+            return `<div class="sharp-report-container"><div class="title">SHARP REPORT</div><p class="text">The model sees a <strong class="text-yellow-300">${valueStrength.toFixed(1)}%</strong> value edge on the <span class="font-bold text-yellow-300">${advantageTeam}</span>, suggesting their odds are undervalued.</p></div>`;
+        }
+        
+        async function fetchAndDisplaySpecialPicks() {
+            try {
+                const response = await fetch(`${API_ENDPOINT}/special-picks`);
+                if (!response.ok) throw new Error('Failed to fetch');
+                const { pickOfTheDay, parlay } = await response.json();
+                displaySpecialPicks(pickOfTheDay, parlay);
+            } catch (error) {
+                console.error("Could not fetch special picks", error);
+                specialPicksContainer.innerHTML = '<p class="text-center text-red-400 col-span-1 md:col-span-2">Could not load special picks.</p>';
+            }
+        }
+
+        function displaySpecialPicks(potd, parlay) {
+            let potdHtml = `<div class="special-pick-card"><div class="title">PICK OF THE DAY</div><div class="text-center text-gray-400 p-4">No high-value pick found.</div></div>`;
+            if (potd) {
+                const { game, prediction } = potd;
+                const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === prediction.winner)?.price ?? 'N/A';
+                potdHtml = `
+                    <div class="special-pick-card" id="potd-card">
+                        <div class="title">PICK OF THE DAY</div>
+                        <div class="px-4 pb-4">
+                            <p class="text-center text-sm text-gray-400 mb-2">${game.away_team} @ ${game.home_team}</p>
+                            <div class="prime-pick-container !mt-0">
+                                <div class="prime-pick-grid">
+                                    <div class="prime-pick-item">
+                                        <div class="prime-pick-label">Moneyline</div>
+                                        <div class="prime-pick-value">${prediction.winner}</div>
+                                        <div class="prime-pick-confidence">${prediction.strengthText}</div>
+                                        <p class="text-xl font-semibold text-yellow-400 mt-2">${winnerOdds}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 mt-4">
+                                <button class="potd-explanation-btn w-full bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Why This Pick?</button>
+                                <button class="potd-ai-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Get AI Analysis</button>
+                            </div>
+                            <div class="explanation-box hidden mt-3"></div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            let parlayHtml = `<div class="special-pick-card"><div class="title">PARLAY OF THE DAY</div><div class="text-center text-gray-400 p-4">Not enough confident picks.</div></div>`;
+            if (parlay) {
+                const leg1 = parlay.legs[0];
+                const leg2 = parlay.legs[1];
+                parlayHtml = `
+                     <div class="special-pick-card" id="parlay-card">
+                        <div class="title">PARLAY OF THE DAY</div>
+                        <div class="px-4 pb-4">
+                            <div class="space-y-3">
+                                <div class="bg-slate-700/50 p-2 rounded-lg text-center">
+                                    <p class="text-xs text-gray-400">Leg 1</p>
+                                    <p class="font-bold text-white">${leg1.prediction.winner}</p>
+                                </div>
+                                <div class="bg-slate-700/50 p-2 rounded-lg text-center">
+                                    <p class="text-xs text-gray-400">Leg 2</p>
+                                    <p class="font-bold text-white">${leg2.prediction.winner}</p>
+                                </div>
+                            </div>
+                            <div class="mt-3 text-center">
+                                <p class="text-xs text-gray-400 uppercase">Total Odds</p>
+                                <p class="text-2xl font-bold text-yellow-400">${parlay.totalOdds}</p>
+                            </div>
+                            <div class="mt-3">
+                                <button class="parlay-ai-btn w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Get Parlay Analysis</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            specialPicksContainer.innerHTML = potdHtml + parlayHtml;
+
+            if (potd) {
+                const potdCard = document.getElementById('potd-card');
+                potdCard.querySelector('.potd-explanation-btn').addEventListener('click', (e) => {
+                    const box = potdCard.querySelector('.explanation-box');
+                    box.classList.toggle('hidden');
+                    if (!box.classList.contains('hidden')) {
+                        box.innerHTML = generateExplanationHtml(potd.prediction.factors, potd.game.sportKey);
+                    }
+                });
+                potdCard.querySelector('.potd-ai-btn').addEventListener('click', (e) => {
+                    handleAiAnalysis(e.target, potd);
+                });
+            }
+            if (parlay) {
+                document.getElementById('parlay-card').querySelector('.parlay-ai-btn').addEventListener('click', (e) => {
+                    handleParlayAiAnalysis(e.target, parlay);
+                });
+            }
+        }
+        
+        async function handleAiAnalysis(button, gameData, cardElement) {
+            button.disabled = true;
+            button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+            
+            try {
+                 const response = await fetch(`${API_ENDPOINT}/ai-analysis`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ game: gameData.game, prediction: gameData.prediction })
+                });
+                if (!response.ok) throw new Error('Server returned an error');
+                const { finalPick, analysisHtml } = await response.json();
+
+                // Update the prime pick on the card if it changed
+                if (cardElement) {
+                    const primePickValue = cardElement.querySelector('.prime-pick-value');
+                    if (primePickValue.textContent !== finalPick.winner) {
+                        primePickValue.textContent = finalPick.winner;
+                        const primePickConfidence = cardElement.querySelector('.prime-pick-confidence');
+                        primePickConfidence.textContent = "AI Verified Pick";
+                        cardElement.classList.add('card-highlight');
+                    }
+                }
+
+                // Show the modal with the detailed analysis
+                aiModalTitle.textContent = `AI Expert Analysis: ${gameData.game.away_team} @ ${gameData.game.home_team}`;
+                aiModalContent.innerHTML = analysisHtml;
+                aiModal.classList.add('flex');
+                aiModal.classList.remove('hidden');
+
+            } catch (error) {
+                console.error("AI Analysis Error:", error);
+                aiModalTitle.textContent = `AI Analysis Error`;
+                aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
+                aiModal.classList.add('flex');
+                aiModal.classList.remove('hidden');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Get AI Analysis';
+            }
+        }
+        
+        async function handleParlayAiAnalysis(button, parlay) {
+            button.disabled = true;
+            button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+            aiModalTitle.textContent = `AI Parlay Analysis`;
+            aiModalContent.innerHTML = `<p>Generating parlay analysis... please wait.</p>`;
+            aiModal.classList.add('flex');
+            aiModal.classList.remove('hidden');
+            try {
+                 const response = await fetch(`${API_ENDPOINT}/parlay-ai-analysis`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parlay })
+                });
+                if (!response.ok) throw new Error('Server returned an error');
+                const { analysisHtml } = await response.json();
+                aiModalContent.innerHTML = analysisHtml;
+            } catch (error) {
+                console.error("Parlay AI Analysis Error:", error);
+                aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
+            } finally {
+                button.disabled = false;
+                button.innerHTML = 'Get Parlay Analysis';
+            }
+        }
+        
+        async function handleHistoryClick(sportKey, sportName) {
+            historyModalTitle.textContent = `Recent ${sportName} Bet History`;
+            historyModalContent.innerHTML = `<p>Fetching recent bets...</p>`;
+            historyModal.classList.add('flex');
+            historyModal.classList.remove('hidden');
+
+            try {
+                const response = await fetch(`${API_ENDPOINT}/recent-bets?sport=${sportKey}`);
+                if (!response.ok) throw new Error('Failed to fetch bet history.');
+                const bets = await response.json();
+
+                if (bets.length === 0) {
+                    historyModalContent.innerHTML = '<p>No completed bets found for this sport yet.</p>';
+                    return;
+                }
+
+                let tableHtml = `
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-sm text-left">
+                            <thead class="bg-gray-700 text-xs uppercase">
+                                <tr>
+                                    <th class="p-2">Date</th>
+                                    <th class="p-2">Matchup</th>
+                                    <th class="p-2">Our Pick</th>
+                                    <th class="p-2 text-center">Result</th>
+                                    <th class="p-2 text-right">P/L</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                bets.forEach(bet => {
+                    const gameDate = new Date(bet.gameDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    const resultClass = bet.status === 'win' ? 'text-green-400' : 'text-red-400';
+                    const profitClass = bet.profit > 0 ? 'text-green-400' : 'text-red-400';
+                    const profitSign = bet.profit > 0 ? '+' : '';
+
+                    tableHtml += `
+                        <tr class="border-b border-gray-700">
+                            <td class="p-2">${gameDate}</td>
+                            <td class="p-2">${bet.awayTeam} @ ${bet.homeTeam}</td>
+                            <td class="p-2 font-semibold">${bet.predictedWinner}</td>
+                            <td class="p-2 text-center font-bold ${resultClass}">${bet.status.toUpperCase()}</td>
+                            <td class="p-2 text-right font-semibold ${profitClass}">${profitSign}$${bet.profit.toFixed(2)}</td>
+                        </tr>
+                    `;
+                });
+
+                tableHtml += `</tbody></table></div>`;
+                historyModalContent.innerHTML = tableHtml;
+
+            } catch (error) {
+                console.error("History Modal Error:", error);
+                historyModalContent.innerHTML = `<p class="text-red-400">Could not load bet history. Please try again later.</p>`;
+            }
+        }
+
+        function formatGameDate(gameDate) {
+            const now = new Date();
+            const isToday = now.toDateString() === gameDate.toDateString();
+            const timeFormat = { hour: 'numeric', minute: '2-digit', hour12: true };
+            const timeString = gameDate.toLocaleTimeString([], timeFormat);
+            if (isToday) return `Today at ${timeString}`;
+            const dateFormat = { weekday: 'short', month: 'short', day: 'numeric' };
+            return `${gameDate.toLocaleDateString([], dateFormat)} at ${timeString}`;
+        }
+
+        function handleLogin() {
+            if (passwordInput.value.trim() === CORRECT_PASSWORD) {
+                loginError.classList.add('hidden');
+                loginScreen.style.display = 'none';
+                successAnimation.style.display = 'flex';
+                setTimeout(() => {
+                    successAnimation.style.display = 'none';
+                    appContainer.classList.remove('hidden');
+                    startApp();
+                }, 2000); 
+                if (rememberDevice.checked) localStorage.setItem('rememberedLogin', 'true');
+            } else {
+                loginError.classList.remove('hidden');
+            }
+        }
+
+        async function startApp() {
+            await initializeSportSelectionUI();
+            fetchAndDisplaySpecialPicks();
+            const firstSport = sportsDB[0];
+            if(firstSport) await handleSportSelection(firstSport.key);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            togglePassword.addEventListener('click', () => {
+                const isPassword = passwordInput.type === 'password';
+                passwordInput.type = isPassword ? 'text' : 'password';
+                togglePassword.textContent = isPassword ? '🔒' : '👁';
+            });
+            loginBtn.addEventListener('click', handleLogin);
+            passwordInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleLogin(); });
+
+            closeAiModalBtn.addEventListener('click', () => { aiModal.classList.add('hidden'); aiModal.classList.remove('flex'); });
+            aiModal.addEventListener('click', (e) => { if (e.target === aiModal) { aiModal.classList.add('hidden'); aiModal.classList.remove('flex'); } });
+
+            closeHistoryModalBtn.addEventListener('click', () => { historyModal.classList.add('hidden'); historyModal.classList.remove('flex'); });
+            historyModal.addEventListener('click', (e) => { if (e.target === historyModal) { historyModal.classList.add('hidden'); historyModal.classList.remove('flex'); } });
+            
+            if (localStorage.getItem('rememberedLogin') === 'true') {
+                loginScreen.style.display = 'none';
+                appContainer.classList.remove('hidden');
+                startApp();
+            }
+        });
+    </script>
+</body>
+</html>
+
