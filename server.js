@@ -7,16 +7,10 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// --- FIX 1: Corrected Static File Pathing ---
-const publicPath = path.join(__dirname, '..', 'public');
-app.use(express.static(publicPath));
-
 
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -702,12 +696,12 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt,
-            generationConfig: { responseMimeType: "application/json" }
+            systemInstruction: systemPrompt
         });
         const result = await model.generateContent(dataSummary);
         const responseText = result.response.text();
-        const analysis = JSON.parse(responseText);
+        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const analysis = JSON.parse(cleanedJson);
 
         if (analysis.finalPick && analysis.analysisHtml) {
             res.json(analysis);
