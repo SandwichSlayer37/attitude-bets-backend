@@ -798,13 +798,9 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { winner, factors } = prediction;
         
-        const systemPrompt = `You are a professional sports betting analyst...`;
+        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so. Your response MUST be a valid JSON object and nothing else. Do not include markdown formatting or any text outside the JSON structure. The JSON object must have two keys: "finalPick" and "analysisHtml". - "finalPick": An object with a single key, "winner", containing the full team name of your final decision. - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
         
-        let dataSummary = `
-            Matchup: ${game.away_team} at ${game.home_team}
-            Our Algorithm's Initial Prediction: ${winner}
-            Key Statistical Factors Considered:
-        `;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Initial Prediction: ${winner}\nKey Statistical Factors Considered:\n`;
 
         for(const factor in factors) {
             dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
@@ -814,7 +810,7 @@ app.post('/api/ai-analysis', async (req, res) => {
             systemInstruction: systemPrompt,
         });
         const result = await model.generateContent(dataSummary);
-        const responseText = result.response.text();
+        let responseText = result.response.text();
         
         const jsonStart = responseText.indexOf('{');
         const jsonEnd = responseText.lastIndexOf('}') + 1;
