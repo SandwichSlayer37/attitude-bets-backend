@@ -244,8 +244,10 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
+                // FIX: Generate today's date in YYYY-MM-DD format for the NHL API
+                const today = new Date().toISOString().slice(0, 10);
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
-                    axios.get('https://api-web.nhle.com/v1/standings/now'),
+                    axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
                     axios.get('https://api-web.nhle.com/v1/club-stats/team/summary')
                 ]);
 
@@ -861,3 +863,4 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
