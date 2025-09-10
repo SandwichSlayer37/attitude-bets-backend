@@ -58,11 +58,8 @@ const SPORTS_DB = [
 ];
 
 const teamLocationMap = {
-    // MLB
     'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667 }, 'Atlanta Braves': { lat: 33.8907, lon: -84.4677 }, 'Baltimore Orioles': { lat: 39.2838, lon: -76.6217 }, 'Boston Red Sox': { lat: 42.3467, lon: -71.0972 }, 'Chicago Cubs': { lat: 41.9484, lon: -87.6553 }, 'Chicago White Sox': { lat: 41.8300, lon: -87.6337 }, 'Cincinnati Reds': { lat: 39.0975, lon: -84.5069 }, 'Cleveland Guardians': { lat: 41.4962, lon: -81.6852 }, 'Colorado Rockies': { lat: 39.7562, lon: -104.9942 }, 'Detroit Tigers': { lat: 42.3390, lon: -83.0552 }, 'Houston Astros': { lat: 29.7570, lon: -95.3555 }, 'Kansas City Royals': { lat: 39.0517, lon: -94.4803 }, 'Los Angeles Angels': { lat: 33.8003, lon: -117.8827 }, 'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2398 }, 'Miami Marlins': { lat: 25.7781, lon: -80.2196 }, 'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712 }, 'Minnesota Twins': { lat: 44.9817, lon: -93.2775 }, 'New York Mets': { lat: 40.7571, lon: -73.8458 }, 'New York Yankees': { lat: 40.8296, lon: -73.9262 }, 'Oakland Athletics': { lat: 37.7516, lon: -122.2005 }, 'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665 }, 'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057 }, 'San Diego Padres': { lat: 32.7073, lon: -117.1570 }, 'San Francisco Giants': { lat: 37.7786, lon: -122.3893 }, 'Seattle Mariners': { lat: 47.5914, lon: -122.3325 }, 'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928 }, 'Tampa Bay Rays': { lat: 27.7682, lon: -82.6534 }, 'Texas Rangers': { lat: 32.7513, lon: -97.0829 }, 'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894 }, 'Washington Nationals': { lat: 38.8729, lon: -77.0074 },
-    // NFL
     'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
-    // NHL
     'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 32.7905, lon: -96.8103 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 }
 };
 
@@ -141,7 +138,6 @@ async function getOdds(sportKey) {
             const gameIds = new Set();
             const datesToFetch = [];
             
-            // FIXED: Expanded date window to prevent missing games
             const today = new Date();
             for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
@@ -172,30 +168,31 @@ async function getOdds(sportKey) {
 }
 
 async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v2`; // Updated cache key
+    const cacheKey = `nhl_goalie_stats_v2`;
     return fetchData(cacheKey, async () => {
         try {
-            // UPDATED: More stable URL for NHL Goalie Stats
             const url = `https://api-web.nhle.com/v1/goalie-stats/current?isAggregate=true&isGame=false&sort=savePct&limit=100`;
             const { data } = await axios.get(url);
             const goalieStats = {};
-            data.data.forEach(goalie => {
-                goalieStats[goalie.player.name.default] = {
-                    gaa: goalie.gaa,
-                    svPct: goalie.savePct,
-                    wins: goalie.wins
-                };
-            });
+            if (data && data.data) {
+                data.data.forEach(goalie => {
+                    goalieStats[goalie.player.name.default] = {
+                        gaa: goalie.gaa,
+                        svPct: goalie.savePct,
+                        wins: goalie.wins
+                    };
+                });
+            }
             return goalieStats;
         } catch (e) {
             console.error("Could not fetch goalie stats:", e.message);
             return {};
         }
-    }, 86400000); // Cache for 24 hours
+    }, 86400000);
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v11_ops_nhl_fix`; // Incremented version
+    const cacheKey = `stats_api_${sportKey}_v11_ops_nhl_fix`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -246,13 +243,12 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
-                // UPDATED: Using more stable URLs for NHL Team Stats
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get('https://api-web.nhle.com/v1/standings/now'),
-                    axios.get('https://api.nhle.com/stats/rest/en/team/summary?isAggregate=false&isGame=false&sort=[{"property":"points","direction":"DESC"}]&factCayenneExp=gameTypeId=2')
+                    axios.get('https://api-web.nhle.com/v1/club-stats/team/summary')
                 ]);
 
-                if (standingsResponse.data.standings) {
+                if (standingsResponse.data && standingsResponse.data.standings) {
                     standingsResponse.data.standings.forEach(s => {
                         const canonicalName = canonicalTeamNameMap[s.teamName.default.toLowerCase()];
                         if (canonicalName) {
@@ -260,15 +256,16 @@ async function getTeamStatsFromAPI(sportKey) {
                         }
                     });
                 }
-                if (teamStatsResponse.data.data) {
+                if (teamStatsResponse.data && teamStatsResponse.data.data) {
                     teamStatsResponse.data.data.forEach(team => {
                         const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                        if (!stats[canonicalName]) stats[canonicalName] = { record: '0-0-0', streak: 'N/A' };
-                        stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
-                        stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
-                        stats[canonicalName].powerPlayPct = team.powerPlayPercentage;
-                        stats[canonicalName].penaltyKillPct = team.penaltyKillPercentage;
-                        stats[canonicalName].faceoffWinPct = team.faceoffWinPercentage;
+                        if (stats[canonicalName]) {
+                            stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
+                            stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
+                            stats[canonicalName].powerPlayPct = team.powerPlayPct;
+                            stats[canonicalName].penaltyKillPct = team.penaltyKillPct;
+                            stats[canonicalName].faceoffWinPct = team.faceoffWinPct;
+                        }
                     });
                 }
                 return stats;
