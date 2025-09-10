@@ -808,23 +808,25 @@ app.post('/api/ai-analysis', async (req, res) => {
         for(const factor in factors) {
             dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
         }
-        const model = genAI.getGenerativeModel({ 
+        // FIX: Enabled JSON Mode for reliable AI responses
+        const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
-        });
-        const result = await model.generateContent(dataSummary);
-        let responseText = result.response.text();
-        
-        const jsonStart = responseText.indexOf('{');
-        const jsonEnd = responseText.lastIndexOf('}') + 1;
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
-            const jsonString = responseText.substring(jsonStart, jsonEnd);
-            const analysis = JSON.parse(jsonString);
-            if (analysis.finalPick && analysis.analysisHtml) {
-                return res.json(analysis);
+            generationConfig: {
+                response_mime_type: "application/json",
             }
+        });
+
+        const result = await model.generateContent(dataSummary);
+        // With JSON mode, the response text is guaranteed to be a valid JSON string
+        const analysis = JSON.parse(result.response.text());
+
+        if (analysis.finalPick && analysis.analysisHtml) {
+            return res.json(analysis);
         }
-        throw new Error("No valid JSON object found in Gemini's response.");
+
+        // This error will now only be thrown if the AI returns a valid but empty/wrong JSON structure
+        throw new Error("AI response did not contain the expected JSON structure.");
 
     } catch (error) {
         console.error("AI Analysis Error:", error.message);
