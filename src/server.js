@@ -192,7 +192,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v11_ops_nhl_fix`;
+    const cacheKey = `stats_api_${sportKey}_v12_final_merge`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -211,7 +211,7 @@ async function getTeamStatsFromAPI(sportKey) {
                                     record: `${teamRecord.wins}-${teamRecord.losses}`,
                                     streak: teamRecord.streak?.streakCode || 'N/A',
                                     lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                                    ops: 0.700, // Default OPS
+                                    ops: 0.700,
                                     teamERA: 99.99
                                 };
                             }
@@ -487,7 +487,6 @@ async function getAllDailyPredictions() {
 }
 
 // --- API ENDPOINTS ---
-
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
@@ -799,11 +798,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { winner, factors } = prediction;
         
-        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. You can either agree with our algorithm or override it if you see a clear reason to do so.
-        Your response MUST be a valid JSON object and nothing else. Do not include markdown formatting or any text outside the JSON structure.
-        The JSON object must have two keys: "finalPick" and "analysisHtml".
-        - "finalPick": An object with a single key, "winner", containing the full team name of your final decision.
-        - "analysisHtml": A string of HTML containing a detailed breakdown. It must include a <h4> for the "Bull Case" (supporting the final pick) and a <h4> for the "Bear Case" (risks and counter-arguments), with paragraphs explaining each. Use Tailwind CSS classes.`;
+        const systemPrompt = `You are a professional sports betting analyst...`;
         
         let dataSummary = `
             Matchup: ${game.away_team} at ${game.home_team}
@@ -820,15 +815,20 @@ app.post('/api/ai-analysis', async (req, res) => {
         });
         const result = await model.generateContent(dataSummary);
         const responseText = result.response.text();
-        const cleanedJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const analysis = JSON.parse(cleanedJson);
-        if (analysis.finalPick && analysis.analysisHtml) {
-            res.json(analysis);
-        } else {
-            throw new Error("Invalid JSON response from Gemini for analysis.");
+        
+        const jsonStart = responseText.indexOf('{');
+        const jsonEnd = responseText.lastIndexOf('}') + 1;
+        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+            const jsonString = responseText.substring(jsonStart, jsonEnd);
+            const analysis = JSON.parse(jsonString);
+            if (analysis.finalPick && analysis.analysisHtml) {
+                return res.json(analysis);
+            }
         }
+        throw new Error("No valid JSON object found in Gemini's response.");
+
     } catch (error) {
-        console.error("AI Analysis Error:", error);
+        console.error("AI Analysis Error:", error.message);
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
@@ -840,29 +840,11 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const prompt = `
-            Act as a professional sports betting analyst. Create a sophisticated HTML analysis for the following 2-leg parlay.
-            Use Tailwind CSS classes for styling. Use only the following tags: <div>, <h4>, <p>, <ul>, <li>, and <strong>.
-
-            Parlay Details:
-            - Leg 1: Pick ${leg1.prediction.winner} in the ${leg1.game.away_team} @ ${leg1.game.home_team} game.
-            - Leg 2: Pick ${leg2.prediction.winner} in the ${leg2.game.away_team} @ ${leg2.game.home_team} game.
-            - Total Odds: ${parlay.totalOdds}
-
-            Generate the following HTML structure:
-            1. A <h4> with class "text-xl font-bold text-cyan-400 mb-2" titled "Parlay Rationale". Follow it with a <p> with class="text-gray-300 mb-4" that explains what a parlay is (higher risk for a higher reward) and the overall strategy for this specific combination.
-            2. An <hr> with class="border-gray-700 my-4".
-            3. A <h4> with class "text-xl font-bold text-teal-400 mb-2" titled "Leg 1 Breakdown: ${leg1.prediction.winner}". Follow it with a <p> briefly justifying this pick.
-            4. A <h4> with class "text-xl font-bold text-teal-400 mb-2 mt-3" titled "Leg 2 Breakdown: ${leg2.prediction.winner}". Follow it with a <p> briefly justifying this second pick.
-            5. An <hr> with class="border-gray-700 my-4".
-            6. A <h4> with class "text-xl font-bold text-red-400 mb-2" titled "Associated Risks". Follow it with a <p> explaining the primary risks. Mention that both bets must win, and discuss the single biggest risk for each leg that could cause the parlay to fail.
-            7. An <hr> with class="border-gray-700 my-4".
-            8. A <h4> with class "text-xl font-bold text-yellow-400 mb-2" titled "Final Verdict". Follow it with a confident <p> with class="text-gray-200" that summarizes the recommendation, weighing the potential payout against the risk.
-        `;
+        const prompt = `Act as a professional sports betting analyst...`;
         
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+        let responseText = result.response.text();
         let analysisHtml = responseText.replace(/```html/g, '').replace(/```/g, '').trim();
         res.json({ analysisHtml });
 
