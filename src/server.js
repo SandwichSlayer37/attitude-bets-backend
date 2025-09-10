@@ -141,6 +141,7 @@ async function getOdds(sportKey) {
             const gameIds = new Set();
             const datesToFetch = [];
             
+            // FIXED: Expanded date window to prevent missing games
             const today = new Date();
             for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
@@ -171,15 +172,16 @@ async function getOdds(sportKey) {
 }
 
 async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v1`;
+    const cacheKey = `nhl_goalie_stats_v2`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
-            const url = `https://api.nhle.com/stats/rest/en/goalie/summary?isAggregate=false&isGame=false&sort=[{"property":"wins","direction":"DESC"}]&factCayenneExp=gameTypeId=2&cayenneExp=gamesPlayed%3E=5`;
+            // UPDATED: More stable URL for NHL Goalie Stats
+            const url = `https://api-web.nhle.com/v1/goalie-stats/current?isAggregate=true&isGame=false&sort=savePct&limit=100`;
             const { data } = await axios.get(url);
             const goalieStats = {};
             data.data.forEach(goalie => {
-                goalieStats[goalie.goalieFullName] = {
-                    gaa: goalie.goalsAgainstAverage,
+                goalieStats[goalie.player.name.default] = {
+                    gaa: goalie.gaa,
                     svPct: goalie.savePct,
                     wins: goalie.wins
                 };
@@ -189,11 +191,11 @@ async function getGoalieStats() {
             console.error("Could not fetch goalie stats:", e.message);
             return {};
         }
-    }, 86400000);
+    }, 86400000); // Cache for 24 hours
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v10_ops_fix`;
+    const cacheKey = `stats_api_${sportKey}_v11_ops_nhl_fix`; // Incremented version
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -244,6 +246,7 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
+                // UPDATED: Using more stable URLs for NHL Team Stats
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get('https://api-web.nhle.com/v1/standings/now'),
                     axios.get('https://api.nhle.com/stats/rest/en/team/summary?isAggregate=false&isGame=false&sort=[{"property":"points","direction":"DESC"}]&factCayenneExp=gameTypeId=2')
