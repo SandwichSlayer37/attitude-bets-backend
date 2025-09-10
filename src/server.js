@@ -13,7 +13,8 @@ app.use(cors());
 app.use(express.json());
 
 // Corrected static file pathing to work on Render
-const publicPath = path.join(__dirname, '..', 'public');
+// FIX APPLIED: Changed 'public' to 'Public' to match case-sensitive folder name.
+const publicPath = path.join(__dirname, '..', 'Public');
 app.use(express.static(publicPath));
 
 
