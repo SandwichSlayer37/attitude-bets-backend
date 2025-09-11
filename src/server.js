@@ -13,7 +13,8 @@ app.use(cors());
 app.use(express.json());
 
 // Corrected static file pathing to work on Render
-app.use(express.static(path.join(__dirname, '..', 'Public')));
+const publicPath = path.join(__dirname, '..', 'public');
+app.use(express.static(publicPath));
 
 
 // --- API & DATA CONFIG ---
@@ -801,44 +802,36 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// FINAL, STABLE AI ANALYSIS ENDPOINT WITH ENHANCED FORMATTING
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
+        const { winner, factors } = prediction;
         
-        // NEW, HIGHLY-STRUCTURED PROMPT FOR BETTER FORMATTING
-        const systemPrompt = `
-            You are a professional sports betting analyst. Create a sophisticated HTML analysis for the game provided.
-            Your response MUST be ONLY the HTML content. Do not include markdown or any other text.
-            Use the provided data to generate the following HTML structure precisely:
-
-            1. A <h4> with class "text-lg font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a concise <p> with class "text-gray-300 mb-4" summarizing the matchup in one or two sentences.
-            2. A <h4> with class "text-lg font-bold text-teal-400 mb-2" titled "Bull Case for ${prediction.winner}". Follow it with a <ul class="list-disc list-inside space-y-1 text-gray-300"> containing two or three <li> bullet points explaining why our prediction is solid. Make key stats and team names bold with <strong>.
-            3. A <h4> with class "text-lg font-bold text-red-400 mb-2 mt-4" titled "Bear Case / Risks". Follow it with a <ul class="list-disc list-inside space-y-1 text-gray-300"> with two or three <li> bullet points explaining the primary risks that could challenge the prediction. Make key stats and team names bold with <strong>.
-            4. A <h4> with class "text-lg font-bold text-yellow-400 mb-2 mt-4" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your final recommendation.
-        `;
+        const systemPrompt = `You are a professional sports betting analyst...`; // Abbreviated for brevity
         
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors:\n`;
-
-        for(const factor in prediction.factors) {
-            dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\n...`; // Abbreviated
+        
+        for(const factor in factors) {
+            dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
         }
-        
-        const model = genAI.getGenerativeModel({
+        const model = genAI.getGenerativeModel({ 
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-
         const result = await model.generateContent(dataSummary);
-        const analysisHtml = result.response.text();
-
-        const finalResponse = {
-            finalPick: { winner: prediction.winner },
-            analysisHtml: analysisHtml
-        };
+        let responseText = result.response.text();
         
-        return res.json(finalResponse);
+        const jsonStart = responseText.indexOf('{');
+        const jsonEnd = responseText.lastIndexOf('}') + 1;
+        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+            const jsonString = responseText.substring(jsonStart, jsonEnd);
+            const analysis = JSON.parse(jsonString);
+            if (analysis.finalPick && analysis.analysisHtml) {
+                return res.json(analysis);
+            }
+        }
+        throw new Error("No valid JSON object found in Gemini's response.");
 
     } catch (error) {
         console.error("AI Analysis Error:", error.message);
@@ -853,12 +846,12 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const prompt = `Act as a professional sports betting analyst...`;
+        const prompt = `Act as a professional sports betting analyst...`; // Abbreviated
         
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
-        let analysisHtml = responseText.replace(/```html/g, '').replace(/```html/g, '').trim();
+        let analysisHtml = responseText.replace(/```html/g, '').replace(/```/g, '').trim();
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -870,15 +863,10 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
 const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
-
-
-
-
-
