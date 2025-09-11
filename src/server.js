@@ -817,8 +817,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
-            generationConfig: {
-                response_mime_type: "application/json",
+          generationConfig: {
+                responseMimeType: "application/json",
             }
         });
 
@@ -868,3 +868,4 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
