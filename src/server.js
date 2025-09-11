@@ -801,20 +801,25 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// FINAL, STABLE AI ANALYSIS ENDPOINT WITH CORRECTED ROUTE
+// FINAL, STABLE AI ANALYSIS ENDPOINT WITH ENHANCED FORMATTING
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
         
-        // A simplified prompt that only asks for the HTML content.
-        const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
-        - Your response MUST be ONLY the HTML content. 
-        - Do not include markdown like \`\`\`html or any other conversational text.
-        - The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
-        - Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
+        // NEW, HIGHLY-STRUCTURED PROMPT FOR BETTER FORMATTING
+        const systemPrompt = `
+            You are a professional sports betting analyst. Create a sophisticated HTML analysis for the game provided.
+            Your response MUST be ONLY the HTML content. Do not include markdown or any other text.
+            Use the provided data to generate the following HTML structure precisely:
+
+            1. A <h4> with class "text-lg font-bold text-cyan-400 mb-2" titled "Key Narrative". Follow it with a concise <p> with class "text-gray-300 mb-4" summarizing the matchup in one or two sentences.
+            2. A <h4> with class "text-lg font-bold text-teal-400 mb-2" titled "Bull Case for ${prediction.winner}". Follow it with a <ul class="list-disc list-inside space-y-1 text-gray-300"> containing two or three <li> bullet points explaining why our prediction is solid. Make key stats and team names bold with <strong>.
+            3. A <h4> with class "text-lg font-bold text-red-400 mb-2 mt-4" titled "Bear Case / Risks". Follow it with a <ul class="list-disc list-inside space-y-1 text-gray-300"> with two or three <li> bullet points explaining the primary risks that could challenge the prediction. Make key stats and team names bold with <strong>.
+            4. A <h4> with class "text-lg font-bold text-yellow-400 mb-2 mt-4" titled "Final Verdict". Follow it with a single, confident <p> with class "text-gray-200" summarizing your final recommendation.
+        `;
         
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors:\n`;
 
         for(const factor in prediction.factors) {
             dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
@@ -828,10 +833,9 @@ app.post('/api/ai-analysis', async (req, res) => {
         const result = await model.generateContent(dataSummary);
         const analysisHtml = result.response.text();
 
-        // We construct the JSON object ourselves for maximum stability.
         const finalResponse = {
-            finalPick: { winner: prediction.winner }, // We will trust our algorithm's pick
-            analysisHtml: analysisHtml // We use the direct HTML output from the AI
+            finalPick: { winner: prediction.winner },
+            analysisHtml: analysisHtml
         };
         
         return res.json(finalResponse);
@@ -873,6 +877,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
