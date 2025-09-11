@@ -191,33 +191,11 @@ async function getGoalieStats() {
     }, 86400000);
 }
 
+// STEP 1: STUBBED FUNCTION FOR STABILITY TEST
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_final_robust`;
-    return fetchData(cacheKey, async () => {
-        const stats = {};
-        if (sportKey === 'baseball_mlb') {
-            const currentYear = new Date().getFullYear();
-            try {
-                const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
-                const { data: standingsData } = await axios.get(standingsUrl);
-                if (standingsData.records) {
-                    for (const record of standingsData.records) {
-                        for (const teamRecord of record.teamRecords) {
-                            const teamName = teamRecord.team.name;
-                            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                            if(canonicalName) {
-                                const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                                stats[canonicalName] = {
-                                    record: `${teamRecord.wins}-${teamRecord.losses}`,
-                                    streak: teamRecord.streak?.streakCode || 'N/A',
-                                    lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                                    ops: 0.700,
-                                    teamERA: 99.99
-                                };
-                            }
-                        }
-                    }
-                }
+    console.log(`[STABILITY TEST] Bypassing external API call for ${sportKey}.`);
+    return {}; // Immediately return empty data without making a network request
+}
 
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
@@ -868,3 +846,4 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
