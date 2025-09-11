@@ -191,10 +191,32 @@ async function getGoalieStats() {
     }, 86400000);
 }
 
-// STEP 1: STUBBED FUNCTION FOR STABILITY TEST
+// STEP 2: TESTING MLB API ONLY
 async function getTeamStatsFromAPI(sportKey) {
-    console.log(`[STABILITY TEST] Bypassing external API call for ${sportKey}.`);
-    return {}; // Immediately return empty data without making a network request
+    const cacheKey = `stats_api_${sportKey}_mlb_test`;
+    return fetchData(cacheKey, async () => {
+        if (sportKey !== 'baseball_mlb') {
+            return {}; // Skip other sports for now
+        }
+
+        console.log("[MLB TEST] Attempting to fetch stats from MLB API...");
+        const currentYear = new Date().getFullYear();
+        const stats = {};
+        try {
+            const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
+            await axios.get(standingsUrl); // We'll just test the call for now
+            // ... (Full MLB logic would go here)
+            console.log("[MLB TEST] Successfully connected to MLB API.");
+            return stats; // Return empty stats for now, we just want to see if it connects
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                console.log(`[MLB TEST] MLB API returned 404. This likely means it's an off-day with no games. This is NORMAL.`);
+                return {};
+            }
+            console.error(`[MLB TEST] A critical error occurred while fetching MLB stats: ${e.message}`);
+            return {};
+        }
+    });
 }
 
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
@@ -846,4 +868,5 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
