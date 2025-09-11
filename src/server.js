@@ -13,8 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // Corrected static file pathing to work on Render
-const publicPath = path.join(__dirname, '..', 'public');
-app.use(express.static(publicPath));
+app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 
 // --- API & DATA CONFIG ---
@@ -802,36 +801,40 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
+// FINAL, STABLE AI ANALYSIS ENDPOINT WITH CORRECTED ROUTE
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
-        const { winner, factors } = prediction;
         
-        const systemPrompt = `You are a professional sports betting analyst...`; // Abbreviated for brevity
+        // A simplified prompt that only asks for the HTML content.
+        const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
+        - Your response MUST be ONLY the HTML content. 
+        - Do not include markdown like \`\`\`html or any other conversational text.
+        - The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
+        - Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
         
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\n...`; // Abbreviated
-        
-        for(const factor in factors) {
-            dataSummary += `- ${factor}: Home (${factors[factor].homeStat}), Away (${factors[factor].awayStat})\n`;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
+
+        for(const factor in prediction.factors) {
+            dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
         }
-        const model = genAI.getGenerativeModel({ 
+        
+        const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
+
         const result = await model.generateContent(dataSummary);
-        let responseText = result.response.text();
+        const analysisHtml = result.response.text();
+
+        // We construct the JSON object ourselves for maximum stability.
+        const finalResponse = {
+            finalPick: { winner: prediction.winner }, // We will trust our algorithm's pick
+            analysisHtml: analysisHtml // We use the direct HTML output from the AI
+        };
         
-        const jsonStart = responseText.indexOf('{');
-        const jsonEnd = responseText.lastIndexOf('}') + 1;
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
-            const jsonString = responseText.substring(jsonStart, jsonEnd);
-            const analysis = JSON.parse(jsonString);
-            if (analysis.finalPick && analysis.analysisHtml) {
-                return res.json(analysis);
-            }
-        }
-        throw new Error("No valid JSON object found in Gemini's response.");
+        return res.json(finalResponse);
 
     } catch (error) {
         console.error("AI Analysis Error:", error.message);
@@ -846,12 +849,12 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const prompt = `Act as a professional sports betting analyst...`; // Abbreviated
+        const prompt = `Act as a professional sports betting analyst...`;
         
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
-        let analysisHtml = responseText.replace(/```html/g, '').replace(/```/g, '').trim();
+        let analysisHtml = responseText.replace(/```html/g, '').replace(/```html/g, '').trim();
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -863,10 +866,15 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
+
+
+
+
