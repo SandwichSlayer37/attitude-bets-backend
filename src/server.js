@@ -801,15 +801,20 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// FINAL CORRECTED AI ANALYSIS ENDPOINT
-app.post('/api/ai-analysis', async (req, res) => {
+// FINAL, STABLE AI ANALYSIS ENDPOINT
+app.post('/api/ai-alaysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
         
-        const systemPrompt = `You are a professional sports betting analyst. Our advanced algorithm has made an initial prediction. Your task is to review this pick in the context of all the provided data and make a final, expert decision. Your response MUST be a valid JSON object and nothing else. Do not include markdown formatting like \`\`\`json or any text outside of the main JSON structure, which must start with { and end with }. The JSON object must have two keys: "finalPick" and "analysisHtml". - "finalPick": An object with a single key, "winner", containing the full team name of your final decision. - "analysisHtml": A string of HTML containing a detailed breakdown.`;
+        // A simplified prompt that only asks for the HTML content.
+        const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
+        - Your response MUST be ONLY the HTML content. 
+        - Do not include markdown like \`\`\`html or any other conversational text.
+        - The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
+        - Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
         
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Initial Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
 
         for(const factor in prediction.factors) {
             dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
@@ -821,28 +826,15 @@ app.post('/api/ai-analysis', async (req, res) => {
         });
 
         const result = await model.generateContent(dataSummary);
-        const responseText = result.response.text();
+        const analysisHtml = result.response.text();
 
-        // Added for robust debugging:
-        console.log('Raw Gemini Response:', responseText);
-
-        const jsonStart = responseText.indexOf('{');
-        const jsonEnd = responseText.lastIndexOf('}') + 1;
+        // We construct the JSON object ourselves for maximum stability.
+        const finalResponse = {
+            finalPick: { winner: prediction.winner }, // We will trust our algorithm's pick
+            analysisHtml: analysisHtml // We use the direct HTML output from the AI
+        };
         
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
-            const jsonString = responseText.substring(jsonStart, jsonEnd);
-            try {
-                const analysis = JSON.parse(jsonString);
-                if (analysis.finalPick && analysis.analysisHtml) {
-                    return res.json(analysis);
-                }
-            } catch (parseError) {
-                console.error("AI Analysis Error: Failed to parse JSON from the extracted string.", parseError);
-                throw new Error("Failed to parse JSON from Gemini's response.");
-            }
-        }
-
-        throw new Error("No valid JSON object found in Gemini's response.");
+        return res.json(finalResponse);
 
     } catch (error) {
         console.error("AI Analysis Error:", error.message);
@@ -881,5 +873,6 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
