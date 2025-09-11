@@ -182,7 +182,7 @@ async function getGoalieStats() {
             return goalieStats;
         } catch (e) {
             if (e.response && e.response.status === 404) {
-                console.log(`NHL Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
+                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
                 return {};
             }
             console.error("Could not fetch goalie stats:", e.message);
@@ -191,49 +191,33 @@ async function getGoalieStats() {
     }, 86400000);
 }
 
-// STEP 3: FINAL VERSION WITH ALL FEATURES AND ROBUST HANDLING
 async function getTeamStatsFromAPI(sportKey) {
     const cacheKey = `stats_api_${sportKey}_v_final_robust`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
-            // ... (Full, working MLB logic from my previous message)
-            // This part is confirmed working from Step 2
-            console.log("[MLB] Attempting to fetch stats from MLB API...");
             const currentYear = new Date().getFullYear();
             try {
-                // ... full MLB API calls ...
-                console.log("[MLB] Successfully fetched MLB stats.");
-                return stats;
-            } catch (e) {
-                if (e.response && e.response.status === 404) {
-                    console.log(`[MLB] MLB API returned 404, likely an off-day. Proceeding gracefully.`);
-                    return {};
+                const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
+                const { data: standingsData } = await axios.get(standingsUrl);
+                if (standingsData.records) {
+                    for (const record of standingsData.records) {
+                        for (const teamRecord of record.teamRecords) {
+                            const teamName = teamRecord.team.name;
+                            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+                            if(canonicalName) {
+                                const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
+                                stats[canonicalName] = {
+                                    record: `${teamRecord.wins}-${teamRecord.losses}`,
+                                    streak: teamRecord.streak?.streakCode || 'N/A',
+                                    lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
+                                    ops: 0.700,
+                                    teamERA: 99.99
+                                };
+                            }
+                        }
+                    }
                 }
-                console.error(`[MLB] Could not fetch stats from MLB-StatsAPI: ${e.message}`);
-                return stats;
-            }
-
-        } else if (sportKey === 'icehockey_nhl') {
-            console.log("[NHL TEST] Attempting to fetch stats from NHL API...");
-            try {
-                const today = new Date().toISOString().slice(0, 10);
-                await axios.get(`https://api-web.nhle.com/v1/standings/${today}`);
-                // ... (Full NHL logic would go here)
-                console.log("[NHL TEST] Successfully connected to NHL API.");
-                return stats;
-            } catch (e) {
-                if (e.response && e.response.status === 404) {
-                    console.log(`[NHL TEST] NHL API returned 404. This is NORMAL during the offseason. The code is working correctly.`);
-                    return {};
-                }
-                console.error(`[NHL TEST] A critical error occurred while fetching NHL stats: ${e.message}`);
-                return {};
-            }
-        }
-        return {};
-    }, 3600000);
-}
 
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
@@ -255,7 +239,7 @@ async function getTeamStatsFromAPI(sportKey) {
                 return stats;
             } catch (e) {
                 if (e.response && e.response.status === 404) {
-                    console.log(`MLB API returned 404 for ${sportKey}, likely an off-day. Proceeding gracefully.`);
+                    console.log(`[MLB] API returned 404 for ${sportKey}, likely an off-day. Proceeding gracefully.`);
                     return {};
                 }
                 console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
@@ -292,7 +276,7 @@ async function getTeamStatsFromAPI(sportKey) {
                 return stats;
             } catch (e) {
                 if (e.response && e.response.status === 404) {
-                    console.log(`NHL API returned 404 for ${sportKey}, likely offseason. Proceeding gracefully.`);
+                    console.log(`[NHL] API returned 404 for ${sportKey}, likely offseason. Proceeding gracefully.`);
                     return {};
                 }
                 console.error(`Could not fetch stats from NHL API: ${e.message}`);
@@ -355,7 +339,7 @@ async function fetchEspnData(sportKey) {
         const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
         if (!map) return null;
         try {
-            const { data } = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/${map}/scoreboard`);
+            const { data } = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard`);
             return data;
         } catch (error) {
             console.error(`Could not fetch ESPN scoreboard for ${sportKey}:`, error.message);
@@ -865,7 +849,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const result = await model.generateContent(prompt);
         let responseText = result.response.text();
-        let analysisHtml = responseText.replace(/```html/g, '').replace(/```/g, '').trim();
+        let analysisHtml = responseText.replace(/```html/g, '').replace(/```html/g, '').trim();
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -884,6 +868,3 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
-
-
-
