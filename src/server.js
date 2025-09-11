@@ -801,8 +801,8 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// FINAL, STABLE AI ANALYSIS ENDPOINT
-app.post('/api/ai-alaysis', async (req, res) => {
+// FINAL, STABLE AI ANALYSIS ENDPOINT WITH CORRECTED ROUTE
+app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
@@ -873,6 +873,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
