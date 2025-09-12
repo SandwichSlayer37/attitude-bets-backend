@@ -844,7 +844,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro", // Switched to the 'pro' model
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -920,7 +920,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro", // Switched to the 'pro' model
+           model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
         
@@ -1004,7 +1004,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro", // Switched to the 'pro' model
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -1068,6 +1068,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
