@@ -116,6 +116,28 @@ function getDynamicWeights(sportKey) {
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
+// Add this new function in your server.js, near the other data fetchers
+
+async function getPropBets(sportKey, gameId) {
+    // Note: The Odds API uses the game ID to find events.
+    const key = `props_${gameId}`;
+    // Fetch fresh every 30 mins, as prop lines can change.
+    return fetchData(key, async () => {
+        try {
+            // We specify the markets we are interested in.
+            const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
+            
+            const { data } = await axios.get(url);
+            // The API returns the full game object, we just want the bookmaker info.
+            return data.bookmakers || [];
+        } catch (error) {
+            console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
+            return []; // Return empty array on failure
+        }
+    }, 1800000); // 30-minute cache
+}
+
 // --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
@@ -890,6 +912,57 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
     }
 });
 
+// Add this new endpoint in server.js, before your final app.get('*', ...) route
+
+app.post('/api/ai-prop-analysis', async (req, res) => {
+    try {
+        const { game, prediction } = req.body;
+        if (!game || !prediction) {
+            return res.status(400).json({ error: 'Game and prediction data are required.' });
+        }
+
+        // 1. Fetch the available prop bets for this specific game
+        const bookmakers = await getPropBets(game.sportKey, game.id);
+        if (bookmakers.length === 0) {
+            return res.json({ 
+                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment. This is common for games that are further out or less popular.</p>`
+            });
+        }
+        
+        // Let's format the available props for the AI
+        let availableProps = '';
+        bookmakers[0].markets.forEach(market => {
+            availableProps += `\nMarket: ${market.key}\n`;
+            market.outcomes.forEach(outcome => {
+                availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
+            });
+        });
+
+        // 2. Create a specialized prompt for prop bet analysis
+        const systemPrompt = `You are a specialist in sports player-prop betting. Based on the provided game analysis and a list of available prop bets, your task is to identify the SINGLE best prop bet.
+- Analyze the main prediction (winner, key factors) to inform your prop decision. For example, if the predicted winner has a strong offense, their QB's "Over" on passing yards might be a good bet.
+- Your response must be ONLY HTML content. Do not use markdown.
+- Your final output should clearly state the recommended bet (Player, Stat, Over/Under) and provide a concise "Bull Case" (2-3 sentences) explaining your reasoning.
+- Structure your response with an <h4> for the pick and a <p> for the rationale.`;
+
+        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win. The key factors are ${Object.keys(prediction.factors).join(', ')}.
+
+Available Prop Bets from Bookmaker: ${availableProps}
+
+Based on all this information, what is the single best prop bet to make?`;
+
+        // 3. Call the AI model
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        const result = await model.generateContent(userPrompt);
+        const analysisHtml = result.response.text();
+
+        res.json({ analysisHtml });
+
+    } catch (error) {
+        console.error("AI Prop Analysis Error:", error);
+        res.status(500).json({ error: "Failed to generate AI prop analysis." });
+    }
+});
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
@@ -900,6 +973,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
