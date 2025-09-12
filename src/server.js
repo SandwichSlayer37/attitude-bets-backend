@@ -148,6 +148,8 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
     return data;
 }
 
+// REPLACE the entire getOdds function with this one.
+
 async function getOdds(sportKey) {
     const key = `odds_${sportKey}`;
     return fetchData(key, async () => {
@@ -157,32 +159,40 @@ async function getOdds(sportKey) {
             const datesToFetch = [];
             
             const today = new Date();
+            // Fetch yesterday, today, tomorrow, and the day after.
             for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
                 targetDate.setUTCDate(today.getUTCDate() + i);
                 datesToFetch.push(targetDate.toISOString().split('T')[0]);
             }
 
-            const requests = datesToFetch.map(date =>
-                axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`)
-            );
-            const responses = await Promise.all(requests);
-            for (const response of responses) {
-                if(response.data) {
-                    for (const game of response.data) {
+            // --- FIXED LOGIC: Use a for...of loop to make requests sequentially ---
+            for (const date of datesToFetch) {
+                const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`);
+                
+                if (data) {
+                    for (const game of data) {
                         if (!gameIds.has(game.id)) {
                             allGames.push(game);
                             gameIds.add(game.id);
                         }
                     }
                 }
+                // Optional: Add a small delay between requests if needed, but sequential should be enough.
+                // await new Promise(resolve => setTimeout(resolve, 200)); 
             }
+            
             return allGames;
         } catch (error) {
-            console.error("ERROR IN getOdds function:", error.message);
-            return [];
+            // Check if the error is a 429 specifically
+            if (error.response && error.response.status === 429) {
+                 console.error("ERROR IN getOdds function: Rate limit hit (429). The API is busy. Please wait a minute.");
+            } else {
+                 console.error("ERROR IN getOdds function:", error.message);
+            }
+            return []; // Return empty array on any failure to prevent crashing
         }
-    }, 900000);
+    }, 900000); // 15-minute cache
 }
 
 async function getGoalieStats() {
@@ -1020,6 +1030,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
