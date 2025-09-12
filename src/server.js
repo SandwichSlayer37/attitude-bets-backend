@@ -839,26 +839,21 @@ app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        
         const { game, prediction } = req.body;
 
-        // --- NEW JSON-FOCUSED SYSTEM PROMPT ---
-        // ... inside the /api/ai-analysis endpoint
+        // --- NEW PROMPT FOR JSON MODE ---
+        const systemPrompt = `You are a professional sports betting analyst. Your task is to provide a detailed analysis based on the provided data. Structure your analysis within the provided JSON schema. Be insightful and provide clear reasoning for each point.`;
 
-// --- NEW, MORE ROBUST SYSTEM PROMPT ---
-const systemPrompt = `You are a professional sports betting analyst. Your task is to analyze the provided data and return a JSON object.
-- Your response MUST be ONLY a valid JSON object. Do not include markdown like \`\`\`json or any other text.
-- The JSON object must be perfectly structured with the required keys.
-- **Example of the exact required format:**
-{
-  "bullCase": "Detailed analysis here.",
-  "bearCase": "Detailed analysis here.",
-  "injuryImpact": "Detailed analysis here.",
-  "weatherNarrative": "Detailed analysis here."
-}
-- Ensure your entire response is a single JSON object wrapped in curly braces {}.`;
+        // --- NEW: ENABLE JSON MODE ---
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+            generationConfig: {
+                response_mime_type: "application/json",
+            },
+        });
 
-        // The dataSummary remains the same as before
+        // The dataSummary for the user prompt remains the same
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
@@ -873,37 +868,12 @@ const systemPrompt = `You are a professional sports betting analyst. Your task i
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
         
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
         const result = await model.generateContent(dataSummary);
-        
-        // --- PARSE AND SEND JSON DATA ---
-// ... inside the /api/ai-analysis endpoint
-let responseText = result.response.text();
-const startIndex = responseText.indexOf('{');
-const endIndex = responseText.lastIndexOf('}');
-
-// --- NEW SAFETY CHECK ---
-// If we can't find the start or end of a JSON object, throw an error.
-if (startIndex === -1 || endIndex === -1) {
-    console.error("Invalid AI Response (no JSON found):", responseText);
-    throw new Error("AI response did not contain a valid JSON object.");
-}
-
-// ... inside /api/ai-analysis
-const jsonString = responseText.substring(startIndex, endIndex + 1);
-let analysisData;
-
-try {
-    analysisData = JSON.parse(jsonString);
-} catch (e) {
-    console.error("Failed to parse extracted JSON string. The AI response was likely incomplete.");
-    console.error("Problematic String:", jsonString);
-    throw new Error("AI returned a malformed or incomplete JSON object.");
-}
+        const analysisData = JSON.parse(result.response.text());
 
         res.json({
-            finalPick: { winner: prediction.winner }, // Keep this for the card highlight logic
-            analysisData: analysisData // Send the structured data instead of HTML
+            finalPick: { winner: prediction.winner },
+            analysisData: analysisData
         });
 
     } catch (error) {
@@ -923,12 +893,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const systemPrompt = `You are a sharp sports betting analyst specializing in parlays. Your task is to analyze the two legs of the provided parlay and return a JSON object.
-- Your response must be ONLY a valid JSON object. Do not include markdown.
-- The JSON object must have three keys: "overview", "bullCase", and "bearCase".
-- "overview": A 1-2 sentence string giving a high-level summary of the parlay.
-- "bullCase": A 2-3 sentence string explaining why these two picks work well together and have a strong chance of hitting.
-- "bearCase": A 2-3 sentence string explaining the biggest risks and potential weak points of the parlay.`;
+        const systemPrompt = `You are a sharp sports betting analyst specializing in parlays. Analyze the two legs provided and return your analysis in the specified JSON schema. Focus on the synergy and risks of combining these two bets.`;
         
         const userPrompt = `Parlay Details:
 - Total Odds: ${parlay.totalOdds}
@@ -936,26 +901,16 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 - Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
 Please provide the parlay analysis.`;
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+            generationConfig: {
+                response_mime_type: "application/json",
+            },
+        });
+
         const result = await model.generateContent(userPrompt);
-
-        // --- USING THE BULLETPROOF PARSING LOGIC ---
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-
-        if (startIndex === -1 || endIndex === -1) {
-            throw new Error("AI response did not contain a valid JSON object for the parlay.");
-        }
-
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let parlayData;
-        try {
-            parlayData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("Failed to parse parlay JSON. Problematic String:", jsonString);
-            throw new Error("AI returned a malformed parlay object.");
-        }
+        const parlayData = JSON.parse(result.response.text());
         
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
@@ -988,16 +943,15 @@ Please provide the parlay analysis.`;
 
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
+        // ... (code to fetch and format availableProps remains the same) ...
         const { game, prediction } = req.body;
         if (!game || !prediction) return res.status(400).json({ error: 'Game and prediction data are required.' });
         const bookmakers = await getPropBets(game.sportKey, game.id);
-
         if (bookmakers.length === 0 || !bookmakers[0].markets || bookmakers[0].markets.length === 0) {
             return res.json({ 
                 analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
             });
         }
-        
         let availableProps = '';
         bookmakers[0].markets.forEach(market => {
             availableProps += `\nMarket: ${market.key}\n`;
@@ -1006,37 +960,22 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
             });
         });
 
-        const systemPrompt = `You are a specialist in sports player-prop betting. Your task is to identify the SINGLE best prop bet from the list and return a JSON object.
-- Your response must be ONLY a valid JSON object. Do not include markdown.
-- The JSON object must have three keys: "pick", "rationale", and "risk".
-- "pick": A string with the recommended bet (e.g., "Patrick Mahomes Over 2.5 Passing Touchdowns").
-- "rationale": A 2-3 sentence string explaining why this is a strong bet.
-- "risk": A 1-2 sentence string explaining the main risk that could cause this bet to lose.`;
+        const systemPrompt = `You are a specialist in sports player-prop betting. Based on the game analysis and available bets, identify the single best prop bet. Provide a sharp rationale and identify the primary risk, returning the analysis in the provided JSON schema.`;
+
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+            generationConfig: {
+                response_mime_type: "application/json",
+            },
+        });
 
         const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win.
 Available Prop Bets: ${availableProps}
 Based on all this, what is the single best prop bet?`;
-
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        
         const result = await model.generateContent(userPrompt);
-
-        // --- USING THE BULLETPROOF PARSING LOGIC ---
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-
-        if (startIndex === -1 || endIndex === -1) {
-            throw new Error("AI response did not contain a valid JSON object for the prop bet.");
-        }
-
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let propData;
-        try {
-            propData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("Failed to parse prop bet JSON. Problematic String:", jsonString);
-            throw new Error("AI returned a malformed prop bet object.");
-        }
+        const propData = JSON.parse(result.response.text());
 
         const analysisHtml = `
             <div class="space-y-4">
@@ -1053,7 +992,6 @@ Based on all this, what is the single best prop bet?`;
                     <p class="mt-2 text-gray-300">${propData.risk}</p>
                 </div>
             </div>`;
-
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -1071,6 +1009,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
