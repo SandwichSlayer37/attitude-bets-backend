@@ -824,64 +824,53 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// Replace the entire '/api/ai-analysis' endpoint in server.js with this
+// In server.js, REPLACE the entire app.post('/api/ai-analysis', ...) endpoint with this new version.
+
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         
         const { game, prediction } = req.body;
 
-        // --- UPGRADED SYSTEM PROMPT ---
-        const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
-- Your response MUST be ONLY the HTML content. 
-- Do not include markdown like \`\`\`html or any other conversational text.
-- The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
-- **Crucially, you must incorporate the specific weather conditions and key player injuries into your narrative.** Explain HOW these factors could impact the game's outcome (e.g., high winds affecting passing, a star player's absence weakening the defense).
-- Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
+        // --- NEW JSON-FOCUSED SYSTEM PROMPT ---
+        const systemPrompt = `You are a professional sports betting analyst. Your task is to analyze the provided data and return a JSON object.
+- Your response MUST be ONLY a valid JSON object. Do not include markdown like \`\`\`json or any other text.
+- The JSON object must have the following keys: "bullCase", "bearCase", "injuryImpact", and "weatherNarrative".
+- "bullCase": A string explaining the primary reasons to bet on the predicted winner.
+- "bearCase": A string explaining the primary risks or reasons the prediction might fail.
+- "injuryImpact": A string specifically detailing how the listed injuries could affect the game's outcome. If no significant injuries, say so.
+- "weatherNarrative": A string describing how the weather forecast could influence gameplay. If weather is not a factor (e.g., dome stadium, hockey), state that.`;
 
-        // --- UPGRADED DATA SUMMARY ---
+        // The dataSummary remains the same as before
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
-
-        if (prediction.weather) {
-            dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`;
-        }
-
+        if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
         const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
         if ((homeInjuries && homeInjuries.length > 0) || (awayInjuries && awayInjuries.length > 0)) {
             dataSummary += `\n--- Key Injuries ---\n`;
-            if (homeInjuries && homeInjuries.length > 0) {
-                dataSummary += `- ${game.home_team}: ${homeInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`;
-            }
-            if (awayInjuries && awayInjuries.length > 0) {
-                dataSummary += `- ${game.away_team}: ${awayInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`;
-            }
+            if (homeInjuries && homeInjuries.length > 0) { dataSummary += `- ${game.home_team}: ${homeInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`; }
+            if (awayInjuries && awayInjuries.length > 0) { dataSummary += `- ${game.away_team}: ${awayInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`; }
         }
-
         dataSummary += `\n--- Key Statistical Factors ---\n`;
         for(const factor in prediction.factors) {
-            if (factor !== 'Injury Impact') {
-                 dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
-            }
+            if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
         
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt,
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        const result = await model.generateContent(dataSummary);
+        
+        // --- PARSE AND SEND JSON DATA ---
+        // We'll clean up the response and parse it as JSON
+        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        const analysisData = JSON.parse(rawJson);
+
+        res.json({
+            finalPick: { winner: prediction.winner }, // Keep this for the card highlight logic
+            analysisData: analysisData // Send the structured data instead of HTML
         });
 
-        const result = await model.generateContent(dataSummary);
-        const analysisHtml = result.response.text();
-
-        const finalResponse = {
-            finalPick: { winner: prediction.winner },
-            analysisHtml: analysisHtml
-        };
-        
-        return res.json(finalResponse);
-
     } catch (error) {
-        console.error("AI Analysis Error:", error.message);
+        console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
@@ -968,6 +957,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
