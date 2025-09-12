@@ -860,9 +860,12 @@ app.post('/api/ai-analysis', async (req, res) => {
         const result = await model.generateContent(dataSummary);
         
         // --- PARSE AND SEND JSON DATA ---
-        // We'll clean up the response and parse it as JSON
-        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-        const analysisData = JSON.parse(rawJson);
+        // ... inside the /api/ai-analysis endpoint
+let responseText = result.response.text();
+const startIndex = responseText.indexOf('{');
+const endIndex = responseText.lastIndexOf('}');
+const jsonString = responseText.substring(startIndex, endIndex + 1);
+const analysisData = JSON.parse(jsonString);
 
         res.json({
             finalPick: { winner: prediction.winner }, // Keep this for the card highlight logic
@@ -1002,6 +1005,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
