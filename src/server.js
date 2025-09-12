@@ -604,7 +604,8 @@ app.get('/api/predictions', async (req, res) => {
                 return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === gameHomeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === gameAwayCanonical);
             });
 
-            predictions.push({ game: { ...game, espnData: espnEvent || null }, prediction: predictionData });
+            // ... inside the for loop in /api/predictions
+predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
     } catch (error) {
@@ -967,6 +968,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
