@@ -676,7 +676,8 @@ app.get('/api/hottest-player', async (req, res) => {
             const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
             const model = genAI.getGenerativeModel({
-                model: "gemini-pro",
+         const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash",
                 systemInstruction: systemPrompt,
             });
 
@@ -1160,6 +1161,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
