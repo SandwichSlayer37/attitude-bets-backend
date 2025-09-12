@@ -807,18 +807,45 @@ app.post('/api/ai-analysis', async (req, res) => {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
         
-        // A simplified prompt that only asks for the HTML content.
-        const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
-        - Your response MUST be ONLY the HTML content. 
-        - Do not include markdown like \`\`\`html or any other conversational text.
-        - The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
-        - Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
-        
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\nKey Statistical Factors Considered:\n`;
+   const { game, prediction } = req.body;
 
-        for(const factor in prediction.factors) {
-            dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
-        }
+// --- UPGRADED SYSTEM PROMPT ---
+const systemPrompt = `You are a professional sports betting analyst. Your task is to write a detailed HTML analysis for our user based on the data provided.
+- Your response MUST be ONLY the HTML content. 
+- Do not include markdown like \`\`\`html or any other conversational text.
+- The analysis should include a "Bull Case" (reasons to bet on the predicted winner) and a "Bear Case" (risks involved).
+- **Crucially, you must incorporate the specific weather conditions and key player injuries into your narrative.** Explain HOW these factors could impact the game's outcome (e.g., high winds affecting passing, a star player's absence weakening the defense).
+- Use <h4> tags with Tailwind CSS classes for headers and <p> tags for text.`;
+
+// --- UPGRADED DATA SUMMARY ---
+let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
+
+// Add Weather Data if available
+if (prediction.weather) {
+    dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`;
+}
+
+// Add Injury Data if available
+const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
+const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
+if ((homeInjuries && homeInjuries.length > 0) || (awayInjuries && awayInjuries.length > 0)) {
+    dataSummary += `\n--- Key Injuries ---\n`;
+    if (homeInjuries && homeInjuries.length > 0) {
+        dataSummary += `- ${game.home_team}: ${homeInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`;
+    }
+    if (awayInjuries && awayInjuries.length > 0) {
+        dataSummary += `- ${game.away_team}: ${awayInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`;
+    }
+}
+
+// Add the rest of the factors
+dataSummary += `\n--- Key Statistical Factors ---\n`;
+for(const factor in prediction.factors) {
+    // We already handled injuries above, so we can skip it here.
+    if (factor !== 'Injury Impact') {
+         dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`;
+    }
+}
         
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
@@ -873,6 +900,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
