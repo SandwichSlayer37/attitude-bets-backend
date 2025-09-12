@@ -1,4 +1,4 @@
-// FINAL, STABLE & FEATURE-COMPLETE VERSION
+// FINAL, STABLE & FEATURE-COMPLETE VERSION (with Background Job for Hottest Player)
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -12,7 +12,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Corrected static file pathing to work on Render
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 
@@ -33,6 +32,8 @@ const r = new Snoowrap({
 let db;
 let recordsCollection;
 let predictionsCollection;
+let dailyFeaturesCollection; // ADDED for background jobs
+
 async function connectToDb() {
     try {
         if (db) return db;
@@ -41,6 +42,7 @@ async function connectToDb() {
         db = client.db('attitudebets');
         recordsCollection = db.collection('records');
         predictionsCollection = db.collection('predictions');
+        dailyFeaturesCollection = db.collection('daily_features'); // ADDED
         console.log('Connected to MongoDB');
         return db;
     } catch (e) {
@@ -116,26 +118,19 @@ function getDynamicWeights(sportKey) {
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
-// Add this new function in your server.js, near the other data fetchers
-
 async function getPropBets(sportKey, gameId) {
-    // Note: The Odds API uses the game ID to find events.
     const key = `props_${gameId}`;
-    // Fetch fresh every 30 mins, as prop lines can change.
     return fetchData(key, async () => {
         try {
-            // We specify the markets we are interested in.
             const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
-            
             const { data } = await axios.get(url);
-            // The API returns the full game object, we just want the bookmaker info.
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
-            return []; // Return empty array on failure
+            return [];
         }
-    }, 1800000); // 30-minute cache
+    }, 1800000);
 }
 
 // --- DATA FETCHING MODULES ---
@@ -148,8 +143,6 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
     return data;
 }
 
-// REPLACE the entire getOdds function with this one.
-
 async function getOdds(sportKey) {
     const key = `odds_${sportKey}`;
     return fetchData(key, async () => {
@@ -157,19 +150,14 @@ async function getOdds(sportKey) {
             const allGames = [];
             const gameIds = new Set();
             const datesToFetch = [];
-            
             const today = new Date();
-            // Fetch yesterday, today, tomorrow, and the day after.
             for (let i = -1; i < 3; i++) {
                 const targetDate = new Date(today);
                 targetDate.setUTCDate(today.getUTCDate() + i);
                 datesToFetch.push(targetDate.toISOString().split('T')[0]);
             }
-
-            // --- FIXED LOGIC: Use a for...of loop to make requests sequentially ---
             for (const date of datesToFetch) {
                 const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`);
-                
                 if (data) {
                     for (const game of data) {
                         if (!gameIds.has(game.id)) {
@@ -178,21 +166,17 @@ async function getOdds(sportKey) {
                         }
                     }
                 }
-                // Optional: Add a small delay between requests if needed, but sequential should be enough.
-                // await new Promise(resolve => setTimeout(resolve, 200)); 
             }
-            
             return allGames;
         } catch (error) {
-            // Check if the error is a 429 specifically
             if (error.response && error.response.status === 429) {
                  console.error("ERROR IN getOdds function: Rate limit hit (429). The API is busy. Please wait a minute.");
             } else {
                  console.error("ERROR IN getOdds function:", error.message);
             }
-            return []; // Return empty array on any failure to prevent crashing
+            return [];
         }
-    }, 900000); // 15-minute cache
+    }, 900000);
 }
 
 async function getGoalieStats() {
@@ -614,8 +598,7 @@ app.get('/api/predictions', async (req, res) => {
                 return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === gameHomeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === gameAwayCanonical);
             });
 
-            // ... inside the for loop in /api/predictions
-predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null }, prediction: predictionData });
+            predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
     } catch (error) {
@@ -624,95 +607,21 @@ predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null
     }
 });
 
-// Add this new endpoint for the "Hottest Player" feature
-
 app.get('/api/hottest-player', async (req, res) => {
-    const cacheKey = 'hottest_player_of_the_day';
-
     try {
-        const hottestPlayerAnalysis = await fetchData(cacheKey, async () => {
-            console.log("--- Starting Hottest Player Analysis (no cache) ---");
+        if (!dailyFeaturesCollection) {
+            return res.status(503).json({ error: "Service warming up, please try again in a moment." });
+        }
+        const hottestPlayerDoc = await dailyFeaturesCollection.findOne({ _id: 'hottest_player' });
 
-            console.log("Step 1: Fetching all games for all sports...");
-            let allGames = [];
-            for (const sport of SPORTS_DB) {
-                const gamesForSport = await getOdds(sport.key);
-                gamesForSport.forEach(game => game.sportKey = sport.key);
-                allGames.push(...gamesForSport);
-            }
-            console.log(`Found a total of ${allGames.length} games across all sports.`);
-
-            console.log("Step 2: Fetching all prop bets for every game...");
-            let allPropBets = [];
-            for (const game of allGames) {
-                const props = await getPropBets(game.sportKey, game.id);
-                if (props.length > 0) {
-                    allPropBets.push({
-                        matchup: `${game.away_team} @ ${game.home_team}`,
-                        bookmakers: props
-                    });
-                }
-            }
-            console.log(`Found prop bet markets for ${allPropBets.length} games.`);
-
-            if (allPropBets.length < 3) {
-                return { error: "Not enough prop bet data available today to run a confident analysis." };
-            }
-
-            console.log("Step 3: Sending massive prop bet list to AI for analysis...");
-            let propsForPrompt = allPropBets.map(game => {
-                let gameText = `\nMatchup: ${game.matchup}\n`;
-                const firstBookmaker = game.bookmakers[0];
-                if (firstBookmaker && firstBookmaker.markets) {
-                    firstBookmaker.markets.forEach(market => {
-                        market.outcomes.forEach(outcome => {
-                           gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-                        });
-                    });
-                }
-                return gameText;
-            }).join('');
-
-            const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
-
-          const model = genAI.getGenerativeModel({
-                model: "gemini-1.5-flash",
-                systemInstruction: systemPrompt,
-            });
-
-            const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-
-**Available Prop Bets Data:**
-${propsForPrompt}
-
-**JSON to complete:**
-{
-  "playerName": "",
-  "teamName": "",
-  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
-  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
-}`;
-
-            const result = await model.generateContent(userPrompt);
-
-            let responseText = result.response.text();
-            const startIndex = responseText.indexOf('{');
-            const endIndex = responseText.lastIndexOf('}');
-            if (startIndex === -1 || endIndex === -1) {
-                throw new Error("Hottest Player AI response did not contain a valid JSON object.");
-            }
-            const jsonString = responseText.substring(startIndex, endIndex + 1);
-            
-            console.log("Hottest Player analysis complete.");
-            return JSON.parse(jsonString);
-
-        }, 14400000);
-
-        res.json(hottestPlayerAnalysis);
-
+        if (hottestPlayerDoc && hottestPlayerDoc.data) {
+            res.json(hottestPlayerDoc.data);
+        } else {
+            res.status(404).json({ error: "Hottest Player analysis is not yet available. It may be running in the background." });
+        }
     } catch (error) {
-        console.error("Hottest Player Main Endpoint Error:", error);
-        res.status(500).json({ error: "Failed to generate Hottest Player analysis." });
+        console.error("Hottest Player GET Endpoint Error:", error);
+        res.status(500).json({ error: "Failed to retrieve Hottest Player analysis." });
     }
 });
 
@@ -926,8 +835,6 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// In server.js, REPLACE the entire app.post('/api/ai-analysis', ...) endpoint with this new version.
-
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
@@ -941,7 +848,6 @@ app.post('/api/ai-analysis', async (req, res) => {
         });
 
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
-        // ... (dataSummary construction is the same)
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
         const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
@@ -997,10 +903,6 @@ ${dataSummary}
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
-
-// In server.js, REPLACE the entire app.post('/api/parlay-ai-analysis', ...) endpoint with this.
-
-// REPLACE the entire app.post('/api/parlay-ai-analysis', ...) endpoint with this.
 
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
@@ -1068,17 +970,10 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
     }
 });
 
-// Add this new endpoint in server.js, before your final app.get('*', ...) route
-
-// In server.js, REPLACE the entire app.post('/api/ai-prop-analysis', ...) endpoint with this.
-
-// REPLACE the entire app.post('/api/ai-prop-analysis', ...) endpoint with this.
-
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
         if (!game || !prediction) return res.status(400).json({ error: 'Game and prediction data are required.' });
-        // ... (rest of the data fetching for props is the same) ...
         const bookmakers = await getPropBets(game.sportKey, game.id);
         if (bookmakers.length === 0 || !bookmakers[0].markets || bookmakers[0].markets.length === 0) {
             return res.json({ 
