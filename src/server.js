@@ -624,6 +624,107 @@ predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null
     }
 });
 
+// Add this new endpoint for the "Hottest Player" feature
+
+app.get('/api/hottest-player', async (req, res) => {
+    const cacheKey = 'hottest_player_of_the_day';
+
+    // This function will cache the result for 4 hours to avoid expensive re-calculations.
+    try {
+        const hottestPlayerAnalysis = await fetchData(cacheKey, async () => {
+            console.log("--- Starting Hottest Player Analysis (no cache) ---");
+
+            // Step 1: Aggregate all games from all sports
+            console.log("Step 1: Fetching all games for all sports...");
+            let allGames = [];
+            for (const sport of SPORTS_DB) {
+                const gamesForSport = await getOdds(sport.key);
+                // Add sportKey to each game object for later use
+                gamesForSport.forEach(game => game.sportKey = sport.key);
+                allGames.push(...gamesForSport);
+            }
+            console.log(`Found a total of ${allGames.length} games across all sports.`);
+
+            // Step 2: Fetch all prop bets for every single game
+            console.log("Step 2: Fetching all prop bets for every game...");
+            let allPropBets = [];
+            // We'll use a for...of loop to be respectful of API rate limits
+            for (const game of allGames) {
+                const props = await getPropBets(game.sportKey, game.id);
+                if (props.length > 0) {
+                    // Add game context to the prop bet for the AI
+                    allPropBets.push({
+                        matchup: `${game.away_team} @ ${game.home_team}`,
+                        bookmakers: props
+                    });
+                }
+            }
+            console.log(`Found prop bet markets for ${allPropBets.length} games.`);
+
+            if (allPropBets.length < 3) {
+                return { error: "Not enough prop bet data available today to run a confident analysis." };
+            }
+
+            // Step 3: Format the data and send it to the AI for analysis
+            console.log("Step 3: Sending massive prop bet list to AI for analysis...");
+            let propsForPrompt = allPropBets.map(game => {
+                let gameText = `\nMatchup: ${game.matchup}\n`;
+                const firstBookmaker = game.bookmakers[0];
+                if (firstBookmaker && firstBookmaker.markets) {
+                    firstBookmaker.markets.forEach(market => {
+                        market.outcomes.forEach(outcome => {
+                           gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
+                        });
+                    });
+                }
+                return gameText;
+            }).join('');
+
+
+            const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
+
+            const model = genAI.getGenerativeModel({
+                model: "gemini-pro",
+                systemInstruction: systemPrompt,
+            });
+
+            const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+
+**Available Prop Bets Data:**
+${propsForPrompt}
+
+**JSON to complete:**
+{
+  "playerName": "",
+  "teamName": "",
+  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
+  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
+}`;
+
+            const result = await model.generateContent(userPrompt);
+
+            // Step 4: Parse the response and return it
+            let responseText = result.response.text();
+            const startIndex = responseText.indexOf('{');
+            const endIndex = responseText.lastIndexOf('}');
+            if (startIndex === -1 || endIndex === -1) {
+                throw new Error("Hottest Player AI response did not contain a valid JSON object.");
+            }
+            const jsonString = responseText.substring(startIndex, endIndex + 1);
+            
+            console.log("Hottest Player analysis complete.");
+            return JSON.parse(jsonString);
+
+        }, 14400000); // Cache for 4 hours (14,400,000 ms)
+
+        res.json(hottestPlayerAnalysis);
+
+    } catch (error) {
+        console.error("Hottest Player Main Endpoint Error:", error);
+        res.status(500).json({ error: "Failed to generate Hottest Player analysis." });
+    }
+});
+
 app.get('/api/special-picks', async (req, res) => {
     try {
         const { allPredictions, gameCounts } = await getAllDailyPredictions();
@@ -1068,6 +1169,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
