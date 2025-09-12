@@ -889,8 +889,17 @@ if (startIndex === -1 || endIndex === -1) {
     throw new Error("AI response did not contain a valid JSON object.");
 }
 
+// ... inside /api/ai-analysis
 const jsonString = responseText.substring(startIndex, endIndex + 1);
-const analysisData = JSON.parse(jsonString);
+let analysisData;
+
+try {
+    analysisData = JSON.parse(jsonString);
+} catch (e) {
+    console.error("Failed to parse extracted JSON string. The AI response was likely incomplete.");
+    console.error("Problematic String:", jsonString);
+    throw new Error("AI returned a malformed or incomplete JSON object.");
+}
 
         res.json({
             finalPick: { winner: prediction.winner }, // Keep this for the card highlight logic
@@ -904,6 +913,8 @@ const analysisData = JSON.parse(jsonString);
 });
 
 // In server.js, REPLACE the entire app.post('/api/parlay-ai-analysis', ...) endpoint with this.
+
+// REPLACE the entire app.post('/api/parlay-ai-analysis', ...) endpoint with this.
 
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
@@ -927,8 +938,24 @@ Please provide the parlay analysis.`;
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
         const result = await model.generateContent(userPrompt);
-        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-        const parlayData = JSON.parse(rawJson);
+
+        // --- USING THE BULLETPROOF PARSING LOGIC ---
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("AI response did not contain a valid JSON object for the parlay.");
+        }
+
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        let parlayData;
+        try {
+            parlayData = JSON.parse(jsonString);
+        } catch (e) {
+            console.error("Failed to parse parlay JSON. Problematic String:", jsonString);
+            throw new Error("AI returned a malformed parlay object.");
+        }
         
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
@@ -944,8 +971,7 @@ Please provide the parlay analysis.`;
                     <h4 class="text-lg font-bold text-red-400">Bear Case (Primary Risks)</h4>
                     <p class="mt-2 text-gray-300">${parlayData.bearCase}</p>
                 </div>
-            </div>
-        `;
+            </div>`;
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -958,9 +984,10 @@ Please provide the parlay analysis.`;
 
 // In server.js, REPLACE the entire app.post('/api/ai-prop-analysis', ...) endpoint with this.
 
+// REPLACE the entire app.post('/api/ai-prop-analysis', ...) endpoint with this.
+
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
-        // ... (code to fetch bookmakers remains the same) ...
         const { game, prediction } = req.body;
         if (!game || !prediction) return res.status(400).json({ error: 'Game and prediction data are required.' });
         const bookmakers = await getPropBets(game.sportKey, game.id);
@@ -992,10 +1019,25 @@ Based on all this, what is the single best prop bet?`;
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
         const result = await model.generateContent(userPrompt);
-        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-        const propData = JSON.parse(rawJson);
 
-        // We will build the HTML here on the server for simplicity, using our new sectioned style.
+        // --- USING THE BULLETPROOF PARSING LOGIC ---
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("AI response did not contain a valid JSON object for the prop bet.");
+        }
+
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        let propData;
+        try {
+            propData = JSON.parse(jsonString);
+        } catch (e) {
+            console.error("Failed to parse prop bet JSON. Problematic String:", jsonString);
+            throw new Error("AI returned a malformed prop bet object.");
+        }
+
         const analysisHtml = `
             <div class="space-y-4">
                 <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
@@ -1010,8 +1052,7 @@ Based on all this, what is the single best prop bet?`;
                     <h4 class="text-lg font-bold text-red-400">Risk Factor</h4>
                     <p class="mt-2 text-gray-300">${propData.risk}</p>
                 </div>
-            </div>
-        `;
+            </div>`;
 
         res.json({ analysisHtml });
 
@@ -1030,6 +1071,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
