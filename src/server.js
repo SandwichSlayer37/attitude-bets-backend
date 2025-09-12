@@ -860,10 +860,18 @@ app.post('/api/ai-analysis', async (req, res) => {
         const result = await model.generateContent(dataSummary);
         
         // --- PARSE AND SEND JSON DATA ---
-        // ... inside the /api/ai-analysis endpoint
+// ... inside the /api/ai-analysis endpoint
 let responseText = result.response.text();
 const startIndex = responseText.indexOf('{');
 const endIndex = responseText.lastIndexOf('}');
+
+// --- NEW SAFETY CHECK ---
+// If we can't find the start or end of a JSON object, throw an error.
+if (startIndex === -1 || endIndex === -1) {
+    console.error("Invalid AI Response (no JSON found):", responseText);
+    throw new Error("AI response did not contain a valid JSON object.");
+}
+
 const jsonString = responseText.substring(startIndex, endIndex + 1);
 const analysisData = JSON.parse(jsonString);
 
@@ -1005,6 +1013,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
