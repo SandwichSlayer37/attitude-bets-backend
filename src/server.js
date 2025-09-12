@@ -841,19 +841,10 @@ app.post('/api/ai-analysis', async (req, res) => {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
 
-        const systemPrompt = `You are a professional sports betting analyst. Your task is to analyze the provided data and return a JSON object.
-- Your response MUST be ONLY a valid JSON object. Do not include markdown.
-- Example of the exact required format:
-{
-  "bullCase": "Detailed analysis here.",
-  "bearCase": "Detailed analysis here.",
-  "injuryImpact": "Detailed analysis here.",
-  "weatherNarrative": "Detailed analysis here."
-}
-- Ensure your entire response is a single JSON object wrapped in curly braces {}.`;
+        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-pro", // Switched to the 'pro' model
             systemInstruction: systemPrompt,
         });
 
@@ -872,9 +863,20 @@ app.post('/api/ai-analysis', async (req, res) => {
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
 
-        const result = await model.generateContent(dataSummary);
+        const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Data:**
+${dataSummary}
+
+**JSON to complete:**
+{
+  "bullCase": "",
+  "bearCase": "",
+  "injuryImpact": "",
+  "weatherNarrative": ""
+}`;
         
-        // --- RE-IMPLEMENTING BULLETPROOF PARSING ---
+        const result = await model.generateContent(userPrompt);
+        
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
@@ -915,18 +917,29 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const systemPrompt = `You are a sharp sports betting analyst specializing in parlays. Analyze the two legs provided and return your analysis in a JSON object with keys "overview", "bullCase", and "bearCase".`;
+        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-pro", // Switched to the 'pro' model
             systemInstruction: systemPrompt,
         });
         
-        const userPrompt = `Parlay Details:\n- Total Odds: ${parlay.totalOdds}\n- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.\n- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.\nPlease provide the parlay analysis.`;
+        const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+
+**Data:**
+- Total Odds: ${parlay.totalOdds}
+- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
+- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
+
+**JSON to complete:**
+{
+  "overview": "",
+  "bullCase": "",
+  "bearCase": ""
+}`;
 
         const result = await model.generateContent(userPrompt);
 
-        // --- RE-IMPLEMENTING BULLETPROOF PARSING ---
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
@@ -988,20 +1001,28 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
             });
         });
 
-        const systemPrompt = `You are a specialist in sports player-prop betting. Your task is to identify the SINGLE best prop bet from the list and return a JSON object.
-- Your response must be ONLY a valid JSON object.
-- The JSON object must have three keys: "pick", "rationale", and "risk".`;
+        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-pro", // Switched to the 'pro' model
             systemInstruction: systemPrompt,
         });
 
-        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win.\nAvailable Prop Bets: ${availableProps}\nBased on all this, what is the single best prop bet?`;
+        const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+
+**Data:**
+Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
+Available Prop Bets: ${availableProps}
+
+**JSON to complete:**
+{
+  "pick": "",
+  "rationale": "",
+  "risk": ""
+}`;
         
         const result = await model.generateContent(userPrompt);
 
-        // --- RE-IMPLEMENTING BULLETPROOF PARSING ---
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
@@ -1047,6 +1068,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
