@@ -629,30 +629,24 @@ predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null
 app.get('/api/hottest-player', async (req, res) => {
     const cacheKey = 'hottest_player_of_the_day';
 
-    // This function will cache the result for 4 hours to avoid expensive re-calculations.
     try {
         const hottestPlayerAnalysis = await fetchData(cacheKey, async () => {
             console.log("--- Starting Hottest Player Analysis (no cache) ---");
 
-            // Step 1: Aggregate all games from all sports
             console.log("Step 1: Fetching all games for all sports...");
             let allGames = [];
             for (const sport of SPORTS_DB) {
                 const gamesForSport = await getOdds(sport.key);
-                // Add sportKey to each game object for later use
                 gamesForSport.forEach(game => game.sportKey = sport.key);
                 allGames.push(...gamesForSport);
             }
             console.log(`Found a total of ${allGames.length} games across all sports.`);
 
-            // Step 2: Fetch all prop bets for every single game
             console.log("Step 2: Fetching all prop bets for every game...");
             let allPropBets = [];
-            // We'll use a for...of loop to be respectful of API rate limits
             for (const game of allGames) {
                 const props = await getPropBets(game.sportKey, game.id);
                 if (props.length > 0) {
-                    // Add game context to the prop bet for the AI
                     allPropBets.push({
                         matchup: `${game.away_team} @ ${game.home_team}`,
                         bookmakers: props
@@ -665,7 +659,6 @@ app.get('/api/hottest-player', async (req, res) => {
                 return { error: "Not enough prop bet data available today to run a confident analysis." };
             }
 
-            // Step 3: Format the data and send it to the AI for analysis
             console.log("Step 3: Sending massive prop bet list to AI for analysis...");
             let propsForPrompt = allPropBets.map(game => {
                 let gameText = `\nMatchup: ${game.matchup}\n`;
@@ -679,7 +672,6 @@ app.get('/api/hottest-player', async (req, res) => {
                 }
                 return gameText;
             }).join('');
-
 
             const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
@@ -703,7 +695,6 @@ ${propsForPrompt}
 
             const result = await model.generateContent(userPrompt);
 
-            // Step 4: Parse the response and return it
             let responseText = result.response.text();
             const startIndex = responseText.indexOf('{');
             const endIndex = responseText.lastIndexOf('}');
@@ -715,7 +706,7 @@ ${propsForPrompt}
             console.log("Hottest Player analysis complete.");
             return JSON.parse(jsonString);
 
-        }, 14400000); // Cache for 4 hours (14,400,000 ms)
+        }, 14400000);
 
         res.json(hottestPlayerAnalysis);
 
@@ -1169,6 +1160,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
