@@ -841,19 +841,17 @@ app.post('/api/ai-analysis', async (req, res) => {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
 
-        // --- NEW PROMPT FOR JSON MODE ---
         const systemPrompt = `You are a professional sports betting analyst. Your task is to provide a detailed analysis based on the provided data. Structure your analysis within the provided JSON schema. Be insightful and provide clear reasoning for each point.`;
 
-        // --- NEW: ENABLE JSON MODE ---
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
             generationConfig: {
-                response_mime_type: "application/json",
+                "responseMimeType": "application/json",
             },
         });
 
-        // The dataSummary for the user prompt remains the same
+        // ... (rest of the function is the same)
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
@@ -894,20 +892,17 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg2 = parlay.legs[1];
 
         const systemPrompt = `You are a sharp sports betting analyst specializing in parlays. Analyze the two legs provided and return your analysis in the specified JSON schema. Focus on the synergy and risks of combining these two bets.`;
-        
-        const userPrompt = `Parlay Details:
-- Total Odds: ${parlay.totalOdds}
-- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
-- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
-Please provide the parlay analysis.`;
 
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
             generationConfig: {
-                response_mime_type: "application/json",
+                "responseMimeType": "application/json",
             },
         });
+
+        // ... (rest of the function is the same) ...
+        const userPrompt = `Parlay Details:\n- Total Odds: ${parlay.totalOdds}\n- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.\n- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.\nPlease provide the parlay analysis.`;
 
         const result = await model.generateContent(userPrompt);
         const parlayData = JSON.parse(result.response.text());
@@ -959,20 +954,18 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
                 availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
             });
         });
-
         const systemPrompt = `You are a specialist in sports player-prop betting. Based on the game analysis and available bets, identify the single best prop bet. Provide a sharp rationale and identify the primary risk, returning the analysis in the provided JSON schema.`;
 
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
             generationConfig: {
-                response_mime_type: "application/json",
+                "responseMimeType": "application/json",
             },
         });
 
-        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win.
-Available Prop Bets: ${availableProps}
-Based on all this, what is the single best prop bet?`;
+        // ... (rest of the function is the same) ...
+        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win.\nAvailable Prop Bets: ${availableProps}\nBased on all this, what is the single best prop bet?`;
         
         const result = await model.generateContent(userPrompt);
         const propData = JSON.parse(result.response.text());
@@ -1009,6 +1002,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
