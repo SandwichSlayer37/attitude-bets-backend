@@ -833,13 +833,20 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
 
         // --- NEW JSON-FOCUSED SYSTEM PROMPT ---
-        const systemPrompt = `You are a professional sports betting analyst. Your task is to analyze the provided data and return a JSON object.
+        // ... inside the /api/ai-analysis endpoint
+
+// --- NEW, MORE ROBUST SYSTEM PROMPT ---
+const systemPrompt = `You are a professional sports betting analyst. Your task is to analyze the provided data and return a JSON object.
 - Your response MUST be ONLY a valid JSON object. Do not include markdown like \`\`\`json or any other text.
-- The JSON object must have the following keys: "bullCase", "bearCase", "injuryImpact", and "weatherNarrative".
-- "bullCase": A string explaining the primary reasons to bet on the predicted winner.
-- "bearCase": A string explaining the primary risks or reasons the prediction might fail.
-- "injuryImpact": A string specifically detailing how the listed injuries could affect the game's outcome. If no significant injuries, say so.
-- "weatherNarrative": A string describing how the weather forecast could influence gameplay. If weather is not a factor (e.g., dome stadium, hockey), state that.`;
+- The JSON object must be perfectly structured with the required keys.
+- **Example of the exact required format:**
+{
+  "bullCase": "Detailed analysis here.",
+  "bearCase": "Detailed analysis here.",
+  "injuryImpact": "Detailed analysis here.",
+  "weatherNarrative": "Detailed analysis here."
+}
+- Ensure your entire response is a single JSON object wrapped in curly braces {}.`;
 
         // The dataSummary remains the same as before
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
@@ -1013,6 +1020,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
