@@ -875,6 +875,8 @@ app.post('/api/ai-analysis', async (req, res) => {
     }
 });
 
+// In server.js, REPLACE the entire app.post('/api/parlay-ai-analysis', ...) endpoint with this.
+
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
@@ -882,12 +884,40 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
-        const prompt = `Act as a professional sports betting analyst...`;
+        const systemPrompt = `You are a sharp sports betting analyst specializing in parlays. Your task is to analyze the two legs of the provided parlay and return a JSON object.
+- Your response must be ONLY a valid JSON object. Do not include markdown.
+- The JSON object must have three keys: "overview", "bullCase", and "bearCase".
+- "overview": A 1-2 sentence string giving a high-level summary of the parlay.
+- "bullCase": A 2-3 sentence string explaining why these two picks work well together and have a strong chance of hitting.
+- "bearCase": A 2-3 sentence string explaining the biggest risks and potential weak points of the parlay.`;
         
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
-        const result = await model.generateContent(prompt);
-        let responseText = result.response.text();
-        let analysisHtml = responseText.replace(/```html/g, '').replace(/```html/g, '').trim();
+        const userPrompt = `Parlay Details:
+- Total Odds: ${parlay.totalOdds}
+- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
+- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
+Please provide the parlay analysis.`;
+
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
+        const result = await model.generateContent(userPrompt);
+        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        const parlayData = JSON.parse(rawJson);
+        
+        const analysisHtml = `
+            <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
+                 <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
+                 <p class="text-lg text-white mt-1">${parlayData.overview}</p>
+            </div>
+            <div class="space-y-4">
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-green-400">Bull Case (Why It Hits)</h4>
+                    <p class="mt-2 text-gray-300">${parlayData.bullCase}</p>
+                </div>
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-red-400">Bear Case (Primary Risks)</h4>
+                    <p class="mt-2 text-gray-300">${parlayData.bearCase}</p>
+                </div>
+            </div>
+        `;
         res.json({ analysisHtml });
 
     } catch (error) {
@@ -898,22 +928,21 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
 
 // Add this new endpoint in server.js, before your final app.get('*', ...) route
 
+// In server.js, REPLACE the entire app.post('/api/ai-prop-analysis', ...) endpoint with this.
+
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
+        // ... (code to fetch bookmakers remains the same) ...
         const { game, prediction } = req.body;
-        if (!game || !prediction) {
-            return res.status(400).json({ error: 'Game and prediction data are required.' });
-        }
-
-        // 1. Fetch the available prop bets for this specific game
+        if (!game || !prediction) return res.status(400).json({ error: 'Game and prediction data are required.' });
         const bookmakers = await getPropBets(game.sportKey, game.id);
-        if (bookmakers.length === 0) {
+
+        if (bookmakers.length === 0 || !bookmakers[0].markets || bookmakers[0].markets.length === 0) {
             return res.json({ 
-                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment. This is common for games that are further out or less popular.</p>`
+                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
             });
         }
         
-        // Let's format the available props for the AI
         let availableProps = '';
         bookmakers[0].markets.forEach(market => {
             availableProps += `\nMarket: ${market.key}\n`;
@@ -922,23 +951,39 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
             });
         });
 
-        // 2. Create a specialized prompt for prop bet analysis
-        const systemPrompt = `You are a specialist in sports player-prop betting. Based on the provided game analysis and a list of available prop bets, your task is to identify the SINGLE best prop bet.
-- Analyze the main prediction (winner, key factors) to inform your prop decision. For example, if the predicted winner has a strong offense, their QB's "Over" on passing yards might be a good bet.
-- Your response must be ONLY HTML content. Do not use markdown.
-- Your final output should clearly state the recommended bet (Player, Stat, Over/Under) and provide a concise "Bull Case" (2-3 sentences) explaining your reasoning.
-- Structure your response with an <h4> for the pick and a <p> for the rationale.`;
+        const systemPrompt = `You are a specialist in sports player-prop betting. Your task is to identify the SINGLE best prop bet from the list and return a JSON object.
+- Your response must be ONLY a valid JSON object. Do not include markdown.
+- The JSON object must have three keys: "pick", "rationale", and "risk".
+- "pick": A string with the recommended bet (e.g., "Patrick Mahomes Over 2.5 Passing Touchdowns").
+- "rationale": A 2-3 sentence string explaining why this is a strong bet.
+- "risk": A 1-2 sentence string explaining the main risk that could cause this bet to lose.`;
 
-        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win. The key factors are ${Object.keys(prediction.factors).join(', ')}.
+        const userPrompt = `Main Game Analysis:\nThe algorithm predicts ${prediction.winner} will win.
+Available Prop Bets: ${availableProps}
+Based on all this, what is the single best prop bet?`;
 
-Available Prop Bets from Bookmaker: ${availableProps}
-
-Based on all this information, what is the single best prop bet to make?`;
-
-        // 3. Call the AI model
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", systemInstruction: systemPrompt });
         const result = await model.generateContent(userPrompt);
-        const analysisHtml = result.response.text();
+        const rawJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+        const propData = JSON.parse(rawJson);
+
+        // We will build the HTML here on the server for simplicity, using our new sectioned style.
+        const analysisHtml = `
+            <div class="space-y-4">
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
+                     <h4 class="text-sm font-bold text-gray-400 uppercase">Top AI Prop Pick</h4>
+                     <p class="text-xl font-bold text-white mt-1">${propData.pick}</p>
+                </div>
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-green-400">Rationale</h4>
+                    <p class="mt-2 text-gray-300">${propData.rationale}</p>
+                </div>
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-red-400">Risk Factor</h4>
+                    <p class="mt-2 text-gray-300">${propData.risk}</p>
+                </div>
+            </div>
+        `;
 
         res.json({ analysisHtml });
 
@@ -957,6 +1002,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
+
 
 
 
