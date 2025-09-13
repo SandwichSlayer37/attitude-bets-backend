@@ -1003,7 +1003,16 @@ ${dataSummary}
 `;
         
         const result = await model.generateContent(userPrompt);
-        const analysisData = JSON.parse(result.response.text());
+        let responseText = result.response.text();
+        
+        // Add this block to safely extract the JSON
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("AI analysis response did not contain a valid JSON object.");
+        }
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const analysisData = JSON.parse(jsonString);
 
         res.json({
             finalPick: { winner: prediction.winner },
@@ -1169,6 +1178,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
