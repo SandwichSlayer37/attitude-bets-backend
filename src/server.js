@@ -261,7 +261,12 @@ async function getPropBets(sportKey, gameId) {
         try {
             const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
+            
             const { data } = await axios.get(url);
+            
+            // --- ADD THIS LINE FOR DEBUGGING ---
+            console.log(`--- RAW PROP BET API RESPONSE for game ${gameId} ---`, JSON.stringify(data, null, 2));
+
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -1149,3 +1154,4 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
