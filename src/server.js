@@ -173,16 +173,20 @@ async function updateHottestPlayer() {
             systemInstruction: systemPrompt,
         });
 
-        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Available Prop Bets Data:**
-${propsForPrompt}
+const userPrompt = `Based on the following data, complete the JSON object. Do not add any extra text, markdown, or explanations.
+**Data:**
+${dataSummary}
+
 **JSON to complete:**
 {
-  "playerName": "",
-  "teamName": "",
-  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
-  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
-}`;
+  "bullCase": "",
+  "bearCase": "",
+  "pitcherAnalysis": "",
+  "xFactor": "",
+  "injuryImpact": "",
+  "weatherNarrative": ""
+}
+`;
 
         const result = await model.generateContent(userPrompt);
 
@@ -1178,6 +1182,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
