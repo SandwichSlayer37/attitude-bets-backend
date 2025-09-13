@@ -461,6 +461,7 @@ async function fetchEspnData(sportKey) {
     }, 60000);
 }
 
+// REPLACE the entire runPredictionEngine function with this one
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather } = context;
     const weights = getDynamicWeights(sportKey);
@@ -473,8 +474,10 @@ async function runPredictionEngine(game, sportKey, context) {
     const factors = {};
     let homeInjuryImpact = (injuries[homeCanonicalName] || []).length;
     let awayInjuryImpact = (injuries[awayCanonicalName] || []).length;
+
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
+
     if (sportKey === 'icehockey_nhl') {
         const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
         const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
@@ -485,16 +488,14 @@ async function runPredictionEngine(game, sportKey, context) {
         const awaySpecialTeams = (awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0);
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
         factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)) * weights.faceoffAdvantage, homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
-        const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
-        const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
-        factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
+        
         const homeGoalieName = probableStarters[homeCanonicalName];
         const awayGoalieName = probableStarters[awayCanonicalName];
         const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
         const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
         let goalieValue = 0;
         let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
-        if(homeGoalieStats && awayGoalieStats) {
+        if (homeGoalieStats && awayGoalieStats && homeGoalieName && awayGoalieName) {
             const gaaDiff = awayGoalieStats.gaa - homeGoalieStats.gaa;
             const svPctDiff = homeGoalieStats.svPct - awayGoalieStats.svPct;
             goalieValue = (gaaDiff * 5) + (svPctDiff * 100);
@@ -502,6 +503,11 @@ async function runPredictionEngine(game, sportKey, context) {
             awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
         }
         factors['Goalie Matchup'] = { value: goalieValue * (weights.goalieMatchup / 10), homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
+        
+        const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
+        const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
+        factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
+
     } else if (sportKey === 'baseball_mlb') {
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
         const homeOps = homeStats.ops || 0.700;
@@ -515,13 +521,16 @@ async function runPredictionEngine(game, sportKey, context) {
             factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
+
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
+    
     for (const factor in factors) {
         if (factors[factor].value && !isNaN(factors[factor].value)) {
             homeScore += factors[factor].value;
             awayScore -= factors[factor].value;
         }
     }
+
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 'N/A', awayValue = 'N/A';
@@ -535,9 +544,11 @@ async function runPredictionEngine(game, sportKey, context) {
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
+
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
+    
     return { winner, strengthText, confidence, factors, weather, homeValue, awayValue, probableStarters };
 }
 
@@ -1158,5 +1169,6 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
