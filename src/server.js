@@ -538,7 +538,7 @@ async function runPredictionEngine(game, sportKey, context) {
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
+    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue, probableStarters };
 }
 
 async function getAllDailyPredictions() {
@@ -632,7 +632,7 @@ app.get('/api/predictions', async (req, res) => {
                 competition.competitors.forEach(competitor => {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if (sport === 'icehockey_nhl' && competitor.probablePitcher) { 
+                    if ((sport === 'icehockey_nhl' || sport === 'baseball_mlb') && competitor.probablePitcher) {
                         probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
                     }
                 });
@@ -932,19 +932,47 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
+// REPLACE the entire '/api/ai-analysis' endpoint in server.js with this
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
 
-        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
+        // --- NEW ADVANCED SYSTEM PROMPT ---
+        const systemPrompt = `You are an expert sports betting analyst. Your task is to provide a persuasive, insightful, and detailed analysis by completing the provided JSON object. Do not just list stats; explain WHY they matter.
+
+- For "bullCase" and "bearCase", write a compelling narrative. Be persuasive.
+- For "pitcherAnalysis", provide a specific breakdown of the starting pitcher matchup if available. Compare their styles and recent performance.
+- For "xFactor", identify a unique, non-obvious insight that could decide the game (e.g., bullpen strength, a player on a hot streak, a specific tactical matchup).
+- For "injuryImpact" and "weatherNarrative", if there are no significant factors, state that clearly in a natural-sounding sentence.
+- Your entire response MUST be only the valid JSON object.
+
+Example of the required format:
+{
+  "bullCase": "The Rangers are poised to win because their road offense is clicking, exploiting the Mets' primary weakness...",
+  "bearCase": "However, the Mets have a significant home-field advantage, and their lineup has historically crushed pitchers with this style...",
+  "pitcherAnalysis": "This game features a fascinating matchup between the veteran Max Scherzer and the rookie Kodai Senga. Scherzer's high strikeout rate will be tested against...",
+  "xFactor": "The hidden X-Factor here is the Rangers' bullpen, which has been overworked in the last 3 games and could be a liability if the starter exits early.",
+  "injuryImpact": "There are no significant injuries reported for either team that are expected to impact this game.",
+  "weatherNarrative": "Clear skies and moderate wind are expected, providing ideal conditions for pitchers and hitters alike."
+}`;
 
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-
+        
+        // --- DATA SUMMARY (NOW INCLUDES PITCHERS) ---
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
+        
+        // Add pitcher data if it exists
+        const homePitcher = prediction.probableStarters ? prediction.probableStarters[game.home_team] : null;
+        const awayPitcher = prediction.probableStarters ? prediction.probableStarters[game.away_team] : null;
+        if (homePitcher && awayPitcher) {
+            dataSummary += `\n--- Starting Pitcher Matchup ---\n- ${game.home_team}: ${homePitcher}\n- ${game.away_team}: ${awayPitcher}\n`;
+        }
+
+        // Add the rest of the data (weather, injuries, stats)
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
         const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
@@ -957,38 +985,14 @@ app.post('/api/ai-analysis', async (req, res) => {
         for(const factor in prediction.factors) {
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
-
-        const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
+        
+        const userPrompt = `Based on the following data, complete the JSON object.
 **Data:**
 ${dataSummary}
-
-**JSON to complete:**
-{
-  "bullCase": "",
-  "bearCase": "",
-  "injuryImpact": "",
-  "weatherNarrative": ""
-}`;
+`;
         
         const result = await model.generateContent(userPrompt);
-        
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-
-        if (startIndex === -1 || endIndex === -1) {
-            console.error("Invalid AI Response (no JSON found):", responseText);
-            throw new Error("AI response did not contain a valid JSON object.");
-        }
-
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let analysisData;
-        try {
-            analysisData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
-            throw new Error("AI returned a malformed or incomplete JSON object.");
-        }
+        const analysisData = JSON.parse(result.response.text());
 
         res.json({
             finalPick: { winner: prediction.winner },
@@ -1154,4 +1158,5 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
