@@ -169,24 +169,22 @@ async function updateHottestPlayer() {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
+            model: "gemini-pro",
             systemInstruction: systemPrompt,
         });
 
-const userPrompt = `Based on the following data, complete the JSON object. Do not add any extra text, markdown, or explanations.
-**Data:**
-${dataSummary}
+        const userPrompt = `Based on the full list of today's player prop bets, identify the single best player to bet on and explain why.
 
-**JSON to complete:**
-{
-  "bullCase": "",
-  "bearCase": "",
-  "pitcherAnalysis": "",
-  "xFactor": "",
-  "injuryImpact": "",
-  "weatherNarrative": ""
-}
-`;
+        **Data:**
+        ${propsForPrompt}
+    
+        **JSON to complete:**
+        {
+          "playerName": "",
+          "teamName": "",
+          "rationale": "A compelling, data-driven reason why this player is the top pick for prop bets today.",
+          "keyBets": "A comma-separated list of the specific prop bets to target (e.g., Over 2.5 Strikeouts, Over 25.5 Points)."
+        }`;
 
         const result = await model.generateContent(userPrompt);
 
@@ -268,9 +266,6 @@ async function getPropBets(sportKey, gameId) {
             
             const { data } = await axios.get(url);
             
-            // --- ADD THIS LINE FOR DEBUGGING ---
-            console.log(`--- RAW PROP BET API RESPONSE for game ${gameId} ---`, JSON.stringify(data, null, 2));
-
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -973,7 +968,7 @@ Example of the required format:
 }`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
+            model: "gemini-pro",
             systemInstruction: systemPrompt,
         });
         
@@ -1001,10 +996,20 @@ Example of the required format:
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
         
-        const userPrompt = `Based on the following data, complete the JSON object.
-**Data:**
-${dataSummary}
-`;
+        const userPrompt = `Based on the following data, complete the JSON object. Do not add any extra text, markdown, or explanations.
+        **Data:**
+        ${dataSummary}
+    
+        **JSON to complete:**
+        {
+          "bullCase": "",
+          "bearCase": "",
+          "pitcherAnalysis": "",
+          "xFactor": "",
+          "injuryImpact": "",
+          "weatherNarrative": ""
+        }
+        `;
         
         const result = await model.generateContent(userPrompt);
         let responseText = result.response.text();
@@ -1039,7 +1044,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-flash-latest",
+           model: "gemini-pro",
             systemInstruction: systemPrompt,
         });
         
@@ -1116,7 +1121,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
+            model: "gemini-pro",
             systemInstruction: systemPrompt,
         });
 
@@ -1182,14 +1187,3 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
-
-
-
-
-
-
-
-
-
-
-
