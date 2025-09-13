@@ -969,7 +969,7 @@ Example of the required format:
 }`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
         
@@ -1026,7 +1026,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-flash"",
+           model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
         
@@ -1103,7 +1103,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -1169,6 +1169,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
