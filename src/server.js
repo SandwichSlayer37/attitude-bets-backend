@@ -1,4 +1,4 @@
-// FINAL, STABLE & FEATURE-COMPLETE VERSION (with Background Job for Hottest Player)
+// FINAL, COMPLETE, AND CORRECTED VERSION
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -118,19 +118,95 @@ function getDynamicWeights(sportKey) {
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
-async function getPropBets(sportKey, gameId) {
-    const key = `props_${gameId}`;
-    return fetchData(key, async () => {
-        try {
-            const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
-            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
-            const { data } = await axios.get(url);
-            return data.bookmakers || [];
-        } catch (error) {
-            console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
-            return [];
+// --- BACKGROUND JOB FOR HOTTEST PLAYER ---
+async function updateHottestPlayer() {
+    console.log("--- Starting BACKGROUND JOB: Hottest Player Analysis ---");
+    try {
+        // Step 1: Aggregate all games from all sports
+        let allGames = [];
+        for (const sport of SPORTS_DB) {
+            const gamesForSport = await getOdds(sport.key);
+            gamesForSport.forEach(game => game.sportKey = sport.key);
+            allGames.push(...gamesForSport);
         }
-    }, 1800000);
+
+        // Step 2: Fetch all prop bets for every single game
+        let allPropBets = [];
+        for (const game of allGames) {
+            const props = await getPropBets(game.sportKey, game.id);
+            if (props.length > 0) {
+                allPropBets.push({
+                    matchup: `${game.away_team} @ ${game.home_team}`,
+                    bookmakers: props
+                });
+            }
+        }
+
+        if (allPropBets.length < 3) {
+            console.log("Not enough prop data to determine Hottest Player. Skipping update.");
+            return;
+        }
+
+        // Step 3: Send to AI with robust data formatting
+        let propsForPrompt = allPropBets.map(game => {
+            let gameText = `\nMatchup: ${game.matchup}\n`;
+            if (game.bookmakers && Array.isArray(game.bookmakers)) {
+                game.bookmakers.forEach(bookmaker => {
+                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
+                        bookmaker.markets.forEach(market => {
+                            if (market.outcomes && Array.isArray(market.outcomes)) {
+                                market.outcomes.forEach(outcome => {
+                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+            return gameText;
+        }).join('');
+
+        const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
+
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
+
+        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Available Prop Bets Data:**
+${propsForPrompt}
+**JSON to complete:**
+{
+  "playerName": "",
+  "teamName": "",
+  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
+  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
+}`;
+
+        const result = await model.generateContent(userPrompt);
+
+        // Step 4: Save the result to the database
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
+        }
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const analysisResult = JSON.parse(jsonString);
+
+        if (dailyFeaturesCollection) {
+            await dailyFeaturesCollection.updateOne(
+                { _id: 'hottest_player' },
+                { $set: { data: analysisResult, updatedAt: new Date() } },
+                { upsert: true }
+            );
+            console.log("--- BACKGROUND JOB COMPLETE: Hottest Player updated in database. ---");
+        }
+    } catch (error) {
+        console.error("Error during background Hottest Player update:", error);
+    }
 }
 
 // --- DATA FETCHING MODULES ---
@@ -178,6 +254,22 @@ async function getOdds(sportKey) {
         }
     }, 900000);
 }
+
+async function getPropBets(sportKey, gameId) {
+    const key = `props_${gameId}`;
+    return fetchData(key, async () => {
+        try {
+            const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
+            const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
+            const { data } = await axios.get(url);
+            return data.bookmakers || [];
+        } catch (error) {
+            console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
+            return [];
+        }
+    }, 1800000);
+}
+
 
 async function getGoalieStats() {
     const cacheKey = `nhl_goalie_stats_v2`;
