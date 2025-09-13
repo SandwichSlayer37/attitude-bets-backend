@@ -169,7 +169,7 @@ async function updateHottestPlayer() {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.0-pro",
             systemInstruction: systemPrompt,
         });
 
@@ -968,7 +968,7 @@ Example of the required format:
 }`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.0-pro",
             systemInstruction: systemPrompt,
         });
         
@@ -1044,7 +1044,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-           model: "gemini-pro",
+           model: "gemini-1.0-pro",
             systemInstruction: systemPrompt,
         });
         
@@ -1121,7 +1121,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.0-pro",
             systemInstruction: systemPrompt,
         });
 
@@ -1187,3 +1187,4 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
