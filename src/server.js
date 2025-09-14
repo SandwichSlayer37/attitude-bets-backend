@@ -169,22 +169,20 @@ async function updateHottestPlayer() {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.0-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
-        const userPrompt = `Based on the full list of today's player prop bets, identify the single best player to bet on and explain why.
-
-        **Data:**
-        ${propsForPrompt}
-    
-        **JSON to complete:**
-        {
-          "playerName": "",
-          "teamName": "",
-          "rationale": "A compelling, data-driven reason why this player is the top pick for prop bets today.",
-          "keyBets": "A comma-separated list of the specific prop bets to target (e.g., Over 2.5 Strikeouts, Over 25.5 Points)."
-        }`;
+        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Available Prop Bets Data:**
+${propsForPrompt}
+**JSON to complete:**
+{
+  "playerName": "",
+  "teamName": "",
+  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
+  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
+}`;
 
         const result = await model.generateContent(userPrompt);
 
@@ -265,7 +263,7 @@ async function getPropBets(sportKey, gameId) {
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
             
             const { data } = await axios.get(url);
-            
+
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -460,7 +458,6 @@ async function fetchEspnData(sportKey) {
     }, 60000);
 }
 
-// REPLACE the entire runPredictionEngine function with this one
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather } = context;
     const weights = getDynamicWeights(sportKey);
@@ -473,10 +470,8 @@ async function runPredictionEngine(game, sportKey, context) {
     const factors = {};
     let homeInjuryImpact = (injuries[homeCanonicalName] || []).length;
     let awayInjuryImpact = (injuries[awayCanonicalName] || []).length;
-
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
-
     if (sportKey === 'icehockey_nhl') {
         const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
         const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
@@ -487,14 +482,16 @@ async function runPredictionEngine(game, sportKey, context) {
         const awaySpecialTeams = (awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0);
         factors['Special Teams'] = { value: (homeSpecialTeams - awaySpecialTeams) * weights.specialTeams, homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
         factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)) * weights.faceoffAdvantage, homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
-        
+        const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
+        const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
+        factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
         const homeGoalieName = probableStarters[homeCanonicalName];
         const awayGoalieName = probableStarters[awayCanonicalName];
         const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
         const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
         let goalieValue = 0;
         let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
-        if (homeGoalieStats && awayGoalieStats && homeGoalieName && awayGoalieName) {
+        if(homeGoalieStats && awayGoalieStats) {
             const gaaDiff = awayGoalieStats.gaa - homeGoalieStats.gaa;
             const svPctDiff = homeGoalieStats.svPct - awayGoalieStats.svPct;
             goalieValue = (gaaDiff * 5) + (svPctDiff * 100);
@@ -502,11 +499,6 @@ async function runPredictionEngine(game, sportKey, context) {
             awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
         }
         factors['Goalie Matchup'] = { value: goalieValue * (weights.goalieMatchup / 10), homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
-        
-        const homeFatigue = calculateFatigue(home_team, allGames, new Date(game.commence_time));
-        const awayFatigue = calculateFatigue(away_team, allGames, new Date(game.commence_time));
-        factors['Fatigue'] = { value: (awayFatigue - homeFatigue) * weights.fatigue, homeStat: `${homeFatigue} pts`, awayStat: `${awayFatigue} pts` };
-
     } else if (sportKey === 'baseball_mlb') {
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
         const homeOps = homeStats.ops || 0.700;
@@ -520,16 +512,13 @@ async function runPredictionEngine(game, sportKey, context) {
             factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
         }
     }
-
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
-    
     for (const factor in factors) {
         if (factors[factor].value && !isNaN(factors[factor].value)) {
             homeScore += factors[factor].value;
             awayScore -= factors[factor].value;
         }
     }
-
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 'N/A', awayValue = 'N/A';
@@ -543,12 +532,10 @@ async function runPredictionEngine(game, sportKey, context) {
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
-
     const winner = homeScore > awayScore ? home_team : away_team;
     const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    
-    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue, probableStarters };
+    return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
 
 async function getAllDailyPredictions() {
@@ -642,7 +629,7 @@ app.get('/api/predictions', async (req, res) => {
                 competition.competitors.forEach(competitor => {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if ((sport === 'icehockey_nhl' || sport === 'baseball_mlb') && competitor.probablePitcher) {
+                    if (sport === 'icehockey_nhl' && competitor.probablePitcher) { 
                         probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
                     }
                 });
@@ -942,47 +929,19 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// REPLACE the entire '/api/ai-analysis' endpoint in server.js with this
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
 
-        // --- NEW ADVANCED SYSTEM PROMPT ---
-        const systemPrompt = `You are an expert sports betting analyst. Your task is to provide a persuasive, insightful, and detailed analysis by completing the provided JSON object. Do not just list stats; explain WHY they matter.
-
-- For "bullCase" and "bearCase", write a compelling narrative. Be persuasive.
-- For "pitcherAnalysis", provide a specific breakdown of the starting pitcher matchup if available. Compare their styles and recent performance.
-- For "xFactor", identify a unique, non-obvious insight that could decide the game (e.g., bullpen strength, a player on a hot streak, a specific tactical matchup).
-- For "injuryImpact" and "weatherNarrative", if there are no significant factors, state that clearly in a natural-sounding sentence.
-- Your entire response MUST be only the valid JSON object.
-
-Example of the required format:
-{
-  "bullCase": "The Rangers are poised to win because their road offense is clicking, exploiting the Mets' primary weakness...",
-  "bearCase": "However, the Mets have a significant home-field advantage, and their lineup has historically crushed pitchers with this style...",
-  "pitcherAnalysis": "This game features a fascinating matchup between the veteran Max Scherzer and the rookie Kodai Senga. Scherzer's high strikeout rate will be tested against...",
-  "xFactor": "The hidden X-Factor here is the Rangers' bullpen, which has been overworked in the last 3 games and could be a liability if the starter exits early.",
-  "injuryImpact": "There are no significant injuries reported for either team that are expected to impact this game.",
-  "weatherNarrative": "Clear skies and moderate wind are expected, providing ideal conditions for pitchers and hitters alike."
-}`;
+        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.0-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-        
-        // --- DATA SUMMARY (NOW INCLUDES PITCHERS) ---
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
-        
-        // Add pitcher data if it exists
-        const homePitcher = prediction.probableStarters ? prediction.probableStarters[game.home_team] : null;
-        const awayPitcher = prediction.probableStarters ? prediction.probableStarters[game.away_team] : null;
-        if (homePitcher && awayPitcher) {
-            dataSummary += `\n--- Starting Pitcher Matchup ---\n- ${game.home_team}: ${homePitcher}\n- ${game.away_team}: ${awayPitcher}\n`;
-        }
 
-        // Add the rest of the data (weather, injuries, stats)
+        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
         const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
@@ -995,33 +954,38 @@ Example of the required format:
         for(const factor in prediction.factors) {
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
-        
-        const userPrompt = `Based on the following data, complete the JSON object. Do not add any extra text, markdown, or explanations.
-        **Data:**
-        ${dataSummary}
-    
-        **JSON to complete:**
-        {
-          "bullCase": "",
-          "bearCase": "",
-          "pitcherAnalysis": "",
-          "xFactor": "",
-          "injuryImpact": "",
-          "weatherNarrative": ""
-        }
-        `;
+
+        const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Data:**
+${dataSummary}
+
+**JSON to complete:**
+{
+  "bullCase": "",
+  "bearCase": "",
+  "injuryImpact": "",
+  "weatherNarrative": ""
+}`;
         
         const result = await model.generateContent(userPrompt);
-        let responseText = result.response.text();
         
-        // Add this block to safely extract the JSON
+        let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
+
         if (startIndex === -1 || endIndex === -1) {
-            throw new Error("AI analysis response did not contain a valid JSON object.");
+            console.error("Invalid AI Response (no JSON found):", responseText);
+            throw new Error("AI response did not contain a valid JSON object.");
         }
+
         const jsonString = responseText.substring(startIndex, endIndex + 1);
-        const analysisData = JSON.parse(jsonString);
+        let analysisData;
+        try {
+            analysisData = JSON.parse(jsonString);
+        } catch (e) {
+            console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
+            throw new Error("AI returned a malformed or incomplete JSON object.");
+        }
 
         res.json({
             finalPick: { winner: prediction.winner },
@@ -1044,7 +1008,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-           model: "gemini-1.0-pro",
+           model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
         
@@ -1121,7 +1085,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.0-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -1188,3 +1152,11 @@ connectToDb().then(() => {
     setTimeout(updateHottestPlayer, 30000);
 });
 
+
+
+}
+Got it! The full working code has been applied. Thank you for your continued help. I'm now going to add a new feature that will provide users with a game's probable pitchers using the `/api/predictions` endpoint. 
+
+I've already added the new code to the `/api/predictions` endpoint to get the pitchers, as well as the `runPredictionEngine` to add them to the prediction output. 
+
+However, since a team's probable pitchers can sometimes be unknown, the ESPN API may not have that data, which will cause a crash in the `runPredictionEngine` because of a null value. Please add a null check to where the pitchers are added to the `dataSummary` variable in the `app.post('/api/ai-analysis', ...)` endpoint.
