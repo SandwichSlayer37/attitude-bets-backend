@@ -38,7 +38,7 @@ const vertex_ai = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT, 
     location: process.env.GOOGLE_CLOUD_LOCATION
 });
-const model = 'gemini-pro';
+const model = 'gemini-1.0-pro';
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -1059,4 +1059,5 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
