@@ -15,6 +15,18 @@ app.use(express.json());
 
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
+const fs = require('fs');
+try {
+  const path = '/etc/secrets';
+  const files = fs.readdirSync(path);
+  console.log('--- SECRET FILES FOUND ---');
+  console.log(files);
+  console.log('--------------------------');
+} catch (e) {
+  console.log('--- ERROR READING SECRETS DIR ---');
+  console.log(e.message);
+  console.log('-----------------------------------');
+}
 
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
@@ -1047,3 +1059,4 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
