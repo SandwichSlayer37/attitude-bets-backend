@@ -38,7 +38,7 @@ const vertex_ai = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT, 
     location: process.env.GOOGLE_CLOUD_LOCATION
 });
-const model = 'gemini-1.0-pro';
+const model = 'gemini-1.5-flash-001';
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -516,18 +516,18 @@ async function getAllDailyPredictions() {
 async function callVertexAI(systemPrompt, userPrompt) {
     const generativeModel = vertex_ai.getGenerativeModel({
         model: model,
+        systemInstruction: {
+            parts: [{ text: systemPrompt }]
+        },
     });
 
-    // Combine the system prompt and user prompt for this model
-    const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
-
     const request = {
-        contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
     };
 
     const result = await generativeModel.generateContent(request);
     const responseText = result.response.candidates[0].content.parts[0].text;
-
+    
     const startIndex = responseText.indexOf('{');
     const endIndex = responseText.lastIndexOf('}');
 
@@ -1059,6 +1059,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
