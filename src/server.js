@@ -169,7 +169,7 @@ async function updateHottestPlayer() {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -264,6 +264,9 @@ async function getPropBets(sportKey, gameId) {
             
             const { data } = await axios.get(url);
             
+            // --- ADD THIS LINE FOR DEBUGGING ---
+            console.log(`--- RAW PROP BET API RESPONSE for game ${gameId} ---`, JSON.stringify(data, null, 2));
+
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -1153,5 +1156,3 @@ connectToDb().then(() => {
 });
 
 
-
-}
