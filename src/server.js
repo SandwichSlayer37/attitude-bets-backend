@@ -26,7 +26,7 @@ const vertex_ai = new VertexAI({
     location: process.env.GOOGLE_CLOUD_LOCATION
 });
 // Target a stable version of Gemini 1.5 Pro
-const model = 'gemini-1.5-pro-001';
+const model = 'gemini-1.5-pro-002';
 
 
 const r = new Snoowrap({
@@ -1132,3 +1132,4 @@ connectToDb().then(() => {
     };
     setTimeout(backgroundJob, 30000);
 });
+
