@@ -1072,7 +1072,3 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
-
-
-
-}
