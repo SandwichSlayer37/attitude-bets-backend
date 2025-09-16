@@ -6,7 +6,7 @@ const cors = require('cors');
 const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { VertexAI } = require('@google-cloud/vertexai');
 
 const app = express();
 app.use(cors());
@@ -19,7 +19,14 @@ app.use(express.static(path.join(__dirname, '..', 'Public')));
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Initialize VertexAI with project and location from environment variables
+const vertex_ai = new VertexAI({
+    project: process.env.GOOGLE_CLOUD_PROJECT, 
+    location: process.env.GOOGLE_CLOUD_LOCATION
+});
+// Set the model to a stable version of Gemini 1.5 Pro
+const model = 'gemini-1.5-pro-001';
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -51,6 +58,35 @@ async function connectToDb() {
     }
 }
 
+// Helper function to call Vertex AI and parse response
+async function callVertexAI(systemPrompt, userPrompt) {
+    const generativeModel = vertex_ai.getGenerativeModel({
+        model: model,
+        systemInstruction: {
+            parts: [{ text: systemPrompt }]
+        },
+    });
+
+    const request = {
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+    };
+
+    const result = await generativeModel.generateContent(request);
+    const responseText = result.response.candidates[0].content.parts[0].text;
+    
+    const startIndex = responseText.indexOf('{');
+    const endIndex = responseText.lastIndexOf('}');
+
+    if (startIndex === -1 || endIndex === -1) {
+        console.error("Invalid AI Response (no JSON found):", responseText);
+        throw new Error("AI response did not contain a valid JSON object.");
+    }
+
+    const jsonString = responseText.substring(startIndex, endIndex + 1);
+    return JSON.parse(jsonString);
+}
+
+
 // --- DATA MAPS ---
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
@@ -63,13 +99,11 @@ const teamLocationMap = {
     'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
     'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 32.7905, lon: -96.8103 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 }
 };
-
 const teamAliasMap = {
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
     'Anaheim Ducks': ['Ducks'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins'], 'Buffalo Sabres': ['Sabres'], 'Calgary Flames': ['Flames'], 'Carolina Hurricanes': ['Hurricanes', 'Canes'], 'Chicago Blackhawks': ['Blackhawks'], 'Colorado Avalanche': ['Avalanche', 'Avs'], 'Columbus Blue Jackets': ['Blue Jackets', 'CBJ'], 'Dallas Stars': ['Stars'], 'Detroit Red Wings': ['Red Wings'], 'Edmonton Oilers': ['Oilers'], 'Florida Panthers': ['Panthers'], 'Los Angeles Kings': ['Kings'], 'Minnesota Wild': ['Wild'], 'Montreal Canadiens': ['Canadiens', 'Habs'], 'Nashville Predators': ['Predators', 'Preds'], 'New Jersey Devils': ['Devils'], 'New York Islanders': ['Islanders', 'Isles'], 'New York Rangers': ['Rangers'], 'Ottawa Senators': ['Senators', 'Sens'], 'Philadelphia Flyers': ['Flyers'], 'Pittsburgh Penguins': ['Penguins', 'Pens'], 'San Jose Sharks': ['Sharks'], 'Seattle Kraken': ['Kraken'], 'St. Louis Blues': ['Blues'], 'Tampa Bay Lightning': ['Lightning', 'Bolts'], 'Toronto Maple Leafs': ['Maple Leafs', 'Leafs'], 'Vancouver Canucks': ['Canucks', 'Nucks'], 'Vegas Golden Knights': ['Golden Knights', 'Knights'], 'Washington Capitals': ['Capitals', 'Caps'], 'Winnipeg Jets': ['Jets']
 };
-
 const canonicalTeamNameMap = {};
 Object.keys(teamAliasMap).forEach(canonicalName => {
     const lowerCanonical = canonicalName.toLowerCase();
@@ -83,7 +117,6 @@ Object.keys(teamLocationMap).forEach(canonicalName => {
     const lowerCanonical = canonicalName.toLowerCase();
     if (!canonicalTeamNameMap[lowerCanonical]) canonicalTeamNameMap[lowerCanonical] = canonicalName;
 });
-
 const FUTURES_PICKS_DB = {
     'baseball_mlb': { championship: 'Los Angeles Dodgers', hotPick: 'Houston Astros' },
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
@@ -106,8 +139,6 @@ const getWinPct = (rec) => {
     const totalGames = rec.w + rec.l + (rec.otl || 0);
     return totalGames > 0 ? rec.w / totalGames : 0;
 }
-
-// --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
@@ -116,93 +147,6 @@ function getDynamicWeights(sportKey) {
         return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
     }
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
-}
-
-// --- BACKGROUND JOB FOR HOTTEST PLAYER ---
-async function updateHottestPlayer() {
-    console.log("--- Starting BACKGROUND JOB: Hottest Player Analysis ---");
-    try {
-        let allGames = [];
-        for (const sport of SPORTS_DB) {
-            const gamesForSport = await getOdds(sport.key);
-            gamesForSport.forEach(game => game.sportKey = sport.key);
-            allGames.push(...gamesForSport);
-        }
-
-        let allPropBets = [];
-        for (const game of allGames) {
-            const props = await getPropBets(game.sportKey, game.id);
-            if (props.length > 0) {
-                allPropBets.push({
-                    matchup: `${game.away_team} @ ${game.home_team}`,
-                    bookmakers: props
-                });
-            }
-        }
-
-        if (allPropBets.length < 3) {
-            console.log("Not enough prop data to determine Hottest Player. Skipping update.");
-            return;
-        }
-
-        let propsForPrompt = allPropBets.map(game => {
-            let gameText = `\nMatchup: ${game.matchup}\n`;
-            if (game.bookmakers && Array.isArray(game.bookmakers)) {
-                game.bookmakers.forEach(bookmaker => {
-                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
-                        bookmaker.markets.forEach(market => {
-                            if (market.outcomes && Array.isArray(market.outcomes)) {
-                                market.outcomes.forEach(outcome => {
-                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-            return gameText;
-        }).join('');
-
-        const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
-
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-pro",
-            systemInstruction: systemPrompt,
-        });
-
-        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Available Prop Bets Data:**
-${propsForPrompt}
-**JSON to complete:**
-{
-  "playerName": "",
-  "teamName": "",
-  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
-  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
-}`;
-
-        const result = await model.generateContent(userPrompt);
-
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) {
-            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
-        }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        const analysisResult = JSON.parse(jsonString);
-
-        if (dailyFeaturesCollection) {
-            await dailyFeaturesCollection.updateOne(
-                { _id: 'hottest_player' },
-                { $set: { data: analysisResult, updatedAt: new Date() } },
-                { upsert: true }
-            );
-            console.log("--- BACKGROUND JOB COMPLETE: Hottest Player updated in database. ---");
-        }
-    } catch (error) {
-        console.error("Error during background Hottest Player update:", error);
-    }
 }
 
 // --- DATA FETCHING MODULES ---
@@ -214,7 +158,6 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
     dataCache.set(key, { data, timestamp: Date.now() });
     return data;
 }
-
 async function getOdds(sportKey) {
     const key = `odds_${sportKey}`;
     return fetchData(key, async () => {
@@ -250,16 +193,13 @@ async function getOdds(sportKey) {
         }
     }, 900000);
 }
-
 async function getPropBets(sportKey, gameId) {
     const key = `props_${gameId}`;
     return fetchData(key, async () => {
         try {
             const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
-            
             const { data } = await axios.get(url);
-            
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -267,8 +207,6 @@ async function getPropBets(sportKey, gameId) {
         }
     }, 1800000);
 }
-
-
 async function getGoalieStats() {
     const cacheKey = `nhl_goalie_stats_v2`;
     return fetchData(cacheKey, async () => {
@@ -296,7 +234,6 @@ async function getGoalieStats() {
         }
     }, 86400000);
 }
-
 async function getTeamStatsFromAPI(sportKey) {
     const cacheKey = `stats_api_${sportKey}_v_final_robust`;
     return fetchData(cacheKey, async () => {
@@ -324,7 +261,6 @@ async function getTeamStatsFromAPI(sportKey) {
                         }
                     }
                 }
-
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
                  if (leagueStatsData.stats) {
@@ -392,7 +328,6 @@ async function getTeamStatsFromAPI(sportKey) {
         return {};
     }, 3600000);
 }
-
 function calculateFatigue(teamName, allGames, currentGameDate) {
     const oneDay = 1000 * 60 * 60 * 24;
     const fourDays = oneDay * 4;
@@ -423,7 +358,6 @@ function calculateFatigue(teamName, allGames, currentGameDate) {
     }
     return fatigueScore;
 }
-
 async function getWeatherData(teamName) {
     if (!teamName) return null;
     const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()] || teamName;
@@ -439,7 +373,6 @@ async function getWeatherData(teamName) {
         }
     });
 }
-
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
@@ -453,7 +386,6 @@ async function fetchEspnData(sportKey) {
         }
     }, 60000);
 }
-
 async function runPredictionEngine(game, sportKey, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather } = context;
     const weights = getDynamicWeights(sportKey);
@@ -1057,7 +989,7 @@ Available Prop Bets: ${availableProps}
         res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate AI prop analysis." });
+        res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
 
@@ -1072,3 +1004,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
+
+
+}
