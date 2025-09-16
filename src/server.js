@@ -72,6 +72,20 @@ async function callVertexAI(systemPrompt, userPrompt) {
     };
 
     const result = await generativeModel.generateContent(request);
+
+    // --- ADDED SAFETY CHECK ---
+    if (!result.response || 
+        !result.response.candidates || 
+        result.response.candidates.length === 0 || 
+        !result.response.candidates[0].content || 
+        !result.response.candidates[0].content.parts || 
+        result.response.candidates[0].content.parts.length === 0) {
+        
+        console.error("AI Analysis Error: Model returned an empty or blocked response.", JSON.stringify(result.response, null, 2));
+        throw new Error("The AI model returned an empty or blocked response, possibly due to safety filters.");
+    }
+    // --- END SAFETY CHECK ---
+
     const responseText = result.response.candidates[0].content.parts[0].text;
     
     const startIndex = responseText.indexOf('{');
