@@ -934,70 +934,65 @@ app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
 app.post('/api/ai-analysis', async (req, res) => {
     try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
+        const { factors } = prediction;
 
-        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
+        const formatInjuries = (teamInjuries) => {
+            if (!teamInjuries || teamInjuries.length === 0) return "None reported.";
+            return teamInjuries.map(p => `${p.name} (${p.status})`).join(', ');
+        };
+        const homeInjuries = formatInjuries(factors['Injury Impact']?.injuries?.home);
+        const awayInjuries = formatInjuries(factors['Injury Impact']?.injuries?.away);
+        const injuryNarrative = `Home (${game.home_team}): ${homeInjuries} | Away (${game.away_team}): ${awayInjuries}`;
 
+        // --- NEW: Dynamically build the factors list for any sport ---
+        const factorsList = Object.entries(factors)
+            .filter(([key]) => key !== 'Injury Impact' && factors[key]?.homeStat && factors[key]?.awayStat) // Ensure factor has data
+            .map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`)
+            .join('\n');
+
+        const systemPrompt = `You are a master sports betting analyst. Your primary role is to act as the final decision-maker. You will be given a detailed report from a quantitative statistical algorithm, including its recommended pick. Your task is to analyze this data, but also consider qualitative factors and "intangibles" that the algorithm might miss (e.g., the true impact of a key player's injury, recent team news, or potential for an upset). Based on your expert analysis, you will either AGREE with the algorithm's pick or OVERRIDE it. Your response must be only the JSON object specified.`;
+        
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
-        let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
-        if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
-        const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
-        const awayInjuries = prediction.factors['Injury Impact']?.injuries?.away;
-        if ((homeInjuries && homeInjuries.length > 0) || (awayInjuries && awayInjuries.length > 0)) {
-            dataSummary += `\n--- Key Injuries ---\n`;
-            if (homeInjuries && homeInjuries.length > 0) { dataSummary += `- ${game.home_team}: ${homeInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`; }
-            if (awayInjuries && awayInjuries.length > 0) { dataSummary += `- ${game.away_team}: ${awayInjuries.map(p => `${p.name} (${p.status})`).join(', ')}\n`; }
-        }
-        dataSummary += `\n--- Key Statistical Factors ---\n`;
-        for(const factor in prediction.factors) {
-            if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
-        }
+        const userPrompt = `
+**ALGORITHM ANALYSIS REPORT: ${game.away_team} @ ${game.home_team}**
 
-        const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Data:**
-${dataSummary}
+- **Initial Recommended Pick:** ${prediction.winner}
+- **Algorithm Confidence:** ${prediction.strengthText}
+- **Home Team Betting Value:** ${prediction.homeValue.toFixed(1)}%
+- **Away Team Betting Value:** ${prediction.awayValue.toFixed(1)}%
 
-**JSON to complete:**
+**KEY STATISTICAL FACTORS:**
+${factorsList}
+- **Injury Impact:** Home (${factors['Injury Impact'].homeStat}), Away (${factors['Injury Impact'].awayStat})
+
+**QUALITATIVE FACTORS:**
+- **Key Injuries:** ${injuryNarrative}
+- **Weather:** ${prediction.weather ? `${prediction.weather.temp}°C, ${prediction.weather.wind} km/h wind, ${prediction.weather.precip} mm precip` : "Indoors or N/A"}
+
+**JSON TO COMPLETE:**
 {
-  "bullCase": "",
-  "bearCase": "",
-  "injuryImpact": "",
-  "weatherNarrative": ""
+  "finalPick": "string",
+  "originalPick": "${prediction.winner}",
+  "isOverride": "boolean",
+  "overrideRationale": "string (If isOverride is false, state why you agree with the algorithm. If true, provide a concise, expert reason for changing the pick, citing specific data or intangibles.)",
+  "confidenceScore": "string (Choose one: 'High', 'Medium', 'Low')"
 }`;
-        
+
         const result = await model.generateContent(userPrompt);
-        
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
+        const responseText = result.response.text();
+        const jsonString = responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1);
+        const analysisData = JSON.parse(jsonString);
 
-        if (startIndex === -1 || endIndex === -1) {
-            console.error("Invalid AI Response (no JSON found):", responseText);
-            throw new Error("AI response did not contain a valid JSON object.");
-        }
-
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let analysisData;
-        try {
-            analysisData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
-            throw new Error("AI returned a malformed or incomplete JSON object.");
-        }
-
-        res.json({
-            finalPick: { winner: prediction.winner },
-            analysisData: analysisData
-        });
+        res.json({ analysisData });
 
     } catch (error) {
-        console.error("AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate AI analysis." });
+        console.error("Advanced AI Analysis Error:", error);
+        res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
 });
 
@@ -1154,5 +1149,6 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
