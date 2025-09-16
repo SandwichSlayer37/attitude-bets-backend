@@ -20,12 +20,12 @@ const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 
-// Initialize VertexAI with project and location from environment variables
+// Initialize VertexAI using the Service Account and environment variables
 const vertex_ai = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT, 
     location: process.env.GOOGLE_CLOUD_LOCATION
 });
-// Set the model to a stable version of Gemini 1.5 Pro
+// Target a stable version of Gemini 1.5 Pro
 const model = 'gemini-1.5-pro-001';
 
 const r = new Snoowrap({
@@ -1004,3 +1004,4 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
