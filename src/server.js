@@ -1,4 +1,4 @@
-// FINAL, COMPLETE, AND CORRECTED VERSION
+/ FINAL, COMPLETE, AND CORRECTED VERSION
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -20,12 +20,12 @@ const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 
-// Initialize VertexAI using the Service Account and environment variables
+// Initialize VertexAI with project and location from environment variables
 const vertex_ai = new VertexAI({
     project: process.env.GOOGLE_CLOUD_PROJECT, 
     location: process.env.GOOGLE_CLOUD_LOCATION
 });
-// Target a stable version of Gemini 1.5 Pro
+// Set the model to a stable version of Gemini 1.5 Pro
 const model = 'gemini-1.5-pro-001';
 
 const r = new Snoowrap({
@@ -810,15 +810,13 @@ app.get('/api/recent-bets', async (req, res) => {
     }
 });
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
+// --- AI ENDPOINTS: Rewritten for Vertex AI ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
+
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-pro",
-            systemInstruction: systemPrompt,
-        });
+
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
@@ -832,6 +830,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         for(const factor in prediction.factors) {
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
+
         const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
 ${dataSummary}
@@ -843,44 +842,27 @@ ${dataSummary}
   "weatherNarrative": ""
 }`;
         
-        const result = await model.generateContent(userPrompt);
+        const analysisData = await callVertexAI(systemPrompt, userPrompt);
         
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-
-        if (startIndex === -1 || endIndex === -1) {
-            console.error("Invalid AI Response (no JSON found):", responseText);
-            throw new Error("AI response did not contain a valid JSON object.");
-        }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let analysisData;
-        try {
-            analysisData = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
-            throw new Error("AI returned a malformed or incomplete JSON object.");
-        }
         res.json({
             finalPick: { winner: prediction.winner },
             analysisData: analysisData
         });
+
     } catch (error) {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
+
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { parlay } = req.body;
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
+
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-pro",
-            systemInstruction: systemPrompt,
-        });
+        
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
 - Total Odds: ${parlay.totalOdds}
@@ -892,18 +874,8 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
   "bullCase": "",
   "bearCase": ""
 }`;
-        const result = await model.generateContent(userPrompt);
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the parlay."); }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let parlayData;
-        try {
-            parlayData = JSON.parse(jsonString);
-        } catch (e) {
-            throw new Error("AI returned a malformed parlay object.");
-        }
+        
+        const parlayData = await callVertexAI(systemPrompt, userPrompt);
         
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
@@ -921,11 +893,13 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
                 </div>
             </div>`;
         res.json({ analysisHtml });
+
     } catch (error) {
         console.error("Parlay AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
+
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
@@ -943,11 +917,9 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
                 availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
             });
         });
+
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-pro",
-            systemInstruction: systemPrompt,
-        });
+
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
 Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
@@ -959,18 +931,8 @@ Available Prop Bets: ${availableProps}
   "risk": ""
 }`;
         
-        const result = await model.generateContent(userPrompt);
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let propData;
-        try {
-            propData = JSON.parse(jsonString);
-        } catch (e) {
-            throw new Error("AI returned a malformed prop bet object.");
-        }
+        const propData = await callVertexAI(systemPrompt, userPrompt);
+
         const analysisHtml = `
             <div class="space-y-4">
                 <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
@@ -987,11 +949,13 @@ Available Prop Bets: ${availableProps}
                 </div>
             </div>`;
         res.json({ analysisHtml });
+
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate AI analysis." });
+        res.status(500).json({ error: "Failed to generate AI prop analysis." });
     }
 });
+
 
 // This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
