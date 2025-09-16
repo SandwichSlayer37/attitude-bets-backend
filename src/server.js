@@ -122,7 +122,6 @@ function getDynamicWeights(sportKey) {
 async function updateHottestPlayer() {
     console.log("--- Starting BACKGROUND JOB: Hottest Player Analysis ---");
     try {
-        // Step 1: Aggregate all games from all sports
         let allGames = [];
         for (const sport of SPORTS_DB) {
             const gamesForSport = await getOdds(sport.key);
@@ -130,7 +129,6 @@ async function updateHottestPlayer() {
             allGames.push(...gamesForSport);
         }
 
-        // Step 2: Fetch all prop bets for every single game
         let allPropBets = [];
         for (const game of allGames) {
             const props = await getPropBets(game.sportKey, game.id);
@@ -147,7 +145,6 @@ async function updateHottestPlayer() {
             return;
         }
 
-        // Step 3: Send to AI with robust data formatting
         let propsForPrompt = allPropBets.map(game => {
             let gameText = `\nMatchup: ${game.matchup}\n`;
             if (game.bookmakers && Array.isArray(game.bookmakers)) {
@@ -169,7 +166,7 @@ async function updateHottestPlayer() {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.5-pro",
             systemInstruction: systemPrompt,
         });
 
@@ -186,7 +183,6 @@ ${propsForPrompt}
 
         const result = await model.generateContent(userPrompt);
 
-        // Step 4: Save the result to the database
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
@@ -537,11 +533,9 @@ async function runPredictionEngine(game, sportKey, context) {
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
-
 async function getAllDailyPredictions() {
     const allPredictions = [];
     const gameCounts = {};
-
     for (const sport of SPORTS_DB) {
         const sportKey = sport.key;
         const [games, espnDataResponse, teamStats] = await Promise.all([
@@ -549,15 +543,12 @@ async function getAllDailyPredictions() {
             fetchEspnData(sportKey),
             getTeamStatsFromAPI(sportKey)
         ]);
-
         gameCounts[sportKey] = games.length;
         if (!games || games.length === 0) continue;
-        
         const goalieStats = sportKey === 'icehockey_nhl' ? await getGoalieStats() : {};
         const injuries = {};
         const h2hRecords = {};
         const probableStarters = {};
-
         if (espnDataResponse?.events) {
             espnDataResponse.events.forEach(event => {
                 const competition = event.competitions?.[0];
@@ -579,7 +570,6 @@ async function getAllDailyPredictions() {
                 }
             });
         }
-        
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
             const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
@@ -593,7 +583,6 @@ async function getAllDailyPredictions() {
                 }
             };
             const predictionData = await runPredictionEngine(game, sportKey, context);
-            
             if (predictionData && predictionData.winner) {
                 allPredictions.push({ 
                     game: { ...game, sportKey: sportKey }, 
@@ -604,7 +593,6 @@ async function getAllDailyPredictions() {
     }
     return { allPredictions, gameCounts };
 }
-
 // --- API ENDPOINTS ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
@@ -700,14 +688,12 @@ app.get('/api/predictions', async (req, res) => {
         res.status(500).json({ error: "Failed to process predictions.", details: error.message });
     }
 });
-
 app.get('/api/hottest-player', async (req, res) => {
     try {
         if (!dailyFeaturesCollection) {
             return res.status(503).json({ error: "Service warming up, please try again in a moment." });
         }
         const hottestPlayerDoc = await dailyFeaturesCollection.findOne({ _id: 'hottest_player' });
-
         if (hottestPlayerDoc && hottestPlayerDoc.data) {
             res.json(hottestPlayerDoc.data);
         } else {
@@ -718,11 +704,9 @@ app.get('/api/hottest-player', async (req, res) => {
         res.status(500).json({ error: "Failed to retrieve Hottest Player analysis." });
     }
 });
-
 app.get('/api/special-picks', async (req, res) => {
     try {
         const { allPredictions, gameCounts } = await getAllDailyPredictions();
-
         let sportsInSeason = 0;
         for(const sport of SPORTS_DB) {
             if(gameCounts[sport.key] >= sport.gameCountThreshold) {
@@ -730,26 +714,21 @@ app.get('/api/special-picks', async (req, res) => {
             }
         }
         const isPeakSeason = sportsInSeason >= 2;
-
         const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
         const potdValueThreshold = isPeakSeason ? 5 : 2.5;
         const parlayConfidenceThreshold = 7.5;
-
         const now = new Date();
         const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         const upcomingTodayPredictions = allPredictions.filter(p => {
             const gameDate = new Date(p.game.commence_time);
             return gameDate > now && gameDate < cutoff;
         });
-
         let pickOfTheDay = null;
         let parlay = null;
-
         const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
-
         if (highValuePicks.length > 0) {
             pickOfTheDay = highValuePicks.reduce((best, current) => {
                 const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
@@ -759,11 +738,9 @@ app.get('/api/special-picks', async (req, res) => {
                 return currentScore > bestScore ? current : best;
             });
         }
-
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
                              (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
-
         if (goodPicks.length >= 2) {
             const leg1 = goodPicks[0];
             let leg2 = goodPicks.find(p => p.game.id !== leg1.game.id);
@@ -779,14 +756,12 @@ app.get('/api/special-picks', async (req, res) => {
                 }
             }
         }
-
         res.json({ pickOfTheDay, parlay });
     } catch (error) {
         console.error("Special Picks Error:", error);
         res.status(500).json({ error: 'Failed to generate special picks.' });
     }
 });
-
 app.get('/api/records', async (req, res) => {
     try {
         if (!recordsCollection) { await connectToDb(); }
@@ -801,43 +776,33 @@ app.get('/api/records', async (req, res) => {
         res.status(500).json({ error: "Could not retrieve records from database." });
     }
 });
-
 app.get('/api/reconcile-results', async (req, res) => {
     const { password } = req.query;
     if (password !== RECONCILE_PASSWORD) {
         return res.status(401).json({ error: "Unauthorized" });
     }
-
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
-
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const pendingPredictions = await predictionsCollection.find({
             status: 'pending',
             gameDate: { $lt: today.toISOString() }
         }).toArray();
-
         if (pendingPredictions.length === 0) {
             return res.json({ message: "No pending predictions from previous days to reconcile." });
         }
-
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
-
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
-
         for (const sportKey of sportKeys) {
             const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
             if (!map) continue;
-
             const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
             const { data: espnData } = await axios.get(url);
-
             if (!espnData.events) continue;
-
             for (const prediction of pendingPredictions.filter(p => p.sportKey === sportKey)) {
                 const gameEvent = espnData.events.find(e => {
                     const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
@@ -845,35 +810,27 @@ app.get('/api/reconcile-results', async (req, res) => {
                     const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
                     const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
                     if (!eventHome || !eventAway) return false;
-
                     const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
                     const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
                     return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
                 });
-
                 if (gameEvent && gameEvent.status.type.completed) {
                     const competition = gameEvent.competitions[0];
                     const winnerData = competition.competitors.find(c => c.winner === true);
                     if (!winnerData) continue;
-
                     const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
                     const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
-
                     const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
-
                     let profit = 0;
                     if (result === 'win') {
                         profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
                     } else {
                         profit = -10;
                     }
-
                     await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
-
                     const updateField = result === 'win'
                         ? { $inc: { wins: 1, totalProfit: profit } }
                         : { $inc: { losses: 1, totalProfit: profit } };
-
                     await recordsCollection.updateOne(
                         { sport: sportKey },
                         updateField,
@@ -889,16 +846,13 @@ app.get('/api/reconcile-results', async (req, res) => {
         res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
     }
 });
-
 app.get('/api/recent-bets', async (req, res) => {
     const { sport } = req.query;
     if (!sport) {
         return res.status(400).json({ error: "Sport parameter is required." });
     }
-
     try {
         if (!predictionsCollection) await connectToDb();
-
         const recentBets = await predictionsCollection.find({
             sportKey: sport,
             status: { $in: ['win', 'loss'] }
@@ -906,7 +860,6 @@ app.get('/api/recent-bets', async (req, res) => {
         .sort({ gameDate: -1 })
         .limit(20)
         .toArray();
-
         for (const bet of recentBets) {
             if (bet.game && bet.game.espnData && bet.game.espnData.competitions) {
                 const competition = bet.game.espnData.competitions[0];
@@ -918,29 +871,22 @@ app.get('/api/recent-bets', async (req, res) => {
                 }
             }
         }
-
         res.json(recentBets);
     } catch (error) {
         console.error("Recent Bets Error:", error);
         res.status(500).json({ error: "Failed to fetch recent bets." });
     }
 });
-
-
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
-
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
-
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-1.5-pro",
             systemInstruction: systemPrompt,
         });
-
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
         const homeInjuries = prediction.factors['Injury Impact']?.injuries?.home;
@@ -954,11 +900,9 @@ app.post('/api/ai-analysis', async (req, res) => {
         for(const factor in prediction.factors) {
             if (factor !== 'Injury Impact') { dataSummary += `- ${factor}: Home (${prediction.factors[factor].homeStat}), Away (${prediction.factors[factor].awayStat})\n`; }
         }
-
         const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
 ${dataSummary}
-
 **JSON to complete:**
 {
   "bullCase": "",
@@ -977,7 +921,6 @@ ${dataSummary}
             console.error("Invalid AI Response (no JSON found):", responseText);
             throw new Error("AI response did not contain a valid JSON object.");
         }
-
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let analysisData;
         try {
@@ -986,53 +929,42 @@ ${dataSummary}
             console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
             throw new Error("AI returned a malformed or incomplete JSON object.");
         }
-
         res.json({
             finalPick: { winner: prediction.winner },
             analysisData: analysisData
         });
-
     } catch (error) {
         console.error("AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI analysis." });
     }
 });
-
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { parlay } = req.body;
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
-
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        
         const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-flash",
+           model: "gemini-1.5-pro",
             systemInstruction: systemPrompt,
         });
-        
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-
 **Data:**
 - Total Odds: ${parlay.totalOdds}
 - Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
 - Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
-
 **JSON to complete:**
 {
   "overview": "",
   "bullCase": "",
   "bearCase": ""
 }`;
-
         const result = await model.generateContent(userPrompt);
-
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
         if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the parlay."); }
-
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let parlayData;
         try {
@@ -1057,13 +989,11 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
                 </div>
             </div>`;
         res.json({ analysisHtml });
-
     } catch (error) {
         console.error("Parlay AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
-
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
@@ -1081,20 +1011,15 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
                 availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
             });
         });
-
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-1.5-pro",
             systemInstruction: systemPrompt,
         });
-
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-
 **Data:**
 Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
 Available Prop Bets: ${availableProps}
-
 **JSON to complete:**
 {
   "pick": "",
@@ -1103,12 +1028,10 @@ Available Prop Bets: ${availableProps}
 }`;
         
         const result = await model.generateContent(userPrompt);
-
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
         if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
-
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let propData;
         try {
@@ -1116,7 +1039,6 @@ Available Prop Bets: ${availableProps}
         } catch (e) {
             throw new Error("AI returned a malformed prop bet object.");
         }
-
         const analysisHtml = `
             <div class="space-y-4">
                 <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
@@ -1133,7 +1055,6 @@ Available Prop Bets: ${availableProps}
                 </div>
             </div>`;
         res.json({ analysisHtml });
-
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI prop analysis." });
