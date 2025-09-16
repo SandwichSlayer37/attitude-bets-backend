@@ -6,7 +6,7 @@ const cors = require('cors');
 const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
-const { VertexAI } = require('@google-cloud/vertexai'); // Use the correct VertexAI library
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
@@ -19,15 +19,7 @@ app.use(express.static(path.join(__dirname, '..', 'Public')));
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-
-// Initialize VertexAI using the Service Account and environment variables
-const vertex_ai = new VertexAI({
-    project: process.env.GOOGLE_CLOUD_PROJECT, 
-    location: process.env.GOOGLE_CLOUD_LOCATION
-});
-// Target a stable version of Gemini 1.5 Pro
-const model = 'gemini-1.5-flash-001';
-
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -58,48 +50,6 @@ async function connectToDb() {
         process.exit(1);
     }
 }
-
-// Helper function to call Vertex AI and handle responses
-async function callVertexAI(systemPrompt, userPrompt) {
-    const generativeModel = vertex_ai.getGenerativeModel({
-        model: model,
-        systemInstruction: {
-            parts: [{ text: systemPrompt }]
-        },
-    });
-
-    const request = {
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-    };
-
-    const result = await generativeModel.generateContent(request);
-
-    // Safety check for empty or blocked responses
-    if (!result.response || 
-        !result.response.candidates || 
-        result.response.candidates.length === 0 || 
-        !result.response.candidates[0].content || 
-        !result.response.candidates[0].content.parts || 
-        result.response.candidates[0].content.parts.length === 0) {
-        
-        console.error("AI Analysis Error: Model returned an empty or blocked response.", JSON.stringify(result.response, null, 2));
-        throw new Error("The AI model returned an empty or blocked response, possibly due to safety filters.");
-    }
-
-    const responseText = result.response.candidates[0].content.parts[0].text;
-    
-    const startIndex = responseText.indexOf('{');
-    const endIndex = responseText.lastIndexOf('}');
-
-    if (startIndex === -1 || endIndex === -1) {
-        console.error("Invalid AI Response (no JSON found):", responseText);
-        throw new Error("AI response did not contain a valid JSON object.");
-    }
-
-    const jsonString = responseText.substring(startIndex, endIndex + 1);
-    return JSON.parse(jsonString);
-}
-
 
 // --- DATA MAPS ---
 const SPORTS_DB = [ 
@@ -218,6 +168,11 @@ async function updateHottestPlayer() {
 
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
 
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
+
         const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Available Prop Bets Data:**
 ${propsForPrompt}
@@ -229,9 +184,18 @@ ${propsForPrompt}
   "keyBets": "List 2-3 of their most attractive prop bets that you identified."
 }`;
 
-        const analysisResult = await callVertexAI(systemPrompt, userPrompt);
+        const result = await model.generateContent(userPrompt);
 
         // Step 4: Save the result to the database
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
+        }
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const analysisResult = JSON.parse(jsonString);
+
         if (dailyFeaturesCollection) {
             await dailyFeaturesCollection.updateOne(
                 { _id: 'hottest_player' },
@@ -968,12 +932,17 @@ app.get('/api/recent-bets', async (req, res) => {
 
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 
-// --- AI ENDPOINTS ---
 app.post('/api/ai-analysis', async (req, res) => {
     try {
+        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { game, prediction } = req.body;
 
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
+
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
 
         let dataSummary = `Matchup: ${game.away_team} at ${game.home_team}\nOur Algorithm's Prediction: ${prediction.winner}\n`;
         if (prediction.weather) { dataSummary += `\n--- Weather Forecast ---\n- Temperature: ${prediction.weather.temp}°C\n- Wind: ${prediction.weather.wind} km/h\n- Precipitation: ${prediction.weather.precip} mm\n`; }
@@ -992,6 +961,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const userPrompt = `Based on the following data, complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
 ${dataSummary}
+
 **JSON to complete:**
 {
   "bullCase": "",
@@ -1000,8 +970,26 @@ ${dataSummary}
   "weatherNarrative": ""
 }`;
         
-        const analysisData = await callVertexAI(systemPrompt, userPrompt);
+        const result = await model.generateContent(userPrompt);
         
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+
+        if (startIndex === -1 || endIndex === -1) {
+            console.error("Invalid AI Response (no JSON found):", responseText);
+            throw new Error("AI response did not contain a valid JSON object.");
+        }
+
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        let analysisData;
+        try {
+            analysisData = JSON.parse(jsonString);
+        } catch (e) {
+            console.error("Failed to parse extracted JSON string. AI response was likely incomplete:", jsonString);
+            throw new Error("AI returned a malformed or incomplete JSON object.");
+        }
+
         res.json({
             finalPick: { winner: prediction.winner },
             analysisData: analysisData
@@ -1015,25 +1003,46 @@ ${dataSummary}
 
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
+        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { parlay } = req.body;
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
 
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
+        const model = genAI.getGenerativeModel({
+           model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
+        
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+
 **Data:**
 - Total Odds: ${parlay.totalOdds}
 - Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
 - Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
+
 **JSON to complete:**
 {
   "overview": "",
   "bullCase": "",
   "bearCase": ""
 }`;
-        
-        const parlayData = await callVertexAI(systemPrompt, userPrompt);
+
+        const result = await model.generateContent(userPrompt);
+
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the parlay."); }
+
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        let parlayData;
+        try {
+            parlayData = JSON.parse(jsonString);
+        } catch (e) {
+            throw new Error("AI returned a malformed parlay object.");
+        }
         
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
@@ -1078,10 +1087,17 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
 
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
+
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+
 **Data:**
 Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
 Available Prop Bets: ${availableProps}
+
 **JSON to complete:**
 {
   "pick": "",
@@ -1089,7 +1105,20 @@ Available Prop Bets: ${availableProps}
   "risk": ""
 }`;
         
-        const propData = await callVertexAI(systemPrompt, userPrompt);
+        const result = await model.generateContent(userPrompt);
+
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
+
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        let propData;
+        try {
+            propData = JSON.parse(jsonString);
+        } catch (e) {
+            throw new Error("AI returned a malformed prop bet object.");
+        }
 
         const analysisHtml = `
             <div class="space-y-4">
@@ -1110,7 +1139,7 @@ Available Prop Bets: ${availableProps}
 
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate AI analysis." });
+        res.status(500).json({ error: "Failed to generate AI prop analysis." });
     }
 });
 
@@ -1123,15 +1152,7 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     // Run the background job 30 seconds after startup
-    const backgroundJob = () => {
-      try {
-        updateHottestPlayer();
-      } catch (e) {
-        console.error("Error in background job execution:", e);
-      }
-    };
-    setTimeout(backgroundJob, 30000);
+    setTimeout(updateHottestPlayer, 30000);
 });
-
 
 
