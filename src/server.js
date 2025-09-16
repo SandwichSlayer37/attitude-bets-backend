@@ -264,9 +264,6 @@ async function getPropBets(sportKey, gameId) {
             
             const { data } = await axios.get(url);
             
-            // --- ADD THIS LINE FOR DEBUGGING ---
-            console.log(`--- RAW PROP BET API RESPONSE for game ${gameId} ---`, JSON.stringify(data, null, 2));
-
             return data.bookmakers || [];
         } catch (error) {
             console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
@@ -940,7 +937,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -1011,7 +1008,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         
         const model = genAI.getGenerativeModel({
-           model: "gemini-pro",
+           model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
         
@@ -1088,7 +1085,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
 
         const model = genAI.getGenerativeModel({
-            model: "gemini-pro",
+            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
 
@@ -1156,3 +1153,5 @@ connectToDb().then(() => {
 });
 
 
+
+}
