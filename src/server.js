@@ -183,7 +183,6 @@ async function updateHottestPlayer() {
 
         let allPropBets = [];
         for (const game of allGames) {
-            // Fetch props for one game
             const props = await getPropBets(game.sportKey, game.id);
             if (props.length > 0) {
                 allPropBets.push({
@@ -191,7 +190,7 @@ async function updateHottestPlayer() {
                     bookmakers: props
                 });
             }
-            // --- NEW: Add a delay to respect API rate limits ---
+            // Add a delay to respect API rate limits
             await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5 seconds
         }
 
@@ -200,14 +199,42 @@ async function updateHottestPlayer() {
             return;
         }
 
-        // The rest of the AI analysis logic remains the same...
-        let propsForPrompt = allPropBets.map(/* ... as before ... */).join('');
-        const systemPrompt = `You are an expert sports betting analyst... [as before]`;
+        let propsForPrompt = allPropBets.map(game => {
+            let gameText = `\nMatchup: ${game.matchup}\n`;
+            if (game.bookmakers && Array.isArray(game.bookmakers)) {
+                game.bookmakers.forEach(bookmaker => {
+                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
+                        bookmaker.markets.forEach(market => {
+                            if (market.outcomes && Array.isArray(market.outcomes)) {
+                                market.outcomes.forEach(outcome => {
+                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+            return gameText;
+        }).join('');
+
+        const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
+
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-        const userPrompt = `Based on the following... [as before]`;
+
+        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Available Prop Bets Data:**
+${propsForPrompt}
+**JSON to complete:**
+{
+  "playerName": "",
+  "teamName": "",
+  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
+  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
+}`;
+
         const result = await model.generateContent(userPrompt);
         
         let responseText = result.response.text();
@@ -1235,6 +1262,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
