@@ -97,7 +97,8 @@
 
             <main>
                 <div id="special-picks-ui" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"></div>
-                
+                <div id="hottest-player-container" class="mb-8">
+    </div>
                 <div class="flex justify-center items-center mb-8">
                     <div id="sport-selection-ui" class="grid grid-cols-2 md:grid-cols-3 gap-6"></div>
                 </div>
@@ -204,6 +205,69 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
         ];
         let allGamesData = {}; 
         let recordsData = {};
+
+async function fetchAndDisplayHottestPlayer() {
+    const container = document.getElementById('hottest-player-container');
+    // Show a loading state
+    container.innerHTML = `
+        <div class="special-pick-card">
+            <div class="title">AI HOTTEST PLAYER</div>
+            <div class="p-4 text-center">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+                <p class="mt-2 text-sm text-gray-400">Analyzing today's prop markets...</p>
+            </div>
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`${API_ENDPOINT}/hottest-player`);
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            // Display an error or "not available" state
+            container.innerHTML = `
+                <div class="special-pick-card">
+                    <div class="title">AI HOTTEST PLAYER</div>
+                    <div class="p-4 text-center text-gray-400">
+                        <p>${data.error || "Analysis not yet available. The background job may still be running."}</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        // Display the successful result
+        container.innerHTML = `
+            <div class="special-pick-card">
+                <div class="title">AI HOTTEST PLAYER</div>
+                <div class="px-4 pb-4">
+                    <div class="text-center my-3">
+                        <p class="text-2xl font-bold text-white">${data.playerName}</p>
+                        <p class="text-sm font-semibold text-gray-400">${data.teamName}</p>
+                    </div>
+                    <div class="bg-slate-700/50 p-3 rounded-lg text-left">
+                         <p class="text-sm text-gray-300">${data.rationale}</p>
+                    </div>
+                    <div class="mt-3">
+                        <p class="text-center text-xs text-gray-400 uppercase font-semibold mb-1">Key Bets to Watch</p>
+                        <div class="text-center text-teal-300 font-bold">${data.keyBets}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+    } catch (error) {
+        console.error("Hottest Player UI Error:", error);
+         container.innerHTML = `
+            <div class="special-pick-card">
+                <div class="title">AI HOTTEST PLAYER</div>
+                <div class="p-4 text-center text-red-400">
+                    <p>Could not load the Hottest Player analysis.</p>
+                </div>
+            </div>
+        `;
+    }
+}
 
         async function initializeSportSelectionUI() {
             try {
@@ -335,6 +399,37 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
             }
         }
 
+        async function handleAiPropAnalysis(button, gameData) {
+    button.disabled = true;
+    button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+    
+    try {
+        const response = await fetch(`${API_ENDPOINT}/ai-prop-analysis`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ game: gameData.game, prediction: gameData.prediction })
+        });
+        if (!response.ok) throw new Error('Server returned an error');
+        const { analysisHtml } = await response.json();
+
+        // We can reuse the existing AI modal to display the result
+        aiModalTitle.textContent = `AI Prop Pick: ${gameData.game.away_team} @ ${gameData.game.home_team}`;
+        aiModalContent.innerHTML = analysisHtml;
+        aiModal.classList.add('flex');
+        aiModal.classList.remove('hidden');
+
+    } catch (error) {
+        console.error("AI Prop Analysis Error:", error);
+        aiModalTitle.textContent = `AI Prop Analysis Error`;
+        aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI prop analysis failed. This can happen if prop markets are not yet available for this game. Please try again later.</p>`;
+        aiModal.classList.add('flex');
+        aiModal.classList.remove('hidden');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = 'Find Top Prop Bet';
+    }
+}
+
         function renderGameCard(cardElement, data, sportKey) {
             const { game, prediction } = data;
             const { home_team, away_team, espnData } = game;
@@ -418,6 +513,12 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
                     <button class="ai-analysis-btn w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">Get AI Analysis</button>
                 </div>
                 <div class="explanation-box hidden mt-3"></div>
+
+                <div class="col-span-2 mt-2">
+    <button class="ai-prop-btn w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg">
+        Find Top Prop Bet
+    </button>
+</div>
             `;
             cardElement.querySelector('.explanation-btn').addEventListener('click', (e) => {
                 const box = e.target.closest('.card-gradient').querySelector('.explanation-box');
@@ -429,6 +530,9 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
             cardElement.querySelector('.ai-analysis-btn').addEventListener('click', (e) => {
                 handleAiAnalysis(e.target, data, cardElement); // Pass cardElement
             });
+            cardElement.querySelector('.ai-prop-btn').addEventListener('click', (e) => {
+    handleAiPropAnalysis(e.target, data);
+});
         }
         
         function generateExplanationHtml(factors, sportKey) {
@@ -573,48 +677,84 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
             }
         }
         
-        async function handleAiAnalysis(button, gameData, cardElement) {
-            button.disabled = true;
-            button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
-            
-            try {
-                 const response = await fetch(`${API_ENDPOINT}/ai-analysis`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ game: gameData.game, prediction: gameData.prediction })
-                });
-                if (!response.ok) throw new Error('Server returned an error');
-                const { finalPick, analysisHtml } = await response.json();
+     // In index.html, REPLACE the entire handleAiAnalysis function with this new version.
 
-                // Update the prime pick on the card if it changed
-                if (cardElement) {
-                    const primePickValue = cardElement.querySelector('.prime-pick-value');
-                    if (primePickValue.textContent !== finalPick.winner) {
-                        primePickValue.textContent = finalPick.winner;
-                        const primePickConfidence = cardElement.querySelector('.prime-pick-confidence');
-                        primePickConfidence.textContent = "AI Verified Pick";
-                        cardElement.classList.add('card-highlight');
-                    }
-                }
+// REPLACE the entire handleAiAnalysis function in index.html with this
+async function handleAiAnalysis(button, gameData, cardElement) {
+    button.disabled = true;
+    button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
+    
+    try {
+        const response = await fetch(`${API_ENDPOINT}/ai-analysis`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ game: gameData.game, prediction: gameData.prediction })
+        });
+        if (!response.ok) throw new Error('Server returned an error');
+        
+        const { analysisData } = await response.json();
 
-                // Show the modal with the detailed analysis
-                aiModalTitle.textContent = `AI Expert Analysis: ${gameData.game.away_team} @ ${gameData.game.home_team}`;
-                aiModalContent.innerHTML = analysisHtml;
-                aiModal.classList.add('flex');
-                aiModal.classList.remove('hidden');
-
-            } catch (error) {
-                console.error("AI Analysis Error:", error);
-                aiModalTitle.textContent = `AI Analysis Error`;
-                aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
-                aiModal.classList.add('flex');
-                aiModal.classList.remove('hidden');
-            } finally {
-                button.disabled = false;
-                button.innerHTML = 'Get AI Analysis';
+        // Update the main card to show the AI's final pick
+        if (cardElement) {
+            const primePickValue = cardElement.querySelector('.prime-pick-value');
+            if (primePickValue.textContent !== analysisData.finalPick) {
+                primePickValue.textContent = analysisData.finalPick;
+                const primePickConfidence = cardElement.querySelector('.prime-pick-confidence');
+                primePickConfidence.textContent = "AI Final Pick"; // Update label
+                cardElement.classList.add('card-highlight');
             }
         }
         
+        // --- NEW: Function to generate the advanced modal content ---
+        function generateAdvancedAnalysisHtml(data) {
+            const overrideBadge = data.isOverride 
+                ? `<div class="text-center mb-4"><span class="bg-red-500 text-white font-bold text-sm py-1 px-3 rounded-full shadow-lg">🔥 AI OVERRIDE</span></div>`
+                : '';
+
+            const confidenceColor = {
+                'High': 'text-green-400',
+                'Medium': 'text-yellow-400',
+                'Low': 'text-red-400'
+            }[data.confidenceScore] || 'text-gray-400';
+
+            return `
+                ${overrideBadge}
+                <div class="space-y-4">
+                    <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                        <div class="flex justify-between items-center">
+                            <h4 class="text-lg font-bold text-cyan-400">AI Final Pick</h4>
+                            <span class="text-xl font-bold text-white">${data.finalPick}</span>
+                        </div>
+                    </div>
+                    <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                        <h4 class="text-lg font-bold text-purple-400 mb-2">Rationale</h4>
+                        <p class="text-gray-300">${data.overrideRationale}</p>
+                    </div>
+                     <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600 text-center">
+                        <h4 class="text-sm font-bold text-gray-400 uppercase">AI Confidence</h4>
+                        <p class="text-2xl font-bold ${confidenceColor} mt-1">${data.confidenceScore}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        aiModalTitle.textContent = `Advanced AI Analysis: ${gameData.game.away_team} @ ${gameData.game.home_team}`;
+        aiModalContent.innerHTML = generateAdvancedAnalysisHtml(analysisData);
+        aiModal.classList.add('flex');
+        aiModal.classList.remove('hidden');
+
+    } catch (error) {
+        console.error("Advanced AI Analysis Error:", error);
+        aiModalTitle.textContent = `AI Analysis Error`;
+        aiModalContent.innerHTML = `<p class="text-red-400">Sorry, the AI analysis failed. Please try again later.</p>`;
+        aiModal.classList.add('flex');
+        aiModal.classList.remove('hidden');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = 'Get AI Analysis';
+    }
+}
+
         async function handleParlayAiAnalysis(button, parlay) {
             button.disabled = true;
             button.innerHTML = '<div class="inline-block animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>';
@@ -726,6 +866,7 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
         async function startApp() {
             await initializeSportSelectionUI();
             fetchAndDisplaySpecialPicks();
+            fetchAndDisplayHottestPlayer();
             const firstSport = sportsDB[0];
             if(firstSport) await handleSportSelection(firstSport.key);
         }
@@ -754,4 +895,3 @@ const API_ENDPOINT = 'https://attitude-bets-api-us-east.onrender.com/api';
     </script>
 </body>
 </html>
-
