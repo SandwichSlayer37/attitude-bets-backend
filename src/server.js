@@ -174,7 +174,6 @@ async function getProbablePitchersAndStats() {
 async function updateHottestPlayer() {
     console.log("--- Starting BACKGROUND JOB: Hottest Player Analysis ---");
     try {
-        // Step 1: Aggregate all games from all sports
         let allGames = [];
         for (const sport of SPORTS_DB) {
             const gamesForSport = await getOdds(sport.key);
@@ -182,9 +181,9 @@ async function updateHottestPlayer() {
             allGames.push(...gamesForSport);
         }
 
-        // Step 2: Fetch all prop bets for every single game
         let allPropBets = [];
         for (const game of allGames) {
+            // Fetch props for one game
             const props = await getPropBets(game.sportKey, game.id);
             if (props.length > 0) {
                 allPropBets.push({
@@ -192,12 +191,46 @@ async function updateHottestPlayer() {
                     bookmakers: props
                 });
             }
+            // --- NEW: Add a delay to respect API rate limits ---
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5 seconds
         }
 
         if (allPropBets.length < 3) {
             console.log("Not enough prop data to determine Hottest Player. Skipping update.");
             return;
         }
+
+        // The rest of the AI analysis logic remains the same...
+        let propsForPrompt = allPropBets.map(/* ... as before ... */).join('');
+        const systemPrompt = `You are an expert sports betting analyst... [as before]`;
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+        });
+        const userPrompt = `Based on the following... [as before]`;
+        const result = await model.generateContent(userPrompt);
+        
+        let responseText = result.response.text();
+        const startIndex = responseText.indexOf('{');
+        const endIndex = responseText.lastIndexOf('}');
+        if (startIndex === -1 || endIndex === -1) {
+            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
+        }
+        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const analysisResult = JSON.parse(jsonString);
+
+        if (dailyFeaturesCollection) {
+            await dailyFeaturesCollection.updateOne(
+                { _id: 'hottest_player' },
+                { $set: { data: analysisResult, updatedAt: new Date() } },
+                { upsert: true }
+            );
+            console.log("--- BACKGROUND JOB COMPLETE: Hottest Player updated in database. ---");
+        }
+    } catch (error) {
+        console.error("Error during background Hottest Player update:", error);
+    }
+}
 
         // Step 3: Send to AI with robust data formatting
         let propsForPrompt = allPropBets.map(game => {
@@ -313,16 +346,23 @@ async function getPropBets(sportKey, gameId) {
         try {
             const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
-            
             const { data } = await axios.get(url);
-            
-            // --- ADD THIS LINE FOR DEBUGGING ---
-            console.log(`--- RAW PROP BET API RESPONSE for game ${gameId} ---`, JSON.stringify(data, null, 2));
-
             return data.bookmakers || [];
         } catch (error) {
-            console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
-            return [];
+            // Handle specific errors more gracefully
+            if (error.response) {
+                if (error.response.status === 422) {
+                    // This is expected when no props are available, not a critical error.
+                    console.log(`[INFO] No prop bet markets found for game ${gameId}.`);
+                } else if (error.response.status === 429) {
+                    console.error(`[RATE LIMIT] Rate limit hit while fetching props for game ${gameId}.`);
+                } else {
+                    console.error(`Could not fetch prop bets for game ${gameId}: Request failed with status code ${error.response.status}`);
+                }
+            } else {
+                 console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
+            }
+            return []; // Always return an empty array on failure
         }
     }, 1800000);
 }
@@ -1195,6 +1235,7 @@ connectToDb().then(() => {
     // Run the background job 30 seconds after startup
     setTimeout(updateHottestPlayer, 30000);
 });
+
 
 
 
