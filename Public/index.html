@@ -538,7 +538,7 @@ async function fetchAndDisplayHottestPlayer() {
         function generateExplanationHtml(factors, sportKey) {
             // UPDATED to handle all sports including new NHL factors
             const factorOrder = {
-                'baseball_mlb': ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Form', 'Defensive Form', 'Social Sentiment', 'Injury Impact', 'Betting Value'],
+                'baseball_mlb': ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Form', 'Defensive Form', 'Starting Pitcher Duel','Social Sentiment', 'Injury Impact', 'Betting Value'],
                 'icehockey_nhl': ['Record', 'Hot Streak', 'Goalie Matchup', 'H2H (Season)', 'Offensive Form', 'Defensive Form', 'Special Teams', 'Faceoff Advantage', 'Fatigue', 'Social Sentiment', 'Injury Impact', 'Betting Value'],
                 'americanfootball_nfl': ['Record', 'Recent Form (L10)', 'H2H (Season)', 'Offensive Rating', 'Defensive Rating', 'Social Sentiment', 'Injury Impact', 'Betting Value']
             }[sportKey];
