@@ -187,7 +187,7 @@ async function updatePlayerSpotlight() {
                     bookmakers: props
                 });
             }
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(resolve => setTimeout(resolve, 2500));
         }
 
         if (allPropBets.length < 3) {
@@ -496,12 +496,21 @@ async function getWeatherData(teamName) {
     });
 }
 
+// Replace the entire fetchEspnData function
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
         if (!map) return null;
         try {
-            const { data } = await axios.get(`https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard`);
+            // NEW: Explicitly format today's date for the API request
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            const formattedDate = `${year}${month}${day}`;
+
+            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
+            const { data } = await axios.get(url);
             return data;
         } catch (error) {
             console.error(`Could not fetch ESPN scoreboard for ${sportKey}:`, error.message);
@@ -1062,3 +1071,4 @@ connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     setTimeout(updatePlayerSpotlight, 30000);
 });
+
