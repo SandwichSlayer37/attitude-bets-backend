@@ -701,46 +701,28 @@ app.get('/api/predictions', async (req, res) => {
 
 app.get('/api/special-picks', async (req, res) => {
     try {
-        const probablePitchers = await getProbablePitchersAndStats();
-        
-        let allPredictions = [];
-        let gameCounts = {};
-        for (const sport of SPORTS_DB) {
-            const [games, espnDataResponse, teamStats, goalieStats] = await Promise.all([
-                getOdds(sport.key),
-                fetchEspnData(sport.key),
-                getTeamStatsFromAPI(sport.key),
-                sport.key === 'icehockey_nhl' ? getGoalieStats() : Promise.resolve({})
-            ]);
-            gameCounts[sport.key] = games.length;
-            const injuries = {};
-            const h2hRecords = {};
-            const probableStarters = {};
-            for (const game of games) {
-                 const context = { teamStats, injuries, h2hRecords, allGames: games, goalieStats, probableStarters, probablePitchers, weather: await getWeatherData(game.home_team) };
-                 const predictionData = await runPredictionEngine(game, sport.key, context);
-                 if (predictionData && predictionData.winner) {
-                    allPredictions.push({ game: { ...game, sportKey: sport.key }, prediction: predictionData });
-                 }
-            }
-        }
+        const { allPredictions, gameCounts } = await getAllDailyPredictions();
 
         let sportsInSeason = Object.values(gameCounts).filter(count => count > 4).length;
         const potdConfidenceThreshold = sportsInSeason >= 2 ? 15 : 10;
         const potdValueThreshold = sportsInSeason >= 2 ? 5 : 2.5;
         const parlayConfidenceThreshold = 7.5;
+
         const now = new Date();
         const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         const upcomingTodayPredictions = allPredictions.filter(p => {
             const gameDate = new Date(p.game.commence_time);
             return gameDate > now && gameDate < cutoff;
         });
+
         let pickOfTheDay = null;
         let parlay = null;
+
         const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
+
         if (highValuePicks.length > 0) {
             pickOfTheDay = highValuePicks.reduce((best, current) => {
                 const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
@@ -748,9 +730,11 @@ app.get('/api/special-picks', async (req, res) => {
                 return (current.prediction.confidence + currentValue) > (best.prediction.confidence + bestValue) ? current : best;
             });
         }
+
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
                              (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
+        
         if (goodPicks.length >= 2) {
             const leg1 = goodPicks[0];
             let leg2 = goodPicks.find(p => p.game.id !== leg1.game.id);
@@ -1071,4 +1055,5 @@ connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     setTimeout(updatePlayerSpotlight, 30000);
 });
+
 
