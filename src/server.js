@@ -171,8 +171,9 @@ async function getProbablePitchersAndStats() {
 }
 
 // --- BACKGROUND JOB FOR HOTTEST PLAYER ---
-async function updateHottestPlayer() {
-    console.log("--- Starting BACKGROUND JOB: Hottest Player Analysis ---");
+// This is the complete, correct function
+async function updatePlayerSpotlight() { // <--- RENAMED
+    console.log("--- Starting BACKGROUND JOB: AI Player Spotlight ---"); // <--- TEXT CHANGED
     try {
         let allGames = [];
         for (const sport of SPORTS_DB) {
@@ -190,12 +191,11 @@ async function updateHottestPlayer() {
                     bookmakers: props
                 });
             }
-            // Add a delay to respect API rate limits
             await new Promise(resolve => setTimeout(resolve, 1500)); // Wait 1.5 seconds
         }
 
         if (allPropBets.length < 3) {
-            console.log("Not enough prop data to determine Hottest Player. Skipping update.");
+            console.log("Not enough prop data to determine Player Spotlight. Skipping update."); // <--- TEXT CHANGE
             return;
         }
 
@@ -252,7 +252,7 @@ ${propsForPrompt}
                 { $set: { data: analysisResult, updatedAt: new Date() } },
                 { upsert: true }
             );
-            console.log("--- BACKGROUND JOB COMPLETE: Hottest Player updated in database. ---");
+            console.log("--- BACKGROUND JOB COMPLETE: AI Player Spotlight updated in database. ---"); // <--- TEXT CHANGED
         }
     } catch (error) {
         console.error("Error during background Hottest Player update:", error);
@@ -1260,8 +1260,9 @@ const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     // Run the background job 30 seconds after startup
-    setTimeout(updateHottestPlayer, 30000);
+    setTimeout(updatePlayerSpotlight, 30000); // <--- CALL THE NEW FUNCTION NAME
 });
+
 
 
 
