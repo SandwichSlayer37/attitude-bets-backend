@@ -110,7 +110,7 @@ const getWinPct = (rec) => {
 // --- DYNAMIC WEIGHTS ---
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
-        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8 };
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
     if (sportKey === 'icehockey_nhl') {
         return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
@@ -118,10 +118,8 @@ function getDynamicWeights(sportKey) {
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
-// NEW FUNCTION to get probable pitchers and their stats
 async function getProbablePitchersAndStats() {
     const cacheKey = `mlb_probable_pitchers_${new Date().toISOString().split('T')[0]}`;
-    // Using a shorter TTL (4 hours) because pitcher info can change
     return fetchData(cacheKey, async () => { 
         const pitcherData = {};
         try {
@@ -137,42 +135,39 @@ async function getProbablePitchersAndStats() {
 
             const games = scheduleData.dates[0].games;
             for (const game of games) {
+                const homeTeamName = game.teams.home.team.name;
+                const awayTeamName = game.teams.away.team.name;
+
                 if (game.teams.home.probablePitcher) {
-                    const homePitcherId = game.teams.home.probablePitcher.id;
-                    const homeTeamName = game.teams.home.team.name;
-                    pitcherData[homeTeamName] = { id: homePitcherId };
+                    pitcherData[homeTeamName] = { id: game.teams.home.probablePitcher.id };
                 }
                 if (game.teams.away.probablePitcher) {
-                    const awayPitcherId = game.teams.away.probablePitcher.id;
-                    const awayTeamName = game.teams.away.team.name;
-                    pitcherData[awayTeamName] = { id: awayPitcherId };
+                    pitcherData[awayTeamName] = { id: game.teams.away.probablePitcher.id };
                 }
             }
 
-            // Now, fetch stats for each pitcher we found
             for (const teamName in pitcherData) {
-                const pitcherId = pitcherData[teamName].id;
-                const statsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season&group=pitching&season=${currentYear}`;
-                const { data: statsData } = await axios.get(statsUrl);
-                
-                if (statsData.stats && statsData.stats[0] && statsData.stats[0].splits[0]) {
-                    const stats = statsData.stats[0].splits[0].stat;
-                    pitcherData[teamName].name = statsData.stats[0].splits[0].player.fullName;
-                    pitcherData[teamName].era = parseFloat(stats.era);
-                    pitcherData[teamName].whip = parseFloat(stats.whip);
+                if (pitcherData[teamName].id) {
+                    const pitcherId = pitcherData[teamName].id;
+                    const statsUrl = `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season&group=pitching&season=${currentYear}`;
+                    const { data: statsData } = await axios.get(statsUrl);
+                    
+                    if (statsData.stats && statsData.stats[0] && statsData.stats[0].splits[0]) {
+                        const stats = statsData.stats[0].splits[0].stat;
+                        pitcherData[teamName].name = statsData.stats[0].splits[0].player.fullName;
+                        pitcherData[teamName].era = parseFloat(stats.era);
+                        pitcherData[teamName].whip = parseFloat(stats.whip);
+                    }
                 }
             }
             return pitcherData;
         } catch (e) {
             console.error("Could not fetch probable pitcher data:", e.message);
-            return {}; // Return empty object on error
+            return {};
         }
-    }, 14400000); // 4-hour cache
+    }, 14400000);
 }
 
-// --- BACKGROUND JOB FOR HOTTEST PLAYER ---
-// This is the complete, correct function
-// In server.js, replace the function with this corrected version
 async function updatePlayerSpotlight() {
     console.log("--- Starting BACKGROUND JOB: AI Player Spotlight ---");
     try {
@@ -260,69 +255,6 @@ ${propsForPrompt}
     }
 }
 
-        // Step 3: Send to AI with robust data formatting
-        let propsForPrompt = allPropBets.map(game => {
-            let gameText = `\nMatchup: ${game.matchup}\n`;
-            if (game.bookmakers && Array.isArray(game.bookmakers)) {
-                game.bookmakers.forEach(bookmaker => {
-                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
-                        bookmaker.markets.forEach(market => {
-                            if (market.outcomes && Array.isArray(market.outcomes)) {
-                                market.outcomes.forEach(outcome => {
-                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-            return gameText;
-        }).join('');
-
-        const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
-
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt,
-        });
-
-        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Available Prop Bets Data:**
-${propsForPrompt}
-**JSON to complete:**
-{
-  "playerName": "",
-  "teamName": "",
-  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
-  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
-}`;
-
-        const result = await model.generateContent(userPrompt);
-
-        // Step 4: Save the result to the database
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) {
-            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
-        }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        const analysisResult = JSON.parse(jsonString);
-
-        if (dailyFeaturesCollection) {
-            await dailyFeaturesCollection.updateOne(
-                { _id: 'hottest_player' },
-                { $set: { data: analysisResult, updatedAt: new Date() } },
-                { upsert: true }
-            );
-            console.log("--- BACKGROUND JOB COMPLETE: Hottest Player updated in database. ---");
-        }
-    } catch (error) {
-        console.error("Error during background Hottest Player update:", error);
-    }
-}
-
-// --- DATA FETCHING MODULES ---
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -377,10 +309,8 @@ async function getPropBets(sportKey, gameId) {
             const { data } = await axios.get(url);
             return data.bookmakers || [];
         } catch (error) {
-            // Handle specific errors more gracefully
             if (error.response) {
                 if (error.response.status === 422) {
-                    // This is expected when no props are available, not a critical error.
                     console.log(`[INFO] No prop bet markets found for game ${gameId}.`);
                 } else if (error.response.status === 429) {
                     console.error(`[RATE LIMIT] Rate limit hit while fetching props for game ${gameId}.`);
@@ -390,11 +320,10 @@ async function getPropBets(sportKey, gameId) {
             } else {
                  console.error(`Could not fetch prop bets for game ${gameId}:`, error.message);
             }
-            return []; // Always return an empty array on failure
+            return [];
         }
     }, 1800000);
 }
-
 
 async function getGoalieStats() {
     const cacheKey = `nhl_goalie_stats_v2`;
@@ -582,7 +511,6 @@ async function fetchEspnData(sportKey) {
 }
 
 async function runPredictionEngine(game, sportKey, context) {
-    // The first part of the function remains the same
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters, weather, probablePitchers } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
@@ -594,151 +522,98 @@ async function runPredictionEngine(game, sportKey, context) {
     const factors = {};
     let homeInjuryImpact = (injuries[homeCanonicalName] || []).length;
     let awayInjuryImpact = (injuries[awayCanonicalName] || []).length;
-    factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))) * weights.record, homeStat: homeStats.record, awayStat: awayStats.record };
-    factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * weights.h2h, homeStat: h2h.home, awayStat: h2h.away };
-
-    // --- THIS LOGIC IS THE SAME ---
+    
+    // Calculate raw factor values first
+    factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))), homeStat: homeStats.record, awayStat: awayStats.record };
+    factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))), homeStat: h2h.home, awayStat: h2h.away };
+    
     if (sportKey === 'icehockey_nhl') {
-        // ... (all your existing NHL logic remains here, unchanged)
-
-    // --- THIS LOGIC IS UPDATED ---
-    } else if (sportKey === 'baseball_mlb') {
-        factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))) * weights.momentum, homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
-        const homeOps = homeStats.ops || 0.700;
-        const awayOps = awayStats.ops || 0.700;
-        factors['Offensive Form'] = { value: (homeOps - awayOps) * 100, homeStat: `${homeOps.toFixed(3)} OPS`, awayStat: `${awayOps.toFixed(3)} OPS` };
-        if (homeStats.teamERA < 99 && awayStats.teamERA < 99) {
-            factors['Defensive Form'] = { value: (awayStats.teamERA - homeStats.teamERA) * weights.defensiveForm, homeStat: `${homeStats.teamERA.toFixed(2)} ERA`, awayStat: `${awayStats.teamERA.toFixed(2)} ERA` };
+        const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
+        const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
+        factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal), homeStat: homeStats.streak, awayStat: awayStats.streak };
+        factors['Offensive Form'] = { value: (homeStats.goalsForPerGame - awayStats.goalsForPerGame), homeStat: `${homeStats.goalsForPerGame?.toFixed(2)} G/GP`, awayStat: `${awayStats.goalsForPerGame?.toFixed(2)} G/GP` };
+        factors['Defensive Form'] = { value: (awayStats.goalsAgainstPerGame - homeStats.goalsAgainstPerGame), homeStat: `${homeStats.goalsAgainstPerGame?.toFixed(2)} GA/GP`, awayStat: `${awayStats.goalsAgainstPerGame?.toFixed(2)} GA/GP` };
+        factors['Special Teams'] = { value: ((homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0)) - ((awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0)), homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
+        factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)), homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
+        factors['Fatigue'] = { value: (awayFatigue - homeFatigue), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
+        const homeGoalieName = probableStarters[homeCanonicalName];
+        const awayGoalieName = probableStarters[awayCanonicalName];
+        const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
+        const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
+        let goalieValue = 0;
+        let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
+        if(homeGoalieStats && awayGoalieStats) {
+            goalieValue = (awayGoalieStats.gaa - homeGoalieStats.gaa) + ((homeGoalieStats.svPct - awayGoalieStats.svPct) * 100);
+            homeGoalieDisplay = `${homeGoalieName.split(' ')[1]} ${homeGoalieStats.svPct.toFixed(3)}`;
+            awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
         }
-
-        // --- NEW PITCHER LOGIC ---
+        factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
+    } else if (sportKey === 'baseball_mlb') {
+        factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))), homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
+        factors['Offensive Form'] = { value: ((homeStats.ops || 0.700) - (awayStats.ops || 0.700)) * 100, homeStat: `${(homeStats.ops || 0.700).toFixed(3)} OPS`, awayStat: `${(awayStats.ops || 0.700).toFixed(3)} OPS` };
+        factors['Defensive Form'] = { value: ((awayStats.teamERA || 5.0) - (homeStats.teamERA || 5.0)), homeStat: `${(homeStats.teamERA || 5.0).toFixed(2)} ERA`, awayStat: `${(awayStats.teamERA || 5.0).toFixed(2)} ERA` };
         const homePitcher = probablePitchers[home_team];
         const awayPitcher = probablePitchers[away_team];
         let pitcherValue = 0;
         let homePitcherDisplay = "N/A", awayPitcherDisplay = "N/A";
-
-        if (homePitcher && awayPitcher && homePitcher.era && awayPitcher.era) {
-            const eraDiff = awayPitcher.era - homePitcher.era; // Lower ERA is better
-            const whipDiff = awayPitcher.whip - homePitcher.whip; // Lower WHIP is better
-            pitcherValue = (eraDiff * 6) + (whipDiff * 5); // ERA is weighted slightly more
+        if (homePitcher?.name && awayPitcher?.name && homePitcher.era && awayPitcher.era) {
+            pitcherValue = (awayPitcher.era - homePitcher.era) + ((awayPitcher.whip - homePitcher.whip) * 10);
             homePitcherDisplay = `${homePitcher.name.split(' ')[1]} (${homePitcher.era.toFixed(2)} ERA)`;
             awayPitcherDisplay = `${awayPitcher.name.split(' ')[1]} (${awayPitcher.era.toFixed(2)} ERA)`;
         }
         factors['Starting Pitcher Duel'] = { value: pitcherValue, homeStat: homePitcherDisplay, awayStat: awayPitcherDisplay };
     }
-
-    // The rest of the function remains the same
-    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact) * (weights.injuryImpact / 5), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
-    for (const factor in factors) {
-        if (factors[factor].value && !isNaN(factors[factor].value)) {
-            homeScore += factors[factor].value;
-            awayScore -= factors[factor].value;
+    
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonicalName] || [], away: injuries[awayCanonicalName] || [] } };
+    
+    // Apply weights and sum up scores
+    Object.keys(factors).forEach(factorName => {
+        if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
+            const factorKey = factorName.split(' ')[0].toLowerCase();
+            const weight = weights[factorKey] || 1;
+            homeScore += factors[factorName].value * weight;
         }
-    }
+    });
+
+    awayScore = 100 - homeScore; // Normalize scores
+
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
-    let homeValue = 'N/A', awayValue = 'N/A';
+    let homeValue = 0, awayValue = 0;
     if (homeOdds && awayOdds) {
         const homeImpliedProb = (1 / homeOdds) * 100;
-        const homePower = (homeScore / (homeScore + awayScore)) * 100;
+        const homePower = homeScore; // Already a percentage
         homeValue = homePower - homeImpliedProb;
-        awayValue = ((100-homePower) - (1/awayOdds) * 100);
-        factors['Betting Value'] = { value: homeValue * (weights.value / 5), homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
-        if (!isNaN(factors['Betting Value'].value)) homeScore += factors['Betting Value'].value;
+        awayValue = (100 - homePower) - (1 / awayOdds * 100);
+        factors['Betting Value'] = { value: homeValue, homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
+        homeScore += (homeValue * (weights.value / 10)); // Soften the betting value impact
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
-    const winner = homeScore > awayScore ? home_team : away_team;
-    const confidence = Math.abs(50 - (homeScore / (homeScore + awayScore)) * 100);
+    
+    const winner = homeScore > 50 ? home_team : away_team;
+    const confidence = Math.abs(50 - homeScore);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
 
-async function getAllDailyPredictions() {
-    const allPredictions = [];
-    const gameCounts = {};
-
-    for (const sport of SPORTS_DB) {
-        const sportKey = sport.key;
-        const [games, espnDataResponse, teamStats] = await Promise.all([
-            const probablePitchers = sport === 'baseball_mlb' ? await getProbablePitchersAndStats() : {};
-            getOdds(sportKey),
-            fetchEspnData(sportKey),
-            getTeamStatsFromAPI(sportKey)
-        ]);
-
-        gameCounts[sportKey] = games.length;
-        if (!games || games.length === 0) continue;
-        
-        const goalieStats = sportKey === 'icehockey_nhl' ? await getGoalieStats() : {};
-        const injuries = {};
-        const h2hRecords = {};
-        const probableStarters = {};
-
-        if (espnDataResponse?.events) {
-            espnDataResponse.events.forEach(event => {
-                const competition = event.competitions?.[0];
-                if (!competition) return;
-                competition.competitors.forEach(competitor => {
-                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
-                    injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) { 
-                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
-                    }
-                });
-                const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-                const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-                if (competition.series && homeTeam && awayTeam) {
-                    const gameId = `${awayTeam.team.displayName}@${homeTeam.team.displayName}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            });
-        }
-        
-        for (const game of games) {
-            const weather = await getWeatherData(game.home_team);
-            const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
-            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-            const context = { 
-                teamStats, weather, injuries, h2h, allGames: games, goalieStats,
-                probableStarters, probablePitchers : {
-                    [gameHomeCanonical]: probableStarters[gameHomeCanonical],
-                    [gameAwayCanonical]: probableStarters[gameAwayCanonical]
-                }
-            };
-            const predictionData = await runPredictionEngine(game, sportKey, context);
-            
-            if (predictionData && predictionData.winner) {
-                allPredictions.push({ 
-                    game: { ...game, sportKey: sportKey }, 
-                    prediction: predictionData 
-                });
-            }
-        }
-    }
-    return { allPredictions, gameCounts };
-}
-
-// --- API ENDPOINTS ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
     try {
-        const [games, espnDataResponse, teamStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, probablePitchers, goalieStats] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
-            getTeamStatsFromAPI(sport)
+            getTeamStatsFromAPI(sport),
+            sport === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({}),
+            sport === 'icehockey_nhl' ? getGoalieStats() : Promise.resolve({})
         ]);
 
-        const goalieStats = sport === 'icehockey_nhl' ? await getGoalieStats() : {};
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}.` }); }
 
         const injuries = {};
         const h2hRecords = {};
-        const probableStarters = {}; 
+        const probableStarters = {};
         if (espnDataResponse?.events) {
              espnDataResponse.events.forEach(event => {
                 const competition = event.competitions?.[0];
@@ -765,14 +640,9 @@ app.get('/api/predictions', async (req, res) => {
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
             const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
-            const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
             const context = { 
                 teamStats, weather, injuries, h2h, allGames: games, goalieStats, 
-                probableStarters: {
-                    [gameHomeCanonical]: probableStarters[gameHomeCanonical],
-                    [gameAwayCanonical]: probableStarters[gameAwayCanonical]
-                } 
+                probableStarters, probablePitchers
             };
             const predictionData = await runPredictionEngine(game, sport, context);
 
@@ -806,6 +676,8 @@ app.get('/api/predictions', async (req, res) => {
                 const home = competitors.find(c => c.homeAway === 'home');
                 const away = competitors.find(c => c.homeAway === 'away');
                 if (!home || !away) return false;
+                const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+                const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
                 return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === gameHomeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === gameAwayCanonical);
             });
 
@@ -818,76 +690,64 @@ app.get('/api/predictions', async (req, res) => {
     }
 });
 
-app.get('/api/hottest-player', async (req, res) => {
-    try {
-        if (!dailyFeaturesCollection) {
-            return res.status(503).json({ error: "Service warming up, please try again in a moment." });
-        }
-        const hottestPlayerDoc = await dailyFeaturesCollection.findOne({ _id: 'hottest_player' });
-
-        if (hottestPlayerDoc && hottestPlayerDoc.data) {
-            res.json(hottestPlayerDoc.data);
-        } else {
-            res.status(404).json({ error: "Hottest Player analysis is not yet available. It may be running in the background." });
-        }
-    } catch (error) {
-        console.error("Hottest Player GET Endpoint Error:", error);
-        res.status(500).json({ error: "Failed to retrieve Hottest Player analysis." });
-    }
-});
-
 app.get('/api/special-picks', async (req, res) => {
     try {
-        const { allPredictions, gameCounts } = await getAllDailyPredictions();
-
-        let sportsInSeason = 0;
-        for(const sport of SPORTS_DB) {
-            if(gameCounts[sport.key] >= sport.gameCountThreshold) {
-                sportsInSeason++;
+        const probablePitchers = await getProbablePitchersAndStats();
+        
+        let allPredictions = [];
+        let gameCounts = {};
+        for (const sport of SPORTS_DB) {
+            const [games, espnDataResponse, teamStats, goalieStats] = await Promise.all([
+                getOdds(sport.key),
+                fetchEspnData(sport.key),
+                getTeamStatsFromAPI(sport.key),
+                sport.key === 'icehockey_nhl' ? getGoalieStats() : Promise.resolve({})
+            ]);
+            gameCounts[sport.key] = games.length;
+            const injuries = {};
+            const h2hRecords = {};
+            const probableStarters = {};
+            for (const game of games) {
+                 const context = { teamStats, injuries, h2hRecords, allGames: games, goalieStats, probableStarters, probablePitchers, weather: await getWeatherData(game.home_team) };
+                 const predictionData = await runPredictionEngine(game, sport.key, context);
+                 if (predictionData && predictionData.winner) {
+                    allPredictions.push({ game: { ...game, sportKey: sport.key }, prediction: predictionData });
+                 }
             }
         }
-        const isPeakSeason = sportsInSeason >= 2;
 
-        const potdConfidenceThreshold = isPeakSeason ? 15 : 10;
-        const potdValueThreshold = isPeakSeason ? 5 : 2.5;
+        let sportsInSeason = Object.values(gameCounts).filter(count => count > 4).length;
+        const potdConfidenceThreshold = sportsInSeason >= 2 ? 15 : 10;
+        const potdValueThreshold = sportsInSeason >= 2 ? 5 : 2.5;
         const parlayConfidenceThreshold = 7.5;
-
         const now = new Date();
         const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
         const upcomingTodayPredictions = allPredictions.filter(p => {
             const gameDate = new Date(p.game.commence_time);
             return gameDate > now && gameDate < cutoff;
         });
-
         let pickOfTheDay = null;
         let parlay = null;
-
         const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
-
         if (highValuePicks.length > 0) {
             pickOfTheDay = highValuePicks.reduce((best, current) => {
                 const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
                 const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
-                const bestScore = best.prediction.confidence + bestValue;
-                const currentScore = current.prediction.confidence + currentValue;
-                return currentScore > bestScore ? current : best;
+                return (current.prediction.confidence + currentValue) > (best.prediction.confidence + bestValue) ? current : best;
             });
         }
-
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
             .sort((a, b) => (b.prediction.confidence + (b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue)) -
                              (a.prediction.confidence + (a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue)));
-
         if (goodPicks.length >= 2) {
             const leg1 = goodPicks[0];
             let leg2 = goodPicks.find(p => p.game.id !== leg1.game.id);
             if (leg2) {
                 const odds1 = leg1.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg1.prediction.winner)?.price || 0;
                 const odds2 = leg2.game.bookmakers?.[0]?.markets?.find(m=>m.key==='h2h')?.outcomes?.find(o=>o.name===leg2.prediction.winner)?.price || 0;
-
                 if (odds1 && odds2) {
                     parlay = {
                         legs: [leg1, leg2],
@@ -896,7 +756,6 @@ app.get('/api/special-picks', async (req, res) => {
                 }
             }
         }
-
         res.json({ pickOfTheDay, parlay });
     } catch (error) {
         console.error("Special Picks Error:", error);
@@ -924,73 +783,56 @@ app.get('/api/reconcile-results', async (req, res) => {
     if (password !== RECONCILE_PASSWORD) {
         return res.status(401).json({ error: "Unauthorized" });
     }
-
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
-
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const pendingPredictions = await predictionsCollection.find({
             status: 'pending',
             gameDate: { $lt: today.toISOString() }
         }).toArray();
-
         if (pendingPredictions.length === 0) {
             return res.json({ message: "No pending predictions from previous days to reconcile." });
         }
-
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
-
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
-
         for (const sportKey of sportKeys) {
             const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
             if (!map) continue;
-
             const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
             const { data: espnData } = await axios.get(url);
-
             if (!espnData.events) continue;
-
             for (const prediction of pendingPredictions.filter(p => p.sportKey === sportKey)) {
                 const gameEvent = espnData.events.find(e => {
                     const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
                     const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
                     const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                    const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
+                    const eventAway = e.competitors[0].competitors.find(c => c.homeAway === 'away');
                     if (!eventHome || !eventAway) return false;
-
                     const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
                     const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
                     return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
                 });
-
                 if (gameEvent && gameEvent.status.type.completed) {
                     const competition = gameEvent.competitions[0];
                     const winnerData = competition.competitors.find(c => c.winner === true);
                     if (!winnerData) continue;
-
                     const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
                     const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
-
                     const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
-
                     let profit = 0;
                     if (result === 'win') {
                         profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
                     } else {
                         profit = -10;
                     }
-
                     await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
-
                     const updateField = result === 'win'
                         ? { $inc: { wins: 1, totalProfit: profit } }
                         : { $inc: { losses: 1, totalProfit: profit } };
-
                     await recordsCollection.updateOne(
                         { sport: sportKey },
                         updateField,
@@ -1012,10 +854,8 @@ app.get('/api/recent-bets', async (req, res) => {
     if (!sport) {
         return res.status(400).json({ error: "Sport parameter is required." });
     }
-
     try {
         if (!predictionsCollection) await connectToDb();
-
         const recentBets = await predictionsCollection.find({
             sportKey: sport,
             status: { $in: ['win', 'loss'] }
@@ -1023,7 +863,6 @@ app.get('/api/recent-bets', async (req, res) => {
         .sort({ gameDate: -1 })
         .limit(20)
         .toArray();
-
         for (const bet of recentBets) {
             if (bet.game && bet.game.espnData && bet.game.espnData.competitions) {
                 const competition = bet.game.espnData.competitions[0];
@@ -1035,22 +874,17 @@ app.get('/api/recent-bets', async (req, res) => {
                 }
             }
         }
-
         res.json(recentBets);
     } catch (error) {
         console.error("Recent Bets Error:", error);
         res.status(500).json({ error: "Failed to fetch recent bets." });
     }
 });
-
-
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
-
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
         const { factors } = prediction;
-
         const formatInjuries = (teamInjuries) => {
             if (!teamInjuries || teamInjuries.length === 0) return "None reported.";
             return teamInjuries.map(p => `${p.name} (${p.status})`).join(', ');
@@ -1058,36 +892,27 @@ app.post('/api/ai-analysis', async (req, res) => {
         const homeInjuries = formatInjuries(factors['Injury Impact']?.injuries?.home);
         const awayInjuries = formatInjuries(factors['Injury Impact']?.injuries?.away);
         const injuryNarrative = `Home (${game.home_team}): ${homeInjuries} | Away (${game.away_team}): ${awayInjuries}`;
-
-        // --- NEW: Dynamically build the factors list for any sport ---
         const factorsList = Object.entries(factors)
-            .filter(([key]) => key !== 'Injury Impact' && factors[key]?.homeStat && factors[key]?.awayStat) // Ensure factor has data
+            .filter(([key]) => key !== 'Injury Impact' && factors[key]?.homeStat && factors[key]?.awayStat)
             .map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`)
             .join('\n');
-
         const systemPrompt = `You are a master sports betting analyst. Your primary role is to act as the final decision-maker. You will be given a detailed report from a quantitative statistical algorithm, including its recommended pick. Your task is to analyze this data, but also consider qualitative factors and "intangibles" that the algorithm might miss (e.g., the true impact of a key player's injury, recent team news, or potential for an upset). Based on your expert analysis, you will either AGREE with the algorithm's pick or OVERRIDE it. Your response must be only the JSON object specified.`;
-        
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-
         const userPrompt = `
 **ALGORITHM ANALYSIS REPORT: ${game.away_team} @ ${game.home_team}**
-
 - **Initial Recommended Pick:** ${prediction.winner}
 - **Algorithm Confidence:** ${prediction.strengthText}
 - **Home Team Betting Value:** ${prediction.homeValue.toFixed(1)}%
 - **Away Team Betting Value:** ${prediction.awayValue.toFixed(1)}%
-
 **KEY STATISTICAL FACTORS:**
 ${factorsList}
 - **Injury Impact:** Home (${factors['Injury Impact'].homeStat}), Away (${factors['Injury Impact'].awayStat})
-
 **QUALITATIVE FACTORS:**
 - **Key Injuries:** ${injuryNarrative}
 - **Weather:** ${prediction.weather ? `${prediction.weather.temp}°C, ${prediction.weather.wind} km/h wind, ${prediction.weather.precip} mm precip` : "Indoors or N/A"}
-
 **JSON TO COMPLETE:**
 {
   "finalPick": "string",
@@ -1096,55 +921,43 @@ ${factorsList}
   "overrideRationale": "string (If isOverride is false, state why you agree with the algorithm. If true, provide a concise, expert reason for changing the pick, citing specific data or intangibles.)",
   "confidenceScore": "string (Choose one: 'High', 'Medium', 'Low')"
 }`;
-
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
         const jsonString = responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1);
         const analysisData = JSON.parse(jsonString);
-
         res.json({ analysisData });
-
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
 });
-
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
         const { parlay } = req.body;
         const leg1 = parlay.legs[0];
         const leg2 = parlay.legs[1];
-
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        
         const model = genAI.getGenerativeModel({
            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-        
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-
 **Data:**
 - Total Odds: ${parlay.totalOdds}
 - Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
 - Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
-
 **JSON to complete:**
 {
   "overview": "",
   "bullCase": "",
   "bearCase": ""
 }`;
-
         const result = await model.generateContent(userPrompt);
-
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
         if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the parlay."); }
-
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let parlayData;
         try {
@@ -1152,7 +965,6 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         } catch (e) {
             throw new Error("AI returned a malformed parlay object.");
         }
-        
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
                  <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
@@ -1169,13 +981,11 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
                 </div>
             </div>`;
         res.json({ analysisHtml });
-
     } catch (error) {
         console.error("Parlay AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
-
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
@@ -1193,34 +1003,26 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
                 availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
             });
         });
-
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-
 **Data:**
 Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
 Available Prop Bets: ${availableProps}
-
 **JSON to complete:**
 {
   "pick": "",
   "rationale": "",
   "risk": ""
 }`;
-        
         const result = await model.generateContent(userPrompt);
-
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
         if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
-
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let propData;
         try {
@@ -1228,7 +1030,6 @@ Available Prop Bets: ${availableProps}
         } catch (e) {
             throw new Error("AI returned a malformed prop bet object.");
         }
-
         const analysisHtml = `
             <div class="space-y-4">
                 <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
@@ -1245,7 +1046,6 @@ Available Prop Bets: ${availableProps}
                 </div>
             </div>`;
         res.json({ analysisHtml });
-
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI prop analysis." });
@@ -1260,14 +1060,5 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 10000;
 connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    // Run the background job 30 seconds after startup
-    setTimeout(updatePlayerSpotlight, 30000); // <--- CALL THE NEW FUNCTION NAME
+    setTimeout(updatePlayerSpotlight, 30000);
 });
-
-
-
-
-
-
-
-
