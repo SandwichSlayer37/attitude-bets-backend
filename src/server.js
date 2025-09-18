@@ -178,7 +178,7 @@ async function updatePlayerSpotlight() {
                     bookmakers: props
                 });
             }
-            await new Promise(resolve => setTimeout(resolve, 2500));
+            await new Promise(resolve => setTimeout(resolve, 200)); // New 0.2 second delay
         }
 
         if (allPropBets.length < 3) {
@@ -1112,4 +1112,5 @@ connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     setTimeout(updatePlayerSpotlight, 30000);
 });
+
 
