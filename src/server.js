@@ -104,7 +104,19 @@ function getDynamicWeights(sportKey) {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
     if (sportKey === 'icehockey_nhl') {
-        return { record: 6, hotStreak: 7, h2h: 8, newsSentiment: 8, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, specialTeams: 11, value: 5, goalieMatchup: 14, fatigue: 10, faceoffAdvantage: 6 };
+        return { 
+            record: 5, 
+            hotStreak: 6, 
+            h2h: 7, 
+            goalieMatchup: 15, // Increased weight
+            fatigue: 8,
+            injuryImpact: 12,
+            // NEW and REFINED weights below
+            goalDifferential: 16, // New, very important factor
+            specialTeamsNet: 10,  // New factor
+            faceoffAdvantage: 6,
+            value: 5
+        };
     }
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
@@ -515,15 +527,22 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))), homeStat: h2h.home, awayStat: h2h.away };
     
 // In server.js, inside the runPredictionEngine function
+// In server.js, replace this entire block inside the runPredictionEngine function
 if (sportKey === 'icehockey_nhl') {
     const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
     const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
     factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal), homeStat: homeStats.streak || 'N/A', awayStat: awayStats.streak || 'N/A' };
     
-    // FIX: Add default values of 0 to prevent "undefined"
-    factors['Offensive Form'] = { value: ((homeStats.goalsForPerGame || 0) - (awayStats.goalsForPerGame || 0)), homeStat: `${(homeStats.goalsForPerGame || 0).toFixed(2)} G/GP`, awayStat: `${(awayStats.goalsForPerGame || 0).toFixed(2)} G/GP` };
-    factors['Defensive Form'] = { value: ((awayStats.goalsAgainstPerGame || 0) - (homeStats.goalsAgainstPerGame || 0)), homeStat: `${(homeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
-    factors['Special Teams'] = { value: ((homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0)) - ((awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0)), homeStat: `PP ${(homeStats.powerPlayPct || 0).toFixed(1)}%`, awayStat: `PP ${(awayStats.powerPlayPct || 0).toFixed(1)}%` };
+    // NEW FACTOR: Goal Differential
+    const homeGoalDiff = (homeStats.goalsForPerGame || 0) - (homeStats.goalsAgainstPerGame || 0);
+    const awayGoalDiff = (awayStats.goalsForPerGame || 0) - (awayStats.goalsAgainstPerGame || 0);
+    factors['Goal Differential'] = { value: (homeGoalDiff - awayGoalDiff) * 10, homeStat: `${homeGoalDiff.toFixed(2)}`, awayStat: `${awayGoalDiff.toFixed(2)}` };
+
+    // NEW FACTOR: Special Teams Net
+    const homeSpecialNet = (homeStats.powerPlayPct || 0) + (homeStats.penaltyKillPct || 0);
+    const awaySpecialNet = (awayStats.powerPlayPct || 0) + (awayStats.penaltyKillPct || 0);
+    factors['Special Teams Net'] = { value: (homeSpecialNet - awaySpecialNet), homeStat: `${homeSpecialNet.toFixed(1)}%`, awayStat: `${awaySpecialNet.toFixed(1)}%` };
+
     factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)), homeStat: `${(homeStats.faceoffWinPct || 50).toFixed(1)}%`, awayStat: `${(awayStats.faceoffWinPct || 50).toFixed(1)}%` };
     factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
     
@@ -1132,6 +1151,7 @@ connectToDb().then(() => {
     // FIX: The timer now starts only AFTER the DB connection is successful
     setTimeout(runSpotlightJobs, 30000); 
 });
+
 
 
 
