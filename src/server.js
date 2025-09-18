@@ -514,26 +514,32 @@ async function runPredictionEngine(game, sportKey, context) {
     factors['Record'] = { value: (getWinPct(parseRecord(homeStats.record)) - getWinPct(parseRecord(awayStats.record))), homeStat: homeStats.record, awayStat: awayStats.record };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))), homeStat: h2h.home, awayStat: h2h.away };
     
-    if (sportKey === 'icehockey_nhl') {
-        const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
-        const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
-        factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal), homeStat: homeStats.streak, awayStat: awayStats.streak };
-        factors['Offensive Form'] = { value: (homeStats.goalsForPerGame - awayStats.goalsForPerGame), homeStat: `${homeStats.goalsForPerGame?.toFixed(2)} G/GP`, awayStat: `${awayStats.goalsForPerGame?.toFixed(2)} G/GP` };
-        factors['Defensive Form'] = { value: (awayStats.goalsAgainstPerGame - homeStats.goalsAgainstPerGame), homeStat: `${homeStats.goalsAgainstPerGame?.toFixed(2)} GA/GP`, awayStat: `${awayStats.goalsAgainstPerGame?.toFixed(2)} GA/GP` };
-        factors['Special Teams'] = { value: ((homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0)) - ((awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0)), homeStat: `PP ${homeStats.powerPlayPct?.toFixed(1)}%`, awayStat: `PP ${awayStats.powerPlayPct?.toFixed(1)}%` };
-        factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)), homeStat: `${homeStats.faceoffWinPct?.toFixed(1)}%`, awayStat: `${awayStats.faceoffWinPct?.toFixed(1)}%` };
-        factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
-        const homeGoalieName = probableStarters[homeCanonicalName];
-        const awayGoalieName = probableStarters[awayCanonicalName];
-        const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
-        const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
-        let goalieValue = 0;
-        let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
-        if(homeGoalieStats && awayGoalieStats) {
-            goalieValue = (awayGoalieStats.gaa - homeGoalieStats.gaa) + ((homeGoalieStats.svPct - awayGoalieStats.svPct) * 100);
-            homeGoalieDisplay = `${homeGoalieName.split(' ')[1]} ${homeGoalieStats.svPct.toFixed(3)}`;
-            awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${awayGoalieStats.svPct.toFixed(3)}`;
-        }
+// In server.js, inside the runPredictionEngine function
+if (sportKey === 'icehockey_nhl') {
+    const homeStreakVal = (homeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeStats.streak?.substring(1) || 0, 10);
+    const awayStreakVal = (awayStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayStats.streak?.substring(1) || 0, 10);
+    factors['Hot Streak'] = { value: (homeStreakVal - awayStreakVal), homeStat: homeStats.streak || 'N/A', awayStat: awayStats.streak || 'N/A' };
+    
+    // FIX: Add default values of 0 to prevent "undefined"
+    factors['Offensive Form'] = { value: ((homeStats.goalsForPerGame || 0) - (awayStats.goalsForPerGame || 0)), homeStat: `${(homeStats.goalsForPerGame || 0).toFixed(2)} G/GP`, awayStat: `${(awayStats.goalsForPerGame || 0).toFixed(2)} G/GP` };
+    factors['Defensive Form'] = { value: ((awayStats.goalsAgainstPerGame || 0) - (homeStats.goalsAgainstPerGame || 0)), homeStat: `${(homeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
+    factors['Special Teams'] = { value: ((homeStats.powerPlayPct || 0) - (awayStats.penaltyKillPct || 0)) - ((awayStats.powerPlayPct || 0) - (homeStats.penaltyKillPct || 0)), homeStat: `PP ${(homeStats.powerPlayPct || 0).toFixed(1)}%`, awayStat: `PP ${(awayStats.powerPlayPct || 0).toFixed(1)}%` };
+    factors['Faceoff Advantage'] = { value: ((homeStats.faceoffWinPct || 50) - (awayStats.faceoffWinPct || 50)), homeStat: `${(homeStats.faceoffWinPct || 50).toFixed(1)}%`, awayStat: `${(awayStats.faceoffWinPct || 50).toFixed(1)}%` };
+    factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
+    
+    const homeGoalieName = probableStarters[homeCanonicalName];
+    const awayGoalieName = probableStarters[awayCanonicalName];
+    const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
+    const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
+    let goalieValue = 0;
+    let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
+    if(homeGoalieStats && awayGoalieStats) {
+        goalieValue = (awayGoalieStats.gaa - homeGoalieStats.gaa) + ((homeGoalieStats.svPct - awayGoalieStats.svPct) * 100);
+        homeGoalieDisplay = `${homeGoalieName.split(' ')[1]} ${(homeGoalieStats.svPct || 0).toFixed(3)}`;
+        awayGoalieDisplay = `${awayGoalieName.split(' ')[1]} ${(awayGoalieStats.svPct || 0).toFixed(3)}`;
+    }
+    factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
+}
         factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     } else if (sportKey === 'baseball_mlb') {
         factors['Recent Form (L10)'] = { value: (getWinPct(parseRecord(homeStats.lastTen)) - getWinPct(parseRecord(awayStats.lastTen))), homeStat: homeStats.lastTen, awayStat: awayStats.lastTen };
@@ -1126,5 +1132,6 @@ connectToDb().then(() => {
     // FIX: The timer now starts only AFTER the DB connection is successful
     setTimeout(runSpotlightJobs, 30000); 
 });
+
 
 
