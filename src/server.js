@@ -83,6 +83,26 @@ const FUTURES_PICKS_DB = {
 const dataCache = new Map();
 
 // --- HELPER FUNCTIONS ---
+// In server.js, add this map
+const teamToSubredditMap = {
+    'Anaheim Ducks': 'ducks', 'Arizona Coyotes': 'Coyotes', 'Boston Bruins': 'BostonBruins', 'Buffalo Sabres': 'sabres', 'Calgary Flames': 'CalgaryFlames', 'Carolina Hurricanes': 'canes', 'Chicago Blackhawks': 'hawks', 'Colorado Avalanche': 'ColoradoAvalanche', 'Columbus Blue Jackets': 'BlueJackets', 'Dallas Stars': 'DallasStars', 'Detroit Red Wings': 'DetroitRedWings', 'Edmonton Oilers': 'EdmontonOilers', 'Florida Panthers': 'FloridaPanthers', 'Los Angeles Kings': 'losangeleskings', 'Minnesota Wild': 'wildhockey', 'Montreal Canadiens': 'Habs', 'Nashville Predators': 'Predators', 'New Jersey Devils': 'devils', 'New York Islanders': 'NewYorkIslanders', 'New York Rangers': 'rangers', 'Ottawa Senators': 'OttawaSenators', 'Philadelphia Flyers': 'Flyers', 'Pittsburgh Penguins': 'penguins', 'San Jose Sharks': 'SanJoseSharks', 'Seattle Kraken': 'SeattleKraken', 'St. Louis Blues': 'stlouisblues', 'Tampa Bay Lightning': 'TampaBayLightning', 'Toronto Maple Leafs': 'leafs', 'Vancouver Canucks': 'canucks', 'Vegas Golden Knights': 'goldenknights', 'Washington Capitals': 'caps', 'Winnipeg Jets': 'winnipegjets',
+    'Arizona Diamondbacks': 'azdiamondbacks', 'Atlanta Braves': 'Braves', 'Baltimore Orioles': 'orioles', 'Boston Red Sox': 'redsox', 'Chicago Cubs': 'CHICubs', 'Chicago White Sox': 'whitesox', 'Cincinnati Reds': 'reds', 'Cleveland Guardians': 'ClevelandGuardians', 'Colorado Rockies': 'ColoradoRockies', 'Detroit Tigers': 'motorcitykitties', 'Houston Astros': 'Astros', 'Kansas City Royals': 'KCRoyals', 'Los Angeles Angels': 'angelsbaseball', 'Los Angeles Dodgers': 'Dodgers', 'Miami Marlins': 'miamimarlins', 'Milwaukee Brewers': 'Brewers', 'Minnesota Twins': 'minnesotatwins', 'New York Mets': 'NewYorkMets', 'New York Yankees': 'NYYankees', 'Oakland Athletics': 'oaklandathletics', 'Philadelphia Phillies': 'phillies', 'Pittsburgh Pirates': 'buccos', 'San Diego Padres': 'Padres', 'San Francisco Giants': 'SFGiants', 'Seattle Mariners': 'Mariners', 'St. Louis Cardinals': 'Cardinals', 'Tampa Bay Rays': 'tampabayrays', 'Texas Rangers': 'TexasRangers', 'Toronto Blue Jays': 'TorontoBlueJays', 'Washington Nationals': 'Nationals',
+};
+
+// In server.js, add this new function
+async function getTeamNewsFromReddit(teamName) {
+    try {
+        const subredditName = teamToSubredditMap[teamName];
+        if (!subredditName) return "No subreddit found.";
+        
+        const submissions = await r.getSubreddit(subredditName).getTop({ time: 'week', limit: 5 });
+        return submissions.map(post => `- ${post.title}`).join('\n');
+    } catch (error) {
+        console.error(`Could not fetch Reddit news for ${teamName}:`, error.message);
+        return "Could not fetch news.";
+    }
+}
+
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
     const parts = rec.split('-');
@@ -957,51 +977,56 @@ app.get('/api/recent-bets', async (req, res) => {
     }
 });
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
+// In server.js, replace the entire ai-analysis endpoint
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
         const { factors } = prediction;
-        const formatInjuries = (teamInjuries) => {
-            if (!teamInjuries || teamInjuries.length === 0) return "None reported.";
-            return teamInjuries.map(p => `${p.name} (${p.status})`).join(', ');
-        };
-        const homeInjuries = formatInjuries(factors['Injury Impact']?.injuries?.home);
-        const awayInjuries = formatInjuries(factors['Injury Impact']?.injuries?.away);
-        const injuryNarrative = `Home (${game.home_team}): ${homeInjuries} | Away (${game.away_team}): ${awayInjuries}`;
-        const factorsList = Object.entries(factors)
-            .filter(([key]) => key !== 'Injury Impact' && factors[key]?.homeStat && factors[key]?.awayStat)
-            .map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`)
-            .join('\n');
-        const systemPrompt = `You are a master sports betting analyst. Your primary role is to act as the final decision-maker. You will be given a detailed report from a quantitative statistical algorithm, including its recommended pick. Your task is to analyze this data, but also consider qualitative factors and "intangibles" that the algorithm might miss (e.g., the true impact of a key player's injury, recent team news, or potential for an upset). Based on your expert analysis, you will either AGREE with the algorithm's pick or OVERRIDE it. Your response must be only the JSON object specified.`;
+
+        // Fetch news for both teams in parallel
+        const [homeNews, awayNews] = await Promise.all([
+            getTeamNewsFromReddit(game.home_team),
+            getTeamNewsFromReddit(game.away_team)
+        ]);
+
+        const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
+
+        const systemPrompt = `You are a master sports betting analyst and strategist. Your primary role is to act as the final decision-maker. You will be given a statistical report and recent news headlines. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
+        
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
+
         const userPrompt = `
-**ALGORITHM ANALYSIS REPORT: ${game.away_team} @ ${game.home_team}**
-- **Initial Recommended Pick:** ${prediction.winner}
-- **Algorithm Confidence:** ${prediction.strengthText}
-- **Home Team Betting Value:** ${prediction.homeValue.toFixed(1)}%
-- **Away Team Betting Value:** ${prediction.awayValue.toFixed(1)}%
-**KEY STATISTICAL FACTORS:**
+**STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
+- Initial Recommended Pick: ${prediction.winner}
+- Algorithm Confidence: ${prediction.strengthText}
 ${factorsList}
-- **Injury Impact:** Home (${factors['Injury Impact'].homeStat}), Away (${factors['Injury Impact'].awayStat})
-**QUALITATIVE FACTORS:**
-- **Key Injuries:** ${injuryNarrative}
-- **Weather:** ${prediction.weather ? `${prediction.weather.temp}°C, ${prediction.weather.wind} km/h wind, ${prediction.weather.precip} mm precip` : "Indoors or N/A"}
+
+**RECENT NEWS & SENTIMENT (from team subreddits):**
+- **${game.home_team} News:**
+${homeNews}
+- **${game.away_team} News:**
+${awayNews}
+
 **JSON TO COMPLETE:**
 {
-  "finalPick": "string",
-  "originalPick": "${prediction.winner}",
-  "isOverride": "boolean",
-  "overrideRationale": "string (If isOverride is false, state why you agree with the algorithm. If true, provide a concise, expert reason for changing the pick, citing specific data or intangibles.)",
-  "confidenceScore": "string (Choose one: 'High', 'Medium', 'Low')"
+  "finalPick": "string (Your final decision)",
+  "isOverride": "boolean (Did you change the pick?)",
+  "confidenceScore": "string (High, Medium, or Low)",
+  "gameNarrative": "string (Tell the story of this matchup in 2-3 sentences. What is the overarching theme? E.g., 'This is a classic offense vs. defense matchup...')",
+  "keyFactor": "string (Identify the single most important factor that led to your decision. E.g., 'The overwhelming goalie advantage for the Rangers.')",
+  "primaryRisk": "string (What is the biggest risk or counter-argument to your pick? E.g., 'The primary risk is the potential for an emotional letdown after their recent big win.')"
 }`;
+
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
         const jsonString = responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1);
         const analysisData = JSON.parse(jsonString);
+
         res.json({ analysisData });
+
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
@@ -1151,6 +1176,7 @@ connectToDb().then(() => {
     // FIX: The timer now starts only AFTER the DB connection is successful
     setTimeout(runSpotlightJobs, 30000); 
 });
+
 
 
 
