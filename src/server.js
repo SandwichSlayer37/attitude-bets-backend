@@ -159,18 +159,13 @@ async function getProbablePitchersAndStats() {
     }, 14400000);
 }
 
-async function updatePlayerSpotlight() {
-    console.log("--- Starting BACKGROUND JOB: AI Player Spotlight ---");
+// This function now analyzes ONE sport at a time
+async function updatePlayerSpotlightForSport(sport) {
+    console.log(`--- Starting BACKGROUND JOB: AI Player Spotlight for ${sport.name} ---`);
     try {
-        let allGames = [];
-        for (const sport of SPORTS_DB) {
-            const gamesForSport = await getOdds(sport.key);
-            gamesForSport.forEach(game => game.sportKey = sport.key);
-            allGames.push(...gamesForSport);
-        }
-
+        const gamesForSport = await getOdds(sport.key);
         let allPropBets = [];
-        for (const game of allGames) {
+        for (const game of gamesForSport) {
             const props = await getPropBets(game.sportKey, game.id);
             if (props.length > 0) {
                 allPropBets.push({
@@ -178,15 +173,17 @@ async function updatePlayerSpotlight() {
                     bookmakers: props
                 });
             }
-            await new Promise(resolve => setTimeout(resolve, 200)); // New 0.2 second delay
+            await new Promise(resolve => setTimeout(resolve, 2500)); 
         }
 
+        const dbKey = `spotlight_${sport.key}`;
         if (allPropBets.length < 3) {
-            console.log("Not enough prop data to determine Player Spotlight. Skipping update.");
+            console.log(`Not enough prop data for ${sport.name}. Skipping update.`);
+            await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `Not enough prop bet data available for ${sport.name}.`, updatedAt: new Date() } }, { upsert: true });
             return;
         }
 
-        let propsForPrompt = allPropBets.map(game => {
+        const propsForPrompt = allPropBets.map(game => {
             let gameText = `\nMatchup: ${game.matchup}\n`;
             if (game.bookmakers && Array.isArray(game.bookmakers)) {
                 game.bookmakers.forEach(bookmaker => {
@@ -205,12 +202,12 @@ async function updatePlayerSpotlight() {
         }).join('');
 
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
-
+        
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
         });
-
+        
         const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Available Prop Bets Data:**
 ${propsForPrompt}
@@ -223,26 +220,17 @@ ${propsForPrompt}
 }`;
 
         const result = await model.generateContent(userPrompt);
-        
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) {
-            throw new Error("Hottest Player AI response did not contain a valid JSON object.");
-        }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
+        const responseText = result.response.text();
+        const jsonString = responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1);
         const analysisResult = JSON.parse(jsonString);
 
-        if (dailyFeaturesCollection) {
-            await dailyFeaturesCollection.updateOne(
-                { _id: 'hottest_player' },
-                { $set: { data: analysisResult, updatedAt: new Date() } },
-                { upsert: true }
-            );
-            console.log("--- BACKGROUND JOB COMPLETE: AI Player Spotlight updated in database. ---");
-        }
+        await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { data: analysisResult, error: null, updatedAt: new Date() } }, { upsert: true });
+        console.log(`--- BACKGROUND JOB COMPLETE: AI Player Spotlight for ${sport.name} updated. ---`);
     } catch (error) {
-        console.error("Error during background Player Spotlight update:", error);
+        console.error(`Error during background Player Spotlight update for ${sport.key}:`, error);
+        // Also save the error to the database so the frontend knows something went wrong.
+        const dbKey = `spotlight_${sport.key}`;
+        await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `An unexpected error occurred during analysis for ${sport.name}.`, updatedAt: new Date() } }, { upsert: true });
     }
 }
 
@@ -491,26 +479,21 @@ async function getWeatherData(teamName) {
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
-        if (!map) return null;
+        if (!map) return { events: [] }; // Return default empty object
         try {
             const today = new Date();
             const year = today.getFullYear();
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
             const formattedDate = `${year}${month}${day}`;
-
             const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
-            
-            // --- FIX: Add a User-Agent header to mimic a browser ---
             const { data } = await axios.get(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
-                }
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36' }
             });
             return data;
         } catch (error) {
             console.error(`Could not fetch ESPN scoreboard for ${sportKey}:`, error.message);
-            return null;
+            return { events: [] }; // Return default empty object on error
         }
     }, 60000);
 }
@@ -753,6 +736,24 @@ app.get('/api/predictions', async (req, res) => {
     } catch (error) {
         console.error("Prediction Error:", error);
         res.status(500).json({ error: "Failed to process predictions.", details: error.message });
+    }
+});
+
+app.get('/api/player-spotlight', async (req, res) => {
+    const { sport } = req.query;
+    if (!sport) {
+        return res.status(400).json({ error: "Sport parameter is required." });
+    }
+    try {
+        const spotlightDoc = await dailyFeaturesCollection.findOne({ _id: `spotlight_${sport}` });
+        if (spotlightDoc) {
+            res.json(spotlightDoc);
+        } else {
+            res.status(404).json({ error: "Spotlight analysis not yet available." });
+        }
+    } catch (error) {
+        console.error("Player Spotlight GET Endpoint Error:", error);
+        res.status(500).json({ error: "Failed to retrieve Player Spotlight analysis." });
     }
 });
 
@@ -1103,14 +1104,17 @@ Available Prop Bets: ${availableProps}
 });
 
 // This must be the last GET route to serve the frontend
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
-});
+// At the bottom of server.js, replace the old setTimeout
+function runSpotlightJobs() {
+    console.log("Kicking off sequential spotlight jobs...");
+    (async () => {
+        for (const sport of SPORTS_DB) {
+            await updatePlayerSpotlightForSport(sport);
+        }
+        console.log("All spotlight jobs complete.");
+    })();
+}
+setTimeout(runSpotlightJobs, 30000); // Run 30 seconds after startup
 
-const PORT = process.env.PORT || 10000;
-connectToDb().then(() => {
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    setTimeout(updatePlayerSpotlight, 30000);
-});
 
 
