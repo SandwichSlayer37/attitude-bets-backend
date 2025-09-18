@@ -1104,7 +1104,11 @@ Available Prop Bets: ${availableProps}
 });
 
 // This must be the last GET route to serve the frontend
-// At the bottom of server.js, replace the old setTimeout
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
+});
+
+// The runner function for the background job
 function runSpotlightJobs() {
     console.log("Kicking off sequential spotlight jobs...");
     (async () => {
@@ -1114,7 +1118,13 @@ function runSpotlightJobs() {
         console.log("All spotlight jobs complete.");
     })();
 }
-setTimeout(runSpotlightJobs, 30000); // Run 30 seconds after startup
 
+// The corrected server startup logic
+const PORT = process.env.PORT || 10000;
+connectToDb().then(() => {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    // FIX: The timer now starts only AFTER the DB connection is successful
+    setTimeout(runSpotlightJobs, 30000); 
+});
 
 
