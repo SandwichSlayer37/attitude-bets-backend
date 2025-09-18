@@ -487,6 +487,7 @@ async function getWeatherData(teamName) {
     });
 }
 
+// In server.js, replace the entire fetchEspnData function
 async function fetchEspnData(sportKey) {
     return fetchData(`espn_scoreboard_${sportKey}`, async () => {
         const map = { 'baseball_mlb': 'baseball/mlb', 'icehockey_nhl': 'hockey/nhl', 'americanfootball_nfl': 'football/nfl' }[sportKey];
@@ -497,8 +498,15 @@ async function fetchEspnData(sportKey) {
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
             const formattedDate = `${year}${month}${day}`;
+
             const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
-            const { data } = await axios.get(url);
+            
+            // --- FIX: Add a User-Agent header to mimic a browser ---
+            const { data } = await axios.get(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
+                }
+            });
             return data;
         } catch (error) {
             console.error(`Could not fetch ESPN scoreboard for ${sportKey}:`, error.message);
@@ -1104,3 +1112,4 @@ connectToDb().then(() => {
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
     setTimeout(updatePlayerSpotlight, 30000);
 });
+
