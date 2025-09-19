@@ -755,7 +755,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     }
     factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: h2h.home, awayStat: h2h.away };
-    factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
+    
+    // THIS IS THE CORRECTED LINE
+    factors['Fatigue'] = { 
+        value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), 
+        homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, 
+        awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` 
+    };
     
     const homeInjuryImpact = (injuries[homeCanonical] || []).length;
     const awayInjuryImpact = (injuries[awayCanonical] || []).length;
@@ -1342,3 +1348,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
