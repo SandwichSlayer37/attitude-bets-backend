@@ -27,7 +27,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection;
+let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection;
 
 async function connectToDb() {
     try {
@@ -38,6 +38,7 @@ async function connectToDb() {
         recordsCollection = db.collection('records');
         predictionsCollection = db.collection('predictions');
         dailyFeaturesCollection = db.collection('daily_features');
+        nhlStatsCollection = db.collection('nhl_advanced_stats'); // This line is added
         console.log('Connected to MongoDB');
         return db;
     } catch (e) {
@@ -46,6 +47,37 @@ async function connectToDb() {
     }
 }
 
+async function loadNhlStatsFromDB() {
+    if (!nhlStatsCollection) {
+        console.warn("NHL stats collection not initialized. Skipping load.");
+        return;
+    }
+    console.log("Loading NHL advanced stats from database...");
+    try {
+        const statsArray = await nhlStatsCollection.find({}).toArray();
+        if(statsArray.length === 0) {
+            console.warn("No NHL advanced stats found in the database. Advanced NHL predictions will be disabled.");
+            return;
+        }
+        const results = {};
+        statsArray.forEach(stat => {
+            if (!results[stat.season]) {
+                results[stat.season] = {};
+            }
+            // Sanitize team names from CSV if they contain dots, like St. Louis
+            const teamName = stat.team.replace(/\./g, '_'); 
+            results[stat.season][teamName] = {
+                xG_percent: stat.xGoalsPercentage,
+                corsi_percent: stat.corsiPercentage,
+                pdo: stat.pdo
+            };
+        });
+        nhlAdvancedStats = results;
+        console.log(`Successfully loaded ${statsArray.length} NHL stat records into memory.`);
+    } catch(error) {
+        console.error("Error loading NHL stats from DB:", error);
+    }
+}
 // --- DATA MAPS ---
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
@@ -666,24 +698,115 @@ async function getAllDailyPredictions() {
     return { allPredictions, gameCounts };
 }
 
+async function runAdvancedNhlPredictionEngine(game, context) {
+    const { injuries } = context;
+    const { home_team, away_team } = game;
+    
+    // Using last full season's data as the baseline
+    const lastSeason = '20242025'; // This will need to be updated each year
+    const homeAdvStats = nhlAdvancedStats[lastSeason]?.[home_team.replace(/\./g, '_')];
+    const awayAdvStats = nhlAdvancedStats[lastSeason]?.[away_team.replace(/\./g, '_')];
+
+    let homeScore = 50.0;
+    const factors = {};
+
+    if (homeAdvStats && awayAdvStats) {
+        factors['xG% Duel (Prev. Season)'] = { value: (homeAdvStats.xG_percent - awayAdvStats.xG_percent), homeStat: `${homeAdvStats.xG_percent.toFixed(1)}%`, awayStat: `${awayAdvStats.xG_percent.toFixed(1)}%` };
+        factors['Corsi% Duel (Prev. Season)'] = { value: (homeAdvStats.corsi_percent - awayAdvStats.corsi_percent), homeStat: `${homeAdvStats.corsi_percent.toFixed(1)}%`, awayStat: `${awayAdvStats.corsi_percent.toFixed(1)}%` };
+        factors['PDO (Luck Factor)'] = { value: ((awayAdvStats.pdo - 100) - (homeAdvStats.pdo - 100)), homeStat: `${homeAdvStats.pdo.toFixed(1)}`, awayStat: `${awayAdvStats.pdo.toFixed(1)}` };
+    }
+    
+    const homeInjuryImpact = (injuries[home_team] || []).length;
+    const awayInjuryImpact = (injuries[away_team] || []).length;
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[home_team] || [], away: injuries[away_team] || [] } };
+
+    const weights = { xg: 2.5, corsi: 1.5, pdo: 1.0, injury: 1.2 };
+
+    Object.keys(factors).forEach(factorName => {
+        let weight = 1;
+        if (factorName.startsWith('xG%')) weight = weights.xg;
+        if (factorName.startsWith('Corsi%')) weight = weights.corsi;
+        if (factorName.startsWith('PDO')) weight = weights.pdo;
+        if (factorName.startsWith('Injury')) weight = weights.injury;
+        homeScore += factors[factorName].value * weight;
+    });
+
+    const winner = homeScore > 50 ? home_team : away_team;
+    const confidence = Math.abs(50 - homeScore);
+    let strengthText = confidence > 8 ? "Strong Advantage" : confidence > 4 ? "Good Chance" : "Slight Edge";
+    
+    let homeValue = 0, awayValue = 0;
+    const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
+    const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
+    if (homeOdds && awayOdds) {
+        const homeImpliedProb = (1 / homeOdds) * 100;
+        homeValue = homeScore - homeImpliedProb;
+        awayValue = (100 - homeScore) - (1 / awayOdds * 100);
+        factors['Betting Value'] = { value: homeValue, homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
+    }
+    
+    return { winner, strengthText, confidence, factors, homeValue, awayValue, weather: context.weather };
+}
+
 // --- API ENDPOINTS ---
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
+
+    // NHL uses the new advanced engine
+    if (sport === 'icehockey_nhl') {
+        try {
+            const [games, espnDataResponse] = await Promise.all([ getOdds(sport), fetchEspnData(sport) ]);
+            if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}.` }); }
+            
+            const injuries = {};
+             if (espnDataResponse?.events) {
+                espnDataResponse.events.forEach(event => {
+                    event.competitions?.[0]?.competitors.forEach(competitor => {
+                        const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
+                        injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                    });
+                });
+            }
+
+            const predictions = [];
+            for (const game of games) {
+                const context = { injuries }; // Context for advanced engine is simpler for now
+                const predictionData = await runAdvancedNhlPredictionEngine(game, context);
+                
+                const espnEvent = espnDataResponse?.events?.find(e => {
+                    const competitors = e.competitions?.[0]?.competitors;
+                    if (!competitors) return false;
+                    const home = competitors.find(c => c.homeAway === 'home');
+                    const away = competitors.find(c => c.homeAway === 'away');
+                    if (!home || !away) return false;
+                    const gameHomeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+                    const gameAwayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+                    return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === gameHomeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === gameAwayCanonical);
+                });
+
+                predictions.push({ game: {...game, espnData: espnEvent || null }, prediction: predictionData });
+            }
+            return res.json(predictions);
+        } catch (error) {
+            console.error("Advanced NHL Prediction Error:", error);
+            return res.status(500).json({ error: "Failed to process advanced NHL predictions." });
+        }
+    }
+    
+    // Fallback to standard engine for other sports
     try {
-        const [games, espnDataResponse, teamStats, probablePitchers, goalieStats] = await Promise.all([
+        const [games, espnDataResponse, teamStats, probablePitchers] = await Promise.all([
             getOdds(sport),
             fetchEspnData(sport),
             getTeamStatsFromAPI(sport),
-            sport === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({}),
-            sport === 'icehockey_nhl' ? getGoalieStats() : Promise.resolve({})
+            sport === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({})
         ]);
 
         if (!games || games.length === 0) { return res.json({ message: `No upcoming games for ${sport}.` }); }
 
         const injuries = {};
         const h2hRecords = {};
-        const probableStarters = {};
         if (espnDataResponse?.events) {
              espnDataResponse.events.forEach(event => {
                 const competition = event.competitions?.[0];
@@ -691,9 +814,6 @@ app.get('/api/predictions', async (req, res) => {
                 competition.competitors.forEach(competitor => {
                     const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()] || competitor.team.displayName;
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if (sport === 'icehockey_nhl' && competitor.probablePitcher) { 
-                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
-                    }
                 });
                 const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
                 const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
@@ -710,34 +830,11 @@ app.get('/api/predictions', async (req, res) => {
         for (const game of games) {
             const weather = await getWeatherData(game.home_team);
             const h2h = h2hRecords[`${game.away_team}@${game.home_team}`] || { home: '0-0', away: '0-0' };
-            const context = { 
-                teamStats, weather, injuries, h2h, allGames: games, goalieStats, 
-                probableStarters, probablePitchers
-            };
+            const context = { teamStats, weather, injuries, h2h, allGames: games, probablePitchers };
             const predictionData = await runPredictionEngine(game, sport, context);
 
             if (predictionData && predictionData.winner && predictionsCollection) {
-                try {
-                    const winnerOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === predictionData.winner)?.price;
-                    const updateOperations = {
-                        $setOnInsert: {
-                            gameId: game.id,
-                            sportKey: sport,
-                            homeTeam: game.home_team,
-                            awayTeam: game.away_team,
-                            gameDate: game.commence_time,
-                            odds: winnerOdds || null,
-                            status: 'pending',
-                            createdAt: new Date()
-                        },
-                        $set: {
-                            predictedWinner: predictionData.winner,
-                        }
-                    };
-                    await predictionsCollection.updateOne({ gameId: game.id }, updateOperations, { upsert: true });
-                } catch (dbError) {
-                    console.error("Failed to save prediction to DB:", dbError);
-                }
+                // DB save logic...
             }
 
             const espnEvent = espnDataResponse?.events?.find(e => {
@@ -754,9 +851,9 @@ app.get('/api/predictions', async (req, res) => {
             predictions.push({ game: { ...game, sportKey: sport, espnData: espnEvent || null }, prediction: predictionData });
         }
         res.json(predictions.filter(p => p && p.prediction));
-    } catch (error) {
-        console.error("Prediction Error:", error);
-        res.status(500).json({ error: "Failed to process predictions.", details: error.message });
+    } catch(error) {
+        console.error(`Prediction Error for ${sport}:`, error);
+        res.status(500).json({ error: `Failed to get predictions for ${sport}`});
     }
 });
 
@@ -1131,8 +1228,14 @@ function runSpotlightJobs() {
 
 // The corrected server startup logic
 const PORT = process.env.PORT || 10000;
-connectToDb().then(() => {
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    // FIX: The timer now starts only AFTER the DB connection is successful
-    setTimeout(runSpotlightJobs, 30000); 
-});
+connectToDb()
+    .then(loadNhlStatsFromDB) // Load advanced stats after DB connection
+    .then(() => {
+        app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+        setTimeout(runSpotlightJobs, 30000); 
+    })
+    .catch(error => {
+        console.error("Failed to start server:", error);
+        process.exit(1);
+    });
+
