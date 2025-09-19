@@ -64,7 +64,6 @@ async function loadNhlStatsFromDB() {
             if (!results[stat.season]) {
                 results[stat.season] = {};
             }
-            // Sanitize team names from CSV if they contain dots, like St. Louis
             const teamName = stat.team.replace(/\./g, '_'); 
             results[stat.season][teamName] = {
                 xG_percent: stat.xGoalsPercentage,
@@ -155,26 +154,20 @@ function getDynamicWeights(sportKey) {
     }
     if (sportKey === 'icehockey_nhl') {
         return { 
-            // Advanced Historical Factors (Higher Impact)
             xg: 2.8, 
             corsi: 1.8, 
-            // Real-Time Performance
             goalie: 2.5,
             goalDiff: 2.0,
             specialTeams: 1.5,
-            // Situational Factors
             h2h: 1.2,
             fatigue: 1.0,
             injury: 1.2,
             hotStreak: 0.8,
             faceoff: 0.5,
-            // Regressive/Luck Factor
             pdo: 1.0, 
-            // Betting Value
             value: 0.5 
         };
     }
-    // NFL or default
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
@@ -569,7 +562,6 @@ async function fetchEspnData(sportKey) {
 }
 
 async function runPredictionEngine(game, sportKey, context) {
-    // This function is now only for MLB and NFL, as NHL has its own advanced engine.
     const { teamStats, injuries, h2h, allGames, probablePitchers, weather } = context;
     const weights = getDynamicWeights(sportKey);
     const { home_team, away_team } = game;
@@ -636,7 +628,6 @@ async function runPredictionEngine(game, sportKey, context) {
 }
 
 async function getAllDailyPredictions() {
-    // Note: This function is only used for the special picks, not the main UI anymore.
     const allPredictions = [];
     const gameCounts = {};
     const probablePitchers = await getProbablePitchersAndStats();
@@ -716,14 +707,12 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let homeScore = 50.0;
     const factors = {};
 
-    // --- Advanced Historical Factors ---
     if (homeAdvStats && awayAdvStats) {
         factors['xG% Duel (Prev. Season)'] = { value: (homeAdvStats.xG_percent - awayAdvStats.xG_percent), homeStat: `${homeAdvStats.xG_percent.toFixed(1)}%`, awayStat: `${awayAdvStats.xG_percent.toFixed(1)}%` };
         factors['Corsi% Duel (Prev. Season)'] = { value: (homeAdvStats.corsi_percent - awayAdvStats.corsi_percent), homeStat: `${homeAdvStats.corsi_percent.toFixed(1)}%`, awayStat: `${awayAdvStats.corsi_percent.toFixed(1)}%` };
         factors['PDO (Luck Factor)'] = { value: ((awayAdvStats.pdo - 100) - (homeAdvStats.pdo - 100)), homeStat: `${homeAdvStats.pdo.toFixed(1)}`, awayStat: `${awayAdvStats.pdo.toFixed(1)}` };
     }
 
-    // --- Real-Time Factors from old engine ---
     const homeStats = teamStats[homeCanonical] || {};
     const awayStats = teamStats[awayCanonical] || {};
     
@@ -756,7 +745,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: h2h.home, awayStat: h2h.away };
     
-    // THIS IS THE CORRECTED LINE
     factors['Fatigue'] = { 
         value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), 
         homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, 
@@ -767,7 +755,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayInjuryImpact = (injuries[awayCanonical] || []).length;
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
 
-    // --- Scoring Logic ---
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
@@ -782,7 +769,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         }
     });
 
-    // --- Betting Value Calculation ---
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
@@ -876,7 +862,6 @@ app.get('/api/predictions', async (req, res) => {
         }
     }
     
-    // Fallback to standard engine for other sports
     try {
         const [games, espnDataResponse, teamStats, probablePitchers] = await Promise.all([
             getOdds(sport),
@@ -1290,7 +1275,7 @@ Available Prop Bets: ${availableProps}
         let responseText = result.response.text();
         const startIndex = responseText.indexOf('{');
         const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
+        if (startIndex === -1 || endIndex ===-1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
         const jsonString = responseText.substring(startIndex, endIndex + 1);
         let propData;
         try {
@@ -1320,12 +1305,10 @@ Available Prop Bets: ${availableProps}
     }
 });
 
-// This must be the last GET route to serve the frontend
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
-// The runner function for the background job
 function runSpotlightJobs() {
     console.log("Kicking off sequential spotlight jobs...");
     (async () => {
@@ -1336,10 +1319,9 @@ function runSpotlightJobs() {
     })();
 }
 
-// The corrected server startup logic
 const PORT = process.env.PORT || 10000;
 connectToDb()
-    .then(loadNhlStatsFromDB) // Load advanced stats after DB connection
+    .then(loadNhlStatsFromDB)
     .then(() => {
         app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
         setTimeout(runSpotlightJobs, 30000); 
@@ -1348,4 +1330,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
