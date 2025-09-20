@@ -117,30 +117,36 @@ async function getTeamNewsFromReddit(teamName) {
 }
 
 // --- DATA FETCHING & PREDICTION ENGINE ---
+// MODIFICATION START: Updated NHL Weights
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
-    // ENGINE 2.0 WEIGHTS
+    // ENGINE 2.0 HYBRID WEIGHTS
     if (sportKey === 'icehockey_nhl') {
         return { 
-            // Engine 2.0 Factors
+            // Engine 2.0 Advanced Factors
             fiveOnFiveXg: 3.5,
             highDangerBattle: 3.0,
             specialTeamsDuel: 2.5,
             // Core Real-Time Factors
             goalie: 2.5,
+            offensiveForm: 1.0,
+            defensiveForm: 1.0,
             injury: 1.5,
             fatigue: 1.0,
             h2h: 1.0,
-            // Secondary Factors
+            // Situational & Legacy Factors
+            record: 0.5,
             hotStreak: 0.8,
+            faceoffAdvantage: 0.5,
             pdo: 1.0, // Kept for luck regression
             value: 0.5 
         };
     }
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
+// MODIFICATION END
 
 async function getProbablePitchersAndStats() {
     const cacheKey = `mlb_probable_pitchers_${new Date().toISOString().split('T')[0]}`;
@@ -739,7 +745,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000); // Cache for 24 hours
 }
 
-
+// MODIFICATION START: Updated NHL Prediction Engine to be a true hybrid
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
     const { home_team, away_team } = game;
@@ -753,16 +759,25 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = Object.keys(teamAliasMap).find(key => teamAliasMap[key].includes(away_team) || key === away_team)?.split(' ').pop() || 
                    teamAliasMap[awayCanonical]?.find(a => a.length <= 3) || awayCanonical;
 
-    const lastSeason = 20242025; 
+    const lastSeason = new Date().getFullYear() + '' + (new Date().getFullYear() + 1);
     const [homeAdvStats, awayAdvStats] = await Promise.all([
-        getTeamSeasonAdvancedStats(homeAbbr, lastSeason),
-        getTeamSeasonAdvancedStats(awayAbbr, lastSeason)
+        getTeamSeasonAdvancedStats(homeAbbr, parseInt(lastSeason, 10)),
+        getTeamSeasonAdvancedStats(awayAbbr, parseInt(lastSeason, 10))
     ]);
     
     let homeScore = 50.0;
     const factors = {};
 
-    // --- Engine 2.0 Factors ---
+    // --- Core Real-Time & Legacy Factors ---
+    const homeRealTimeStats = teamStats[homeCanonical] || {};
+    const awayRealTimeStats = teamStats[awayCanonical] || {};
+
+    factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: homeRealTimeStats.record || '0-0', awayStat: awayRealTimeStats.record || '0-0' };
+    factors['Offensive Form (G/GP)'] = { value: (homeRealTimeStats.goalsForPerGame || 0) - (awayRealTimeStats.goalsForPerGame || 0), homeStat: `${(homeRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP`, awayStat: `${(awayRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP` };
+    factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
+    factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
+    
+    // --- Engine 2.0 Advanced Factors ---
     if (homeAdvStats.fiveOnFiveXgPercentage && awayAdvStats.fiveOnFiveXgPercentage) {
         factors['5-on-5 xG%'] = { value: homeAdvStats.fiveOnFiveXgPercentage - awayAdvStats.fiveOnFiveXgPercentage, homeStat: `${homeAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%` };
     }
@@ -775,10 +790,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
      if (homeAdvStats.pdo && awayAdvStats.pdo) {
         factors['PDO (Luck Factor)'] = { value: (awayAdvStats.pdo - 1000) - (homeAdvStats.pdo - 1000), homeStat: `${homeAdvStats.pdo.toFixed(0)}`, awayStat: `${awayAdvStats.pdo.toFixed(0)}` };
     }
-
-    // --- Core Real-Time & Legacy Factors ---
-    const homeRealTimeStats = teamStats[homeCanonical] || {};
-    const awayRealTimeStats = teamStats[awayCanonical] || {};
     
     const homeStreakVal = (homeRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeRealTimeStats.streak?.substring(1) || 0, 10);
     const awayStreakVal = (awayRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayRealTimeStats.streak?.substring(1) || 0, 10);
@@ -820,7 +831,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
                 'Injury Impact': 'injury',
                 'Fatigue': 'fatigue',
                 'H2H (Season)': 'h2h',
-                'Hot Streak': 'hotStreak'
+                'Hot Streak': 'hotStreak',
+                'Record': 'record',
+                'Offensive Form (G/GP)': 'offensiveForm',
+                'Defensive Form (GA/GP)': 'defensiveForm',
+                'Faceoff Advantage': 'faceoffAdvantage'
             }[factorName];
 
             if (factorKey && weights[factorKey]) {
@@ -850,6 +865,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
+// MODIFICATION END
 
 // =================================================================
 // END OF NHL ENGINE 2.0
