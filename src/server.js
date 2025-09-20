@@ -759,11 +759,23 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = Object.keys(teamAliasMap).find(key => teamAliasMap[key].includes(away_team) || key === away_team)?.split(' ').pop() || 
                    teamAliasMap[awayCanonical]?.find(a => a.length <= 3) || awayCanonical;
 
-    const lastSeason = new Date().getFullYear() + '' + (new Date().getFullYear() + 1);
-    const [homeAdvStats, awayAdvStats] = await Promise.all([
-        getTeamSeasonAdvancedStats(homeAbbr, parseInt(lastSeason, 10)),
-        getTeamSeasonAdvancedStats(awayAbbr, parseInt(lastSeason, 10))
+    const currentYear = new Date().getFullYear();
+    const currentSeasonId = parseInt(`${currentYear}${currentYear + 1}`, 10);
+    const previousSeasonId = parseInt(`${currentYear - 1}${currentYear}`, 10);
+
+    let [homeAdvStats, awayAdvStats] = await Promise.all([
+        getTeamSeasonAdvancedStats(homeAbbr, currentSeasonId),
+        getTeamSeasonAdvancedStats(awayAbbr, currentSeasonId)
     ]);
+
+    // If either team lacks data for the current season, fall back to last season's data for both.
+    if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
+        console.log(`Incomplete current season data. Falling back to previous season stats for ${away_team} @ ${home_team}.`);
+        [homeAdvStats, awayAdvStats] = await Promise.all([
+            getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
+            getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
+        ]);
+    }
     
     let homeScore = 50.0;
     const factors = {};
@@ -1411,3 +1423,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
