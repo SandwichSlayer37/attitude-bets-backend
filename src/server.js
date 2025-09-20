@@ -117,7 +117,6 @@ async function getTeamNewsFromReddit(teamName) {
 }
 
 // --- DATA FETCHING & PREDICTION ENGINE ---
-// MODIFICATION START: Updated NHL Weights
 function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
@@ -146,7 +145,6 @@ function getDynamicWeights(sportKey) {
     }
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
-// MODIFICATION END
 
 async function getProbablePitchersAndStats() {
     const cacheKey = `mlb_probable_pitchers_${new Date().toISOString().split('T')[0]}`;
@@ -745,7 +743,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000); // Cache for 24 hours
 }
 
-// MODIFICATION START: Updated NHL Prediction Engine to be a true hybrid
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
     const { home_team, away_team } = game;
@@ -776,7 +773,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
             getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
         ]);
     }
-    
+
     let homeScore = 50.0;
     const factors = {};
 
@@ -877,8 +874,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
-// MODIFICATION END
-
 // =================================================================
 // END OF NHL ENGINE 2.0
 // =================================================================
@@ -1423,4 +1418,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
