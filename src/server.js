@@ -47,7 +47,6 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
-// MODIFICATION START: Corrected non-standard team abbreviations
 const teamToAbbrMap = {
     'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 
     'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 
@@ -58,7 +57,6 @@ const teamToAbbrMap = {
     'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TBL', 'Toronto Maple Leafs': 'TOR', 
     'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG'
 };
-// MODIFICATION END
 
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
@@ -684,49 +682,107 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Made the database query flexible to handle string or number season values.
+// MODIFICATION START: Replaced findOne with a full aggregation pipeline to correctly process game-by-game data.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v7_final`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v1`;
     return fetchData(cacheKey, async () => {
         try {
-            const seasonString = String(season).substring(0, 4);
-            const seasonNumber = parseInt(seasonString, 10);
+            const seasonNumber = parseInt(String(season).substring(0, 4), 10);
 
-            // This query now flexibly checks for season as a string OR a number
-            const teamSeasonData = await nhlStatsCollection.findOne({ 
-                team: team, 
-                season: { $in: [seasonString, seasonNumber] }
-            });
+            const pipeline = [
+                // Stage 1: Filter for the correct team, season, and only 5-on-5 situations
+                {
+                    $match: {
+                        team: team,
+                        season: seasonNumber,
+                        situation: "5on5"
+                    }
+                },
+                // Stage 2: Group all game documents to calculate season-long totals
+                {
+                    $group: {
+                        _id: "$team", // Group by team to get one result document
+                        total_xGoalsFor: { $sum: "$xGoalsFor" },
+                        total_xGoalsAgainst: { $sum: "$xGoalsAgainst" },
+                        total_highDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
+                        total_highDangerxGoalsAgainst: { $sum: "$highDangerxGoalsAgainst" },
+                        total_goalsFor: { $sum: "$goalsFor" },
+                        total_shotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
+                        total_goalsAgainst: { $sum: "$goalsAgainst" },
+                        total_shotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" }
+                    }
+                },
+                // Stage 3: Calculate the final derived stats like percentages and PDO
+                {
+                    $project: {
+                        _id: 0, // Exclude the default _id field from the final output
+                        xGoalsPercentage: {
+                            $cond: { // Safely handle division by zero
+                                if: { $gt: [{ $add: ["$total_xGoalsFor", "$total_xGoalsAgainst"] }, 0] },
+                                then: { $multiply: [{ $divide: ["$total_xGoalsFor", { $add: ["$total_xGoalsFor", "$total_xGoalsAgainst"] }] }, 100] },
+                                else: 0
+                            }
+                        },
+                        highDangerxGoalsFor: "$total_highDangerxGoalsFor",
+                        highDangerxGoalsAgainst: "$total_highDangerxGoalsAgainst",
+                        shootingPercentage: {
+                            $cond: {
+                                if: { $gt: ["$total_shotsOnGoalFor", 0] },
+                                then: { $divide: ["$total_goalsFor", "$total_shotsOnGoalFor"] },
+                                else: 0
+                            }
+                        },
+                        savePercentage: {
+                            $cond: {
+                                if: { $gt: ["$total_shotsOnGoalAgainst", 0] },
+                                then: { $divide: [{ $subtract: ["$total_shotsOnGoalAgainst", "$total_goalsAgainst"] }, "$total_shotsOnGoalAgainst"] },
+                                else: 0
+                            }
+                        }
+                    }
+                },
+                // Stage 4: Calculate PDO from the previously calculated percentages
+                {
+                    $project: {
+                        xGoalsPercentage: 1,
+                        highDangerxGoalsFor: 1,
+                        highDangerxGoalsAgainst: 1,
+                        pdo: { $multiply: [{ $add: ["$shootingPercentage", "$savePercentage"] }, 1000] }
+                    }
+                }
+            ];
 
-            if (!teamSeasonData) {
-                console.log(`[DATA NOT FOUND] No pre-aggregated data found for ${team} in season ${seasonString}`);
+            const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
+
+            if (!aggregationResult || aggregationResult.length === 0) {
+                console.log(`[DATA NOT FOUND] Aggregation returned no results for ${team} in season ${seasonNumber}`);
                 return {};
             }
             
+            // The aggregation returns a single document in an array
+            const teamSeasonData = aggregationResult[0];
             const finalStats = {};
-            
-            if (teamSeasonData.xGoalsPercentage) {
-                finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage * 100;
-            }
 
-            if (teamSeasonData.highDangerxGoalsFor && teamSeasonData.highDangerxGoalsAgainst) {
+            if (teamSeasonData.xGoalsPercentage) {
+                finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage;
+            }
+            if (teamSeasonData.highDangerxGoalsFor !== undefined && teamSeasonData.highDangerxGoalsAgainst !== undefined) {
                  const totalHdXg = teamSeasonData.highDangerxGoalsFor + teamSeasonData.highDangerxGoalsAgainst;
                  if (totalHdXg > 0) {
                     finalStats.hdcfPercentage = (teamSeasonData.highDangerxGoalsFor / totalHdXg) * 100;
                  }
             }
-
             if (teamSeasonData.pdo) {
-                 finalStats.pdo = teamSeasonData.pdo * 1000;
+                 finalStats.pdo = teamSeasonData.pdo;
             }
 
-            finalStats.ppXGoalsForPer60 = 0;
-            finalStats.pkXGoalsAgainstPer60 = 0;
+            finalStats.ppXGoalsForPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
+            finalStats.pkXGoalsAgainstPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
             
             return finalStats;
 
         } catch (error) {
-            console.error(`[CRITICAL ERROR] Error during getTeamSeasonAdvancedStats for ${team} in ${season}:`, error);
+            console.error(`[CRITICAL ERROR] Error during aggregation for ${team} in ${season}:`, error);
             return {};
         }
     }, 86400000);
