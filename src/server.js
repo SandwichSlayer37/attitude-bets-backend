@@ -47,6 +47,19 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
+// MODIFICATION START: Added a direct map for team abbreviations
+const teamToAbbrMap = {
+    'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 
+    'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 
+    'Columbus Blue Jackets': 'CBJ', 'Dallas Stars': 'DAL', 'Detroit Red Wings': 'DET', 'Edmonton Oilers': 'EDM', 
+    'Florida Panthers': 'FLA', 'Los Angeles Kings': 'L.A', 'Minnesota Wild': 'MIN', 'Montreal Canadiens': 'MTL', 
+    'Nashville Predators': 'NSH', 'New Jersey Devils': 'N.J', 'New York Islanders': 'NYI', 'New York Rangers': 'NYR', 
+    'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'S.J', 
+    'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'T.B', 'Toronto Maple Leafs': 'TOR', 
+    'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VEG', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG'
+};
+// MODIFICATION END
+
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
     { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
@@ -671,8 +684,6 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Corrected the season format in the database query
-// MODIFICATION START: Added a console.log to debug the database query result
 async function getTeamSeasonAdvancedStats(team, season) {
     const cacheKey = `adv_stats_${team}_${season}_v4_debug`; // Updated cache key
     return fetchData(cacheKey, async () => {
@@ -751,7 +762,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
         }
     }, 86400000); // Cache for 24 hours
 }
-// MODIFICATION END
 
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
@@ -761,10 +771,10 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeCanonical = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonical = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
 
-    const homeAbbr = Object.keys(teamAliasMap).find(key => teamAliasMap[key].includes(home_team) || key === home_team)?.split(' ').pop() || 
-                   teamAliasMap[homeCanonical]?.find(a => a.length <= 3) || homeCanonical;
-    const awayAbbr = Object.keys(teamAliasMap).find(key => teamAliasMap[key].includes(away_team) || key === away_team)?.split(' ').pop() || 
-                   teamAliasMap[awayCanonical]?.find(a => a.length <= 3) || awayCanonical;
+    // MODIFICATION START: Replaced complex logic with a direct map lookup
+    const homeAbbr = teamToAbbrMap[homeCanonical] || homeCanonical;
+    const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
+    // MODIFICATION END
 
     const currentYear = new Date().getFullYear();
     const currentSeasonId = parseInt(`${currentYear}${currentYear + 1}`, 10);
@@ -1428,4 +1438,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
