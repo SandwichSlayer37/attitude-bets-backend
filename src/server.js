@@ -778,8 +778,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
 
             const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
 
-            if (!aggregationResult || aggregationResult.length === 0) {
-                console.log(`[DATA NOT FOUND] Aggregation pipeline failed for ${team} in season ${seasonString}. This is expected if data is truly missing.`);
+            if (!aggregationResult || aggregationResult.length === 0 || !aggregationResult[0].fiveOnFive || !aggregationResult[0].allSituations) {
+                console.log(`[DATA NOT FOUND] Aggregation returned incomplete or no results for ${team} in season ${seasonString}`);
                 return {};
             }
             
@@ -1289,7 +1289,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || home_team;
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
         const [homeNews, awayNews] = await Promise.all([
             getTeamNewsFromReddit(homeCanonical),
