@@ -47,16 +47,18 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
+// MODIFICATION START: Corrected non-standard team abbreviations
 const teamToAbbrMap = {
     'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 
     'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 
     'Columbus Blue Jackets': 'CBJ', 'Dallas Stars': 'DAL', 'Detroit Red Wings': 'DET', 'Edmonton Oilers': 'EDM', 
-    'Florida Panthers': 'FLA', 'Los Angeles Kings': 'L.A', 'Minnesota Wild': 'MIN', 'Montreal Canadiens': 'MTL', 
-    'Nashville Predators': 'NSH', 'New Jersey Devils': 'N.J', 'New York Islanders': 'NYI', 'New York Rangers': 'NYR', 
-    'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'S.J', 
-    'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'T.B', 'Toronto Maple Leafs': 'TOR', 
-    'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VEG', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG'
+    'Florida Panthers': 'FLA', 'Los Angeles Kings': 'LAK', 'Minnesota Wild': 'MIN', 'Montreal Canadiens': 'MTL', 
+    'Nashville Predators': 'NSH', 'New Jersey Devils': 'NJD', 'New York Islanders': 'NYI', 'New York Rangers': 'NYR', 
+    'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJS', 
+    'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TBL', 'Toronto Maple Leafs': 'TOR', 
+    'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG'
 };
+// MODIFICATION END
 
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
@@ -682,33 +684,27 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Replaced aggregation with a simpler findOne query AND ADDED ROBUST DEBUGGING
+// MODIFICATION START: Made the database query flexible to handle string or number season values.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v6_final_debug`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v7_final`;
     return fetchData(cacheKey, async () => {
         try {
-            // Convert season format from 20242025 (number) to "2024" (string)
             const seasonString = String(season).substring(0, 4);
+            const seasonNumber = parseInt(seasonString, 10);
 
-            // --- DEBUGGING LOGS START ---
-            console.log(`[DEBUG] Querying MongoDB for team: "${team}", season: "${seasonString}"`);
-            
+            // This query now flexibly checks for season as a string OR a number
             const teamSeasonData = await nhlStatsCollection.findOne({ 
                 team: team, 
-                season: seasonString
+                season: { $in: [seasonString, seasonNumber] }
             });
 
             if (!teamSeasonData) {
-                console.log(`[DEBUG] MongoDB query returned NULL. No data found for team: "${team}", season: "${seasonString}". Returning empty object.`);
+                console.log(`[DATA NOT FOUND] No pre-aggregated data found for ${team} in season ${seasonString}`);
                 return {};
             }
             
-            console.log(`[DEBUG] MongoDB query successful. Found data for ${team}:`, JSON.stringify(teamSeasonData, null, 2));
-            // --- DEBUGGING LOGS END ---
-            
             const finalStats = {};
             
-            // Directly map the pre-calculated values from the database document
             if (teamSeasonData.xGoalsPercentage) {
                 finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage * 100;
             }
@@ -721,26 +717,19 @@ async function getTeamSeasonAdvancedStats(team, season) {
             }
 
             if (teamSeasonData.pdo) {
-                 // MoneyPuck's PDO is already scaled (e.g., 1.002), we need to format it as 1002
                  finalStats.pdo = teamSeasonData.pdo * 1000;
             }
 
-            // This data file doesn't have the granular 5v4/4v5 data needed for Special Teams Duel
-            // We will set it to a neutral value for now. This is a good candidate for an Engine 3.0 upgrade.
             finalStats.ppXGoalsForPer60 = 0;
             finalStats.pkXGoalsAgainstPer60 = 0;
             
-            // --- DEBUGGING LOG ---
-            console.log(`[DEBUG] Processed stats for ${team}:`, JSON.stringify(finalStats, null, 2));
-            // --- DEBUGGING LOG ---
-
             return finalStats;
 
         } catch (error) {
             console.error(`[CRITICAL ERROR] Error during getTeamSeasonAdvancedStats for ${team} in ${season}:`, error);
-            return {}; // Return empty object on error
+            return {};
         }
-    }, 86400000); // Cache for 24 hours
+    }, 86400000);
 }
 // MODIFICATION END
 
@@ -765,7 +754,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         getTeamSeasonAdvancedStats(awayAbbr, currentSeasonId)
     ]);
 
-    // If either team lacks data for the current season, fall back to last season's data for both.
     if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
         console.log(`Incomplete current season data. Falling back to previous season stats for ${away_team} @ ${home_team}.`);
         [homeAdvStats, awayAdvStats] = await Promise.all([
@@ -777,7 +765,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let homeScore = 50.0;
     const factors = {};
 
-    // --- Core Real-Time & Legacy Factors ---
     const homeRealTimeStats = teamStats[homeCanonical] || {};
     const awayRealTimeStats = teamStats[awayCanonical] || {};
 
@@ -786,14 +773,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
     factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
     
-    // --- Engine 2.0 Advanced Factors ---
     if (homeAdvStats.fiveOnFiveXgPercentage && awayAdvStats.fiveOnFiveXgPercentage) {
         factors['5-on-5 xG%'] = { value: homeAdvStats.fiveOnFiveXgPercentage - awayAdvStats.fiveOnFiveXgPercentage, homeStat: `${homeAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%` };
     }
     if (homeAdvStats.hdcfPercentage && awayAdvStats.hdcfPercentage) {
         factors['High-Danger Battle'] = { value: homeAdvStats.hdcfPercentage - awayAdvStats.hdcfPercentage, homeStat: `${homeAdvStats.hdcfPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.hdcfPercentage.toFixed(1)}%` };
     }
-    if (homeAdvStats.ppXGoalsForPer60 && awayAdvStats.pkXGoalsAgainstPer60) {
+    if (homeAdvStats.ppXGoalsForPer60 !== undefined && awayAdvStats.pkXGoalsAgainstPer60 !== undefined) {
         factors['Special Teams Duel'] = { value: homeAdvStats.ppXGoalsForPer60 - awayAdvStats.pkXGoalsAgainstPer60, homeStat: `${homeAdvStats.ppXGoalsForPer60.toFixed(2)} xG/60`, awayStat: `${awayAdvStats.pkXGoalsAgainstPer60.toFixed(2)} xG/60` };
     }
      if (homeAdvStats.pdo && awayAdvStats.pdo) {
@@ -828,7 +814,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayInjuryImpact = (injuries[awayCanonical] || []).length;
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
 
-    // --- Scoring Logic ---
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
@@ -853,7 +838,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         }
     });
 
-    // --- Betting Value Calculation ---
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
