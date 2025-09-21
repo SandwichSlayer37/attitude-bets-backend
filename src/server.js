@@ -682,21 +682,22 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Corrected the aggregation pipeline to filter by "position: Team Level".
+// MODIFICATION START: Added a flexible season data type check to the aggregation pipeline.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v2`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v3_final`;
     return fetchData(cacheKey, async () => {
         try {
-            const seasonNumber = parseInt(String(season).substring(0, 4), 10);
+            const seasonString = String(season).substring(0, 4);
+            const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Filter for the correct team, season, 5-on-5, AND team-level data
+                // Stage 1: Filter for the correct team, season (as number OR string), 5-on-5, and team-level data
                 {
                     $match: {
                         team: team,
-                        season: seasonNumber,
+                        season: { $in: [seasonNumber, seasonString] }, // CRITICAL FIX: Handles inconsistent season data type
                         situation: "5on5",
-                        position: "Team Level" // CRITICAL FIX: Ensures we only aggregate team summary rows
+                        position: "Team Level"
                     }
                 },
                 // Stage 2: Group all game documents to calculate season-long totals
@@ -756,7 +757,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
             const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
 
             if (!aggregationResult || aggregationResult.length === 0) {
-                console.log(`[DATA NOT FOUND] Aggregation returned no results for ${team} in season ${seasonNumber}`);
+                console.log(`[DATA NOT FOUND] Aggregation returned no results for ${team} in season ${seasonString}`);
                 return {};
             }
             
