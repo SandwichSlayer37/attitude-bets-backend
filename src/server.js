@@ -684,14 +684,14 @@ async function getAllDailyPredictions() {
 
 // MODIFICATION START: The definitive aggregation pipeline.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_final`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_definitive`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Filter documents. This is the most critical stage.
+                // Stage 1: Initial Match. Uses an index on 'team' and 'season' for performance.
                 {
                     $match: {
                         team: team,
@@ -776,7 +776,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
                  finalStats.pdo = teamSeasonData.pdo;
             }
 
-            // These are not calculated from the historical data, so they remain neutral.
             finalStats.ppXGoalsForPer60 = 0;
             finalStats.pkXGoalsAgainstPer60 = 0;
             
@@ -899,7 +898,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
             }[factorName];
 
             if (factorKey && weights[factorKey]) {
-                homeScore += factors[factorName].value * weights[factorKey];
+                homeScore += factors[factorName].value * weight;
             }
         }
     });
