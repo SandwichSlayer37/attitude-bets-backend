@@ -682,18 +682,19 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
+// MODIFICATION START: Replaced aggregation with a simpler findOne query
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v5_final`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v6_final`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
             // Convert season format from 20242025 (number) to "2024" (string)
             const seasonString = String(season).substring(0, 4);
 
-            // This is a simple find query now, not an aggregation pipeline
+            // This is a simple find query now, not an aggregation pipeline.
+            // It looks for the single document with the team's season-long stats.
             const teamSeasonData = await nhlStatsCollection.findOne({ 
                 team: team, 
-                season: seasonString,
-                situation: '5on5' // Assuming we want the 5on5 stats as the baseline
+                season: seasonString
             });
 
             if (!teamSeasonData) {
@@ -703,23 +704,25 @@ async function getTeamSeasonAdvancedStats(team, season) {
             
             const finalStats = {};
             
-            // Directly map the pre-calculated percentages from the database
-            // The logic needs to handle cases where a field might be missing or named differently
+            // Directly map the pre-calculated values from the database document
             if (teamSeasonData.xGoalsPercentage) {
                 finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage * 100;
             }
+
             if (teamSeasonData.highDangerxGoalsFor && teamSeasonData.highDangerxGoalsAgainst) {
                  const totalHdXg = teamSeasonData.highDangerxGoalsFor + teamSeasonData.highDangerxGoalsAgainst;
-                 if(totalHdXg > 0) {
+                 if (totalHdXg > 0) {
                     finalStats.hdcfPercentage = (teamSeasonData.highDangerxGoalsFor / totalHdXg) * 100;
                  }
             }
+
             if (teamSeasonData.pdo) {
-                 finalStats.pdo = teamSeasonData.pdo * 1000; // Assuming PDO is in decimal format
+                 // MoneyPuck's PDO is already scaled (e.g., 1.002), we need to format it as 1002
+                 finalStats.pdo = teamSeasonData.pdo * 1000;
             }
 
-            // Note: Special Teams Duel requires data from '5on4' and '4on5' situations.
-            // This simplified model will omit it for now unless we add more complex lookups.
+            // This data file doesn't have the granular 5v4/4v5 data needed for Special Teams Duel
+            // We will set it to a neutral value for now. This is a good candidate for an Engine 3.0 upgrade.
             finalStats.ppXGoalsForPer60 = 0;
             finalStats.pkXGoalsAgainstPer60 = 0;
             
@@ -731,6 +734,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
         }
     }, 86400000); // Cache for 24 hours
 }
+// MODIFICATION END
+
 
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
