@@ -682,25 +682,29 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Replaced aggregation with a simpler findOne query
+// MODIFICATION START: Replaced aggregation with a simpler findOne query AND ADDED ROBUST DEBUGGING
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v6_final`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v6_final_debug`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
             // Convert season format from 20242025 (number) to "2024" (string)
             const seasonString = String(season).substring(0, 4);
 
-            // This is a simple find query now, not an aggregation pipeline.
-            // It looks for the single document with the team's season-long stats.
+            // --- DEBUGGING LOGS START ---
+            console.log(`[DEBUG] Querying MongoDB for team: "${team}", season: "${seasonString}"`);
+            
             const teamSeasonData = await nhlStatsCollection.findOne({ 
                 team: team, 
                 season: seasonString
             });
 
             if (!teamSeasonData) {
-                console.log(`[DATA NOT FOUND] No pre-aggregated data found for ${team} in season ${seasonString}`);
+                console.log(`[DEBUG] MongoDB query returned NULL. No data found for team: "${team}", season: "${seasonString}". Returning empty object.`);
                 return {};
             }
+            
+            console.log(`[DEBUG] MongoDB query successful. Found data for ${team}:`, JSON.stringify(teamSeasonData, null, 2));
+            // --- DEBUGGING LOGS END ---
             
             const finalStats = {};
             
@@ -726,10 +730,14 @@ async function getTeamSeasonAdvancedStats(team, season) {
             finalStats.ppXGoalsForPer60 = 0;
             finalStats.pkXGoalsAgainstPer60 = 0;
             
+            // --- DEBUGGING LOG ---
+            console.log(`[DEBUG] Processed stats for ${team}:`, JSON.stringify(finalStats, null, 2));
+            // --- DEBUGGING LOG ---
+
             return finalStats;
 
         } catch (error) {
-            console.error(`Error finding stats for ${team} in ${season}:`, error);
+            console.error(`[CRITICAL ERROR] Error during getTeamSeasonAdvancedStats for ${team} in ${season}:`, error);
             return {}; // Return empty object on error
         }
     }, 86400000); // Cache for 24 hours
