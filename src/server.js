@@ -682,24 +682,26 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Final aggregation pipeline to correctly process game-by-game data with multiple situations.
+// MODIFICATION START: The definitive aggregation pipeline. This is the one.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v5_final`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v6_final`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Filter documents to the relevant team, season, and only team-level summaries.
+                // Stage 1: Initial Match. Uses an index on 'team' and 'season' for performance.
                 {
                     $match: {
                         team: team,
                         season: { $in: [seasonNumber, seasonString] },
-                        position: "Team Level"
+                        // Robustly identify team-level data by checking if team and name are the same.
+                        // This avoids relying on the 'position' field which may be inconsistent.
+                        $expr: { $eq: ["$team", "$name"] }
                     }
                 },
-                // Stage 2: Use $facet to run parallel aggregations for different situations
+                // Stage 2: Use $facet to run parallel aggregations for different situations.
                 {
                     $facet: {
                         "fiveOnFiveData": [
@@ -728,14 +730,14 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         ]
                     }
                 },
-                // Stage 3: Unwind the results from the facet arrays, making them easier to access.
+                // Stage 3: Project the first element from each facet result array.
                 {
                     $project: {
                         fiveOnFive: { $arrayElemAt: ["$fiveOnFiveData", 0] },
                         allSituations: { $arrayElemAt: ["$allSituationsData", 0] }
                     }
                 },
-                // Stage 4: Combine and calculate the final metrics, with checks to prevent errors if data is missing.
+                // Stage 4: Calculate the final metrics, with safety checks for missing/null data.
                 {
                     $project: {
                         _id: 0,
@@ -762,8 +764,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
                                      $multiply: [
                                         {
                                             $add: [
-                                                { $divide: ["$allSituations.total_goalsFor", "$allSituations.total_shotsOnGoalFor"] }, // Shooting %
-                                                { $divide: [{ $subtract: ["$allSituations.total_shotsOnGoalAgainst", "$allSituations.total_goalsAgainst"] }, "$allSituations.total_shotsOnGoalAgainst"] } // Save %
+                                                { $divide: ["$allSituations.total_goalsFor", "$allSituations.total_shotsOnGoalFor"] },
+                                                { $divide: [{ $subtract: ["$allSituations.total_shotsOnGoalAgainst", "$allSituations.total_goalsAgainst"] }, "$allSituations.total_shotsOnGoalAgainst"] }
                                             ]
                                         },
                                         1000
@@ -778,8 +780,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
 
             const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
 
-            if (!aggregationResult || aggregationResult.length === 0 || !aggregationResult[0].fiveOnFive || !aggregationResult[0].allSituations) {
-                console.log(`[DATA NOT FOUND] Aggregation returned incomplete or no results for ${team} in season ${seasonString}`);
+            if (!aggregationResult || aggregationResult.length === 0) {
+                console.log(`[DATA NOT FOUND] Final aggregation returned no results for ${team} in season ${seasonString}.`);
                 return {};
             }
             
@@ -799,8 +801,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
                  finalStats.pdo = teamSeasonData.pdo;
             }
 
-            finalStats.ppXGoalsForPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
-            finalStats.pkXGoalsAgainstPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
+            finalStats.ppXGoalsForPer60 = 0;
+            finalStats.pkXGoalsAgainstPer60 = 0;
             
             return finalStats;
 
@@ -827,6 +829,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const currentYear = new Date().getFullYear();
     const currentSeasonId = parseInt(`${currentYear}${currentYear + 1}`, 10);
     const previousSeasonId = parseInt(`${currentYear - 1}${currentYear}`, 10);
+    const twoSeasonsAgoId = parseInt(`${currentYear - 2}${currentYear - 1}`, 10);
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
         getTeamSeasonAdvancedStats(homeAbbr, currentSeasonId),
@@ -834,11 +837,19 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     ]);
 
     if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
-        console.log(`Incomplete current season data. Falling back to previous season stats for ${away_team} @ ${home_team}.`);
+        console.log(`Incomplete current season data. Falling back to previous season (2024) stats for ${away_team} @ ${home_team}.`);
         [homeAdvStats, awayAdvStats] = await Promise.all([
             getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
             getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
         ]);
+
+        if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
+             console.log(`[WARN] No data found for previous season (2024). Falling back two seasons to 2023 as a temporary measure.`);
+             [homeAdvStats, awayAdvStats] = await Promise.all([
+                getTeamSeasonAdvancedStats(homeAbbr, twoSeasonsAgoId),
+                getTeamSeasonAdvancedStats(awayAbbr, twoSeasonsAgoId)
+            ]);
+        }
     }
 
     let homeScore = 50.0;
@@ -1289,7 +1300,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
         const [homeNews, awayNews] = await Promise.all([
             getTeamNewsFromReddit(homeCanonical),
@@ -1481,5 +1492,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-}
