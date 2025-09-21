@@ -682,26 +682,27 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Replaced findOne with a full aggregation pipeline to correctly process game-by-game data.
+// MODIFICATION START: Corrected the aggregation pipeline to filter by "position: Team Level".
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v1`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v2`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season).substring(0, 4), 10);
 
             const pipeline = [
-                // Stage 1: Filter for the correct team, season, and only 5-on-5 situations
+                // Stage 1: Filter for the correct team, season, 5-on-5, AND team-level data
                 {
                     $match: {
                         team: team,
                         season: seasonNumber,
-                        situation: "5on5"
+                        situation: "5on5",
+                        position: "Team Level" // CRITICAL FIX: Ensures we only aggregate team summary rows
                     }
                 },
                 // Stage 2: Group all game documents to calculate season-long totals
                 {
                     $group: {
-                        _id: "$team", // Group by team to get one result document
+                        _id: "$team",
                         total_xGoalsFor: { $sum: "$xGoalsFor" },
                         total_xGoalsAgainst: { $sum: "$xGoalsAgainst" },
                         total_highDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
@@ -712,12 +713,12 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         total_shotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" }
                     }
                 },
-                // Stage 3: Calculate the final derived stats like percentages and PDO
+                // Stage 3: Calculate derived stats like percentages
                 {
                     $project: {
-                        _id: 0, // Exclude the default _id field from the final output
+                        _id: 0,
                         xGoalsPercentage: {
-                            $cond: { // Safely handle division by zero
+                            $cond: {
                                 if: { $gt: [{ $add: ["$total_xGoalsFor", "$total_xGoalsAgainst"] }, 0] },
                                 then: { $multiply: [{ $divide: ["$total_xGoalsFor", { $add: ["$total_xGoalsFor", "$total_xGoalsAgainst"] }] }, 100] },
                                 else: 0
@@ -741,7 +742,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         }
                     }
                 },
-                // Stage 4: Calculate PDO from the previously calculated percentages
+                // Stage 4: Calculate PDO from the percentages
                 {
                     $project: {
                         xGoalsPercentage: 1,
@@ -759,7 +760,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
                 return {};
             }
             
-            // The aggregation returns a single document in an array
             const teamSeasonData = aggregationResult[0];
             const finalStats = {};
 
@@ -776,8 +776,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
                  finalStats.pdo = teamSeasonData.pdo;
             }
 
-            finalStats.ppXGoalsForPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
-            finalStats.pkXGoalsAgainstPer60 = 0; // This data isn't in the 5on5 aggregate, set to neutral
+            finalStats.ppXGoalsForPer60 = 0;
+            finalStats.pkXGoalsAgainstPer60 = 0;
             
             return finalStats;
 
