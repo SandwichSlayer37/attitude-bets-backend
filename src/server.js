@@ -47,7 +47,6 @@ async function connectToDb() {
 }
 
 // --- DATA MAPS ---
-// MODIFICATION START: Added a direct map for team abbreviations
 const teamToAbbrMap = {
     'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 
     'Calgary Flames': 'CGY', 'Carolina Hurricanes': 'CAR', 'Chicago Blackhawks': 'CHI', 'Colorado Avalanche': 'COL', 
@@ -58,7 +57,6 @@ const teamToAbbrMap = {
     'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'T.B', 'Toronto Maple Leafs': 'TOR', 
     'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VEG', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG'
 };
-// MODIFICATION END
 
 const SPORTS_DB = [ 
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
@@ -685,79 +683,50 @@ async function getAllDailyPredictions() {
 // =================================================================
 
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v4_debug`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v5_final`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
             // Convert season format from 20242025 (number) to "2024" (string)
             const seasonString = String(season).substring(0, 4);
 
-            const pipeline = [
-                { $match: { team: team, season: seasonString } },
-                {
-                    $group: {
-                        _id: "$situation",
-                        totalIceTime: { $sum: "$iceTime" },
-                        totalXGoalsFor: { $sum: "$xGoalsFor" },
-                        totalXGoalsAgainst: { $sum: "$xGoalsAgainst" },
-                        totalHighDangerFor: { $sum: "$highDangerShotsFor" },
-                        totalHighDangerAgainst: { $sum: "$highDangerShotsAgainst" },
-                        totalGoalsFor: { $sum: "$goalsFor" },
-                        totalGoalsAgainst: { $sum: "$goalsAgainst"},
-                        totalShotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
-                        totalShotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" }
-                    }
-                }
-            ];
-
-            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-            
-            // THIS IS THE NEW LINE FOR DEBUGGING
-            console.log(`[DEBUG] Raw DB result for ${team} in season ${seasonString}:`, JSON.stringify(results, null, 2));
-
-            const stats = {};
-            
-            results.forEach(res => {
-                stats[res._id] = {
-                    iceTime: res.totalIceTime,
-                    xGF: res.totalXGoalsFor,
-                    xGA: res.totalXGoalsAgainst,
-                    HDCF: res.totalHighDangerFor,
-                    HDCA: res.totalHighDangerAgainst,
-                    GF: res.totalGoalsFor,
-                    GA: res.totalGoalsAgainst,
-                    SF: res.totalShotsOnGoalFor,
-                    SA: res.totalShotsOnGoalAgainst
-                };
+            // This is a simple find query now, not an aggregation pipeline
+            const teamSeasonData = await nhlStatsCollection.findOne({ 
+                team: team, 
+                season: seasonString,
+                situation: '5on5' // Assuming we want the 5on5 stats as the baseline
             });
-            
-            const fiveOnFive = stats['5on5'];
-            const fiveOnFour = stats['5on4'];
-            const fourOnFive = stats['4on5'];
+
+            if (!teamSeasonData) {
+                console.log(`[DATA NOT FOUND] No pre-aggregated data found for ${team} in season ${seasonString}`);
+                return {};
+            }
             
             const finalStats = {};
             
-            if (fiveOnFive && (fiveOnFive.xGF + fiveOnFive.xGA > 0)) {
-                finalStats.fiveOnFiveXgPercentage = (fiveOnFive.xGF / (fiveOnFive.xGF + fiveOnFive.xGA)) * 100;
-                if (fiveOnFive.SF > 0 && fiveOnFive.SA > 0) {
-                    const shootingPct = fiveOnFive.GF / fiveOnFive.SF;
-                    const savePct = (fiveOnFive.SA - fiveOnFive.GA) / fiveOnFive.SA;
-                    finalStats.pdo = (shootingPct + savePct) * 1000;
-                }
-                if (fiveOnFive.HDCF + fiveOnFive.HDCA > 0) {
-                    finalStats.hdcfPercentage = (fiveOnFive.HDCF / (fiveOnFive.HDCF + fiveOnFive.HDCA)) * 100;
-                }
+            // Directly map the pre-calculated percentages from the database
+            // The logic needs to handle cases where a field might be missing or named differently
+            if (teamSeasonData.xGoalsPercentage) {
+                finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage * 100;
             }
-            if (fiveOnFour && fiveOnFour.iceTime > 0) {
-                finalStats.ppXGoalsForPer60 = (fiveOnFour.xGF / fiveOnFour.iceTime) * 3600;
+            if (teamSeasonData.highDangerxGoalsFor && teamSeasonData.highDangerxGoalsAgainst) {
+                 const totalHdXg = teamSeasonData.highDangerxGoalsFor + teamSeasonData.highDangerxGoalsAgainst;
+                 if(totalHdXg > 0) {
+                    finalStats.hdcfPercentage = (teamSeasonData.highDangerxGoalsFor / totalHdXg) * 100;
+                 }
             }
-            if (fourOnFive && fourOnFive.iceTime > 0) {
-                finalStats.pkXGoalsAgainstPer60 = (fourOnFive.xGA / fourOnFive.iceTime) * 3600;
+            if (teamSeasonData.pdo) {
+                 finalStats.pdo = teamSeasonData.pdo * 1000; // Assuming PDO is in decimal format
             }
+
+            // Note: Special Teams Duel requires data from '5on4' and '4on5' situations.
+            // This simplified model will omit it for now unless we add more complex lookups.
+            finalStats.ppXGoalsForPer60 = 0;
+            finalStats.pkXGoalsAgainstPer60 = 0;
             
             return finalStats;
 
         } catch (error) {
-            console.error(`Error aggregating stats for ${team} in ${season}:`, error);
+            console.error(`Error finding stats for ${team} in ${season}:`, error);
             return {}; // Return empty object on error
         }
     }, 86400000); // Cache for 24 hours
@@ -771,10 +740,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeCanonical = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonical = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
 
-    // MODIFICATION START: Replaced complex logic with a direct map lookup
     const homeAbbr = teamToAbbrMap[homeCanonical] || homeCanonical;
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
-    // MODIFICATION END
 
     const currentYear = new Date().getFullYear();
     const currentSeasonId = parseInt(`${currentYear}${currentYear + 1}`, 10);
