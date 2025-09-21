@@ -672,8 +672,9 @@ async function getAllDailyPredictions() {
 // =================================================================
 
 // MODIFICATION START: Corrected the season format in the database query
+// MODIFICATION START: Added a console.log to debug the database query result
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v3_final`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v4_debug`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
             // Convert season format from 20242025 (number) to "2024" (string)
@@ -698,6 +699,10 @@ async function getTeamSeasonAdvancedStats(team, season) {
             ];
 
             const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+            
+            // THIS IS THE NEW LINE FOR DEBUGGING
+            console.log(`[DEBUG] Raw DB result for ${team} in season ${seasonString}:`, JSON.stringify(results, null, 2));
+
             const stats = {};
             
             results.forEach(res => {
@@ -1423,3 +1428,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
