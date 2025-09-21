@@ -684,21 +684,19 @@ async function getAllDailyPredictions() {
 
 // MODIFICATION START: The definitive aggregation pipeline. This is the one.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v6_final`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_definitive`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Initial Match. Uses an index on 'team' and 'season' for performance.
+                // Stage 1: Initial Match for team, season, and robustly identify team-level data.
                 {
                     $match: {
                         team: team,
                         season: { $in: [seasonNumber, seasonString] },
-                        // Robustly identify team-level data by checking if team and name are the same.
-                        // This avoids relying on the 'position' field which may be inconsistent.
-                        $expr: { $eq: ["$team", "$name"] }
+                        $expr: { $eq: ["$team", "$name"] } // Ensures we only get team-level rows
                     }
                 },
                 // Stage 2: Use $facet to run parallel aggregations for different situations.
@@ -743,10 +741,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         _id: 0,
                         xGoalsPercentage: {
                             $cond: {
-                                if: { $and: [
-                                    { $ne: ["$fiveOnFive", null] },
-                                    { $gt: [{ $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }, 0] }
-                                ]},
+                                if: { $and: [ { $ne: ["$fiveOnFive", null] }, { $gt: [{ $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }, 0] } ]},
                                 then: { $multiply: [{ $divide: ["$fiveOnFive.total_xGoalsFor", { $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }] }, 100] },
                                 else: null
                             }
@@ -755,19 +750,13 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         highDangerxGoalsAgainst: { $ifNull: [ "$fiveOnFive.total_highDangerxGoalsAgainst", null ] },
                         pdo: {
                            $cond: {
-                                if: { $and: [
-                                    { $ne: ["$allSituations", null] },
-                                    { $gt: ["$allSituations.total_shotsOnGoalFor", 0] },
-                                    { $gt: ["$allSituations.total_shotsOnGoalAgainst", 0] }
-                                ]},
+                                if: { $and: [ { $ne: ["$allSituations", null] }, { $gt: ["$allSituations.total_shotsOnGoalFor", 0] }, { $gt: ["$allSituations.total_shotsOnGoalAgainst", 0] } ]},
                                 then: {
                                      $multiply: [
-                                        {
-                                            $add: [
-                                                { $divide: ["$allSituations.total_goalsFor", "$allSituations.total_shotsOnGoalFor"] },
-                                                { $divide: [{ $subtract: ["$allSituations.total_shotsOnGoalAgainst", "$allSituations.total_goalsAgainst"] }, "$allSituations.total_shotsOnGoalAgainst"] }
-                                            ]
-                                        },
+                                        { $add: [
+                                            { $divide: ["$allSituations.total_goalsFor", "$allSituations.total_shotsOnGoalFor"] }, 
+                                            { $divide: [{ $subtract: ["$allSituations.total_shotsOnGoalAgainst", "$allSituations.total_goalsAgainst"] }, "$allSituations.total_shotsOnGoalAgainst"] }
+                                        ]},
                                         1000
                                     ]
                                 },
@@ -1300,7 +1289,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || home_team;
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
         const [homeNews, awayNews] = await Promise.all([
             getTeamNewsFromReddit(homeCanonical),
@@ -1314,6 +1303,9 @@ app.post('/api/ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
+            generationConfig: {
+                responseMimeType: "application/json",
+            },
         });
 
         const userPrompt = `
@@ -1339,8 +1331,7 @@ ${awayNews}
 }`;
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
-        const jsonString = responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1);
-        const analysisData = JSON.parse(jsonString);
+        const analysisData = JSON.parse(responseText);
         res.json({ analysisData });
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
@@ -1357,6 +1348,9 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({
            model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
+            generationConfig: {
+                responseMimeType: "application/json",
+            },
         });
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
@@ -1370,17 +1364,9 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
   "bearCase": ""
 }`;
         const result = await model.generateContent(userPrompt);
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex === -1) { throw new Error("AI response did not contain a valid JSON object for the parlay."); }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let parlayData;
-        try {
-            parlayData = JSON.parse(jsonString);
-        } catch (e) {
-            throw new Error("AI returned a malformed parlay object.");
-        }
+        const responseText = result.response.text();
+        const parlayData = JSON.parse(responseText);
+
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
                  <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
@@ -1423,6 +1409,9 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: systemPrompt,
+            generationConfig: {
+                responseMimeType: "application/json",
+            },
         });
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Data:**
@@ -1435,17 +1424,9 @@ Available Prop Bets: ${availableProps}
   "risk": ""
 }`;
         const result = await model.generateContent(userPrompt);
-        let responseText = result.response.text();
-        const startIndex = responseText.indexOf('{');
-        const endIndex = responseText.lastIndexOf('}');
-        if (startIndex === -1 || endIndex ===-1) { throw new Error("AI response did not contain a valid JSON object for the prop bet."); }
-        const jsonString = responseText.substring(startIndex, endIndex + 1);
-        let propData;
-        try {
-            propData = JSON.parse(jsonString);
-        } catch (e) {
-            throw new Error("AI returned a malformed prop bet object.");
-        }
+        const responseText = result.response.text();
+        const propData = JSON.parse(responseText);
+
         const analysisHtml = `
             <div class="space-y-4">
                 <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
