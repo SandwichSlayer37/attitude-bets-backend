@@ -671,12 +671,16 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
+// MODIFICATION START: Corrected the season format in the database query
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_${team}_${season}_v2`; // Updated cache key
+    const cacheKey = `adv_stats_${team}_${season}_v3_final`; // Updated cache key
     return fetchData(cacheKey, async () => {
         try {
+            // Convert season format from 20242025 (number) to "2024" (string)
+            const seasonString = String(season).substring(0, 4);
+
             const pipeline = [
-                { $match: { team: team, season: season } },
+                { $match: { team: team, season: seasonString } },
                 {
                     $group: {
                         _id: "$situation",
@@ -742,6 +746,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
         }
     }, 86400000); // Cache for 24 hours
 }
+// MODIFICATION END
 
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
