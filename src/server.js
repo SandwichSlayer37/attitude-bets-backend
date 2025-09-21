@@ -366,14 +366,7 @@ async function getGoalieStats() {
                     };
                 });
             }
-            return goalieStats;
-        } catch (e) {
-            if (e.response && e.response.status === 404) {
-                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
-                return {};
-            }
-            console.error("Could not fetch goalie stats:", e.message);
-            return {};
+            return goalie.
         }
     }, 86400000);
 }
@@ -682,7 +675,7 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: The definitive aggregation pipeline. This is the one.
+// MODIFICATION START: Final aggregation pipeline to correctly process game-by-game data with multiple situations.
 async function getTeamSeasonAdvancedStats(team, season) {
     const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_definitive`;
     return fetchData(cacheKey, async () => {
@@ -691,12 +684,14 @@ async function getTeamSeasonAdvancedStats(team, season) {
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Initial Match for team, season, and robustly identify team-level data.
+                // Stage 1: Initial Match. Uses an index on 'team' and 'season' for performance.
                 {
                     $match: {
                         team: team,
                         season: { $in: [seasonNumber, seasonString] },
-                        $expr: { $eq: ["$team", "$name"] } // Ensures we only get team-level rows
+                        // Robustly identify team-level data by checking if team and name are the same.
+                        // This avoids relying on the 'position' field which may be inconsistent.
+                        $expr: { $eq: ["$team", "$name"] }
                     }
                 },
                 // Stage 2: Use $facet to run parallel aggregations for different situations.
