@@ -366,7 +366,14 @@ async function getGoalieStats() {
                     };
                 });
             }
-            return goalie.
+            return goalieStats;
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
+                return {};
+            }
+            console.error("Could not fetch goalie stats:", e.message);
+            return {};
         }
     }, 86400000);
 }
@@ -675,16 +682,16 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Final aggregation pipeline to correctly process game-by-game data with multiple situations.
+// MODIFICATION START: The definitive aggregation pipeline.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_definitive`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v7_final`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Initial Match. Uses an index on 'team' and 'season' for performance.
+                // Stage 1: Filter documents. This is the most critical stage.
                 {
                     $match: {
                         team: team,
@@ -694,63 +701,47 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         $expr: { $eq: ["$team", "$name"] }
                     }
                 },
-                // Stage 2: Use $facet to run parallel aggregations for different situations.
+                // Stage 2: Use $group with conditional sums to aggregate different situations in one pass.
                 {
-                    $facet: {
-                        "fiveOnFiveData": [
-                            { $match: { situation: "5on5" } },
-                            {
-                                $group: {
-                                    _id: null,
-                                    total_xGoalsFor: { $sum: "$xGoalsFor" },
-                                    total_xGoalsAgainst: { $sum: "$xGoalsAgainst" },
-                                    total_highDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
-                                    total_highDangerxGoalsAgainst: { $sum: "$highDangerxGoalsAgainst" }
-                                }
-                            }
-                        ],
-                        "allSituationsData": [
-                            { $match: { situation: "all" } },
-                            {
-                                $group: {
-                                    _id: null,
-                                    total_goalsFor: { $sum: "$goalsFor" },
-                                    total_shotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
-                                    total_goalsAgainst: { $sum: "$goalsAgainst" },
-                                    total_shotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" }
-                                }
-                            }
-                        ]
+                    $group: {
+                        _id: null, // Group all matched documents for the season into one.
+                        // Conditionally sum stats ONLY from '5on5' rows
+                        xGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsFor", 0] } },
+                        xGoalsAgainst_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsAgainst", 0] } },
+                        highDangerxGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$highDangerxGoalsFor", 0] } },
+                        highDangerxGoalsAgainst_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$highDangerxGoalsAgainst", 0] } },
+                        
+                        // Conditionally sum stats ONLY from 'all' situation rows
+                        goalsFor_all: { $sum: { $cond: [{ $eq: ["$situation", "all"] }, "$goalsFor", 0] } },
+                        shotsOnGoalFor_all: { $sum: { $cond: [{ $eq: ["$situation", "all"] }, "$shotsOnGoalFor", 0] } },
+                        goalsAgainst_all: { $sum: { $cond: [{ $eq: ["$situation", "all"] }, "$goalsAgainst", 0] } },
+                        shotsOnGoalAgainst_all: { $sum: { $cond: [{ $eq: ["$situation", "all"] }, "$shotsOnGoalAgainst", 0] } }
                     }
                 },
-                // Stage 3: Project the first element from each facet result array.
-                {
-                    $project: {
-                        fiveOnFive: { $arrayElemAt: ["$fiveOnFiveData", 0] },
-                        allSituations: { $arrayElemAt: ["$allSituationsData", 0] }
-                    }
-                },
-                // Stage 4: Calculate the final metrics, with safety checks for missing/null data.
+                // Stage 3: Calculate the final metrics from the grouped totals.
                 {
                     $project: {
                         _id: 0,
                         xGoalsPercentage: {
                             $cond: {
-                                if: { $and: [ { $ne: ["$fiveOnFive", null] }, { $gt: [{ $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }, 0] } ]},
-                                then: { $multiply: [{ $divide: ["$fiveOnFive.total_xGoalsFor", { $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }] }, 100] },
+                                if: { $gt: [{ $add: ["$xGoalsFor_5on5", "$xGoalsAgainst_5on5"] }, 0] },
+                                then: { $multiply: [{ $divide: ["$xGoalsFor_5on5", { $add: ["$xGoalsFor_5on5", "$xGoalsAgainst_5on5"] }] }, 100] },
                                 else: null
                             }
                         },
-                        highDangerxGoalsFor: { $ifNull: [ "$fiveOnFive.total_highDangerxGoalsFor", null ] },
-                        highDangerxGoalsAgainst: { $ifNull: [ "$fiveOnFive.total_highDangerxGoalsAgainst", null ] },
+                        highDangerxGoalsFor: "$highDangerxGoalsFor_5on5",
+                        highDangerxGoalsAgainst: "$highDangerxGoalsAgainst_5on5",
                         pdo: {
                            $cond: {
-                                if: { $and: [ { $ne: ["$allSituations", null] }, { $gt: ["$allSituations.total_shotsOnGoalFor", 0] }, { $gt: ["$allSituations.total_shotsOnGoalAgainst", 0] } ]},
+                                if: { $and: [
+                                    { $gt: ["$shotsOnGoalFor_all", 0] },
+                                    { $gt: ["$shotsOnGoalAgainst_all", 0] }
+                                ]},
                                 then: {
                                      $multiply: [
                                         { $add: [
-                                            { $divide: ["$allSituations.total_goalsFor", "$allSituations.total_shotsOnGoalFor"] }, 
-                                            { $divide: [{ $subtract: ["$allSituations.total_shotsOnGoalAgainst", "$allSituations.total_goalsAgainst"] }, "$allSituations.total_shotsOnGoalAgainst"] }
+                                            { $divide: ["$goalsFor_all", "$shotsOnGoalFor_all"] }, 
+                                            { $divide: [{ $subtract: ["$shotsOnGoalAgainst_all", "$goalsAgainst_all"] }, "$shotsOnGoalAgainst_all"] }
                                         ]},
                                         1000
                                     ]
@@ -785,6 +776,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
                  finalStats.pdo = teamSeasonData.pdo;
             }
 
+            // These are not calculated from the historical data, so they remain neutral.
             finalStats.ppXGoalsForPer60 = 0;
             finalStats.pkXGoalsAgainstPer60 = 0;
             
