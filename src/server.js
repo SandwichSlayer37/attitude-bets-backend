@@ -682,16 +682,16 @@ async function getAllDailyPredictions() {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Corrected the aggregation pipeline to filter by "position: Team Level" AND handle flexible season data type.
+// MODIFICATION START: Final aggregation pipeline to correctly process game-by-game data with multiple situations.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v4_final`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v5_final`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
             const seasonNumber = parseInt(seasonString, 10);
 
             const pipeline = [
-                // Stage 1: Filter documents
+                // Stage 1: Filter documents to the relevant team, season, and only team-level summaries.
                 {
                     $match: {
                         team: team,
@@ -728,29 +728,33 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         ]
                     }
                 },
-                // Stage 3: Unwind the results from the facet arrays
+                // Stage 3: Unwind the results from the facet arrays, making them easier to access.
                 {
                     $project: {
                         fiveOnFive: { $arrayElemAt: ["$fiveOnFiveData", 0] },
                         allSituations: { $arrayElemAt: ["$allSituationsData", 0] }
                     }
                 },
-                // Stage 4: Combine and calculate the final metrics
+                // Stage 4: Combine and calculate the final metrics, with checks to prevent errors if data is missing.
                 {
                     $project: {
                         _id: 0,
                         xGoalsPercentage: {
                             $cond: {
-                                if: { $gt: [{ $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }, 0] },
+                                if: { $and: [
+                                    { $ne: ["$fiveOnFive", null] },
+                                    { $gt: [{ $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }, 0] }
+                                ]},
                                 then: { $multiply: [{ $divide: ["$fiveOnFive.total_xGoalsFor", { $add: ["$fiveOnFive.total_xGoalsFor", "$fiveOnFive.total_xGoalsAgainst"] }] }, 100] },
                                 else: null
                             }
                         },
-                        highDangerxGoalsFor: "$fiveOnFive.total_highDangerxGoalsFor",
-                        highDangerxGoalsAgainst: "$fiveOnFive.total_highDangerxGoalsAgainst",
+                        highDangerxGoalsFor: { $ifNull: [ "$fiveOnFive.total_highDangerxGoalsFor", null ] },
+                        highDangerxGoalsAgainst: { $ifNull: [ "$fiveOnFive.total_highDangerxGoalsAgainst", null ] },
                         pdo: {
                            $cond: {
                                 if: { $and: [
+                                    { $ne: ["$allSituations", null] },
                                     { $gt: ["$allSituations.total_shotsOnGoalFor", 0] },
                                     { $gt: ["$allSituations.total_shotsOnGoalAgainst", 0] }
                                 ]},
@@ -774,8 +778,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
 
             const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
 
-            if (!aggregationResult || aggregationResult.length === 0 || !aggregationResult[0].fiveOnFive || !aggregationResult[0].allSituations) {
-                console.log(`[DATA NOT FOUND] Aggregation returned incomplete or no results for ${team} in season ${seasonString}`);
+            if (!aggregationResult || aggregationResult.length === 0) {
+                console.log(`[DATA NOT FOUND] Aggregation pipeline failed for ${team} in season ${seasonString}. This is expected if data is truly missing.`);
                 return {};
             }
             
@@ -785,7 +789,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
             if (teamSeasonData.xGoalsPercentage) {
                 finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage;
             }
-            if (teamSeasonData.highDangerxGoalsFor !== undefined && teamSeasonData.highDangerxGoalsAgainst !== undefined) {
+            if (teamSeasonData.highDangerxGoalsFor !== null && teamSeasonData.highDangerxGoalsAgainst !== null) {
                  const totalHdXg = teamSeasonData.highDangerxGoalsFor + teamSeasonData.highDangerxGoalsAgainst;
                  if (totalHdXg > 0) {
                     finalStats.hdcfPercentage = (teamSeasonData.highDangerxGoalsFor / totalHdXg) * 100;
@@ -1285,7 +1289,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
         const [homeNews, awayNews] = await Promise.all([
             getTeamNewsFromReddit(homeCanonical),
