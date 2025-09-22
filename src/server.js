@@ -619,72 +619,65 @@ async function runPredictionEngine(game, sportKey, context) {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: The definitive aggregation pipeline.
+// MODIFICATION START: Rewritten DB function for reliability
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v11_final`;
+    const cacheKey = `adv_stats_js_process_${team}_${season}_v1`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
+            // Step 1: Fetch all data for the team/season. This is more robust.
+            const results = await nhlStatsCollection.find({
+                season: seasonNumber,
+                team: team
+            }).toArray();
 
-            const pipeline = [
-                {
-                    $match: {
-                        season: seasonNumber,
-                        team: team
-                    }
-                },
-                {
-                    $group: {
-                        _id: null,
-                        xGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsFor", 0] } },
-                        xGoalsAgainst_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsAgainst", 0] } },
-                        highDangerxGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$highDangerxGoalsFor", 0] } },
-                        highDangerxGoalsAgainst_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$highDangerxGoalsAgainst", 0] } },
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        xGoalsPercentage: {
-                            $cond: {
-                                if: { $gt: [{ $add: ["$xGoalsFor_5on5", "$xGoalsAgainst_5on5"] }, 0] },
-                                then: { $multiply: [{ $divide: ["$xGoalsFor_5on5", { $add: ["$xGoalsFor_5on5", "$xGoalsAgainst_5on5"] }] }, 100] },
-                                else: null
-                            }
-                        },
-                        highDangerxGoalsFor: "$highDangerxGoalsFor_5on5",
-                        highDangerxGoalsAgainst: "$highDangerxGoalsAgainst_5on5",
-                    }
-                }
-            ];
-
-            const aggregationResult = await nhlStatsCollection.aggregate(pipeline).toArray();
-
-            if (!aggregationResult || aggregationResult.length === 0) {
-                console.log(`[DATA NOT FOUND] Final aggregation returned no results for ${team} in season ${seasonNumber}.`);
+            if (!results || results.length === 0) {
+                console.log(`[DATA NOT FOUND] No documents found for ${team} in season ${seasonNumber}.`);
                 return {};
             }
-            
-            const teamSeasonData = aggregationResult[0];
+
+            // Step 2: Find the specific situational data from the results array.
+            const s5on5 = results.find(r => r.situation === '5on5');
+            const s5on4 = results.find(r => r.situation === '5on4'); // Team is on the Power Play
+            const s4on5 = results.find(r => r.situation === '4on5'); // Team is on the Penalty Kill
+
+            if (!s5on5) {
+                console.log(`[WARN] 5on5 data missing for ${team} in ${seasonNumber}. Cannot calculate advanced stats.`);
+                return {};
+            }
+
             const finalStats = {};
 
-            if (teamSeasonData.xGoalsPercentage) {
-                finalStats.fiveOnFiveXgPercentage = teamSeasonData.xGoalsPercentage;
+            // Step 3: Calculate each stat, checking for valid data at each step.
+            // 5-on-5 xG%
+            const totalXG_5on5 = s5on5.xGoalsFor + s5on5.xGoalsAgainst;
+            if (totalXG_5on5 > 0) {
+                finalStats.fiveOnFiveXgPercentage = (s5on5.xGoalsFor / totalXG_5on5) * 100;
             }
-            if (teamSeasonData.highDangerxGoalsFor !== null && teamSeasonData.highDangerxGoalsAgainst !== null) {
-                 const totalHdXg = teamSeasonData.highDangerxGoalsFor + teamSeasonData.highDangerxGoalsAgainst;
-                 if (totalHdXg > 0) {
-                    finalStats.hdcfPercentage = (teamSeasonData.highDangerxGoalsFor / totalHdXg) * 100;
-                 }
+
+            // High-Danger Battle
+            const totalHDXG_5on5 = s5on5.highDangerxGoalsFor + s5on5.highDangerxGoalsAgainst;
+            if (totalHDXG_5on5 > 0) {
+                finalStats.hdcfPercentage = (s5on5.highDangerxGoalsFor / totalHDXG_5on5) * 100;
             }
             
-            finalStats.ppXGoalsForPer60 = 0;
-            finalStats.pkXGoalsAgainstPer60 = 0;
+            // Special Teams Duel
+            const ppRating = s5on4 ? s5on4.xGoalsFor : 0; // Use xGoalsFor when on the PP
+            const pkRating = s4on5 ? s4on5.xGoalsAgainst : 0; // Use xGoalsAgainst when on the PK
+            finalStats.specialTeamsRating = ppRating - pkRating;
+
+            // PDO (Luck Factor)
+            const totalShots_5on5 = s5on5.shotsOnGoalFor + s5on5.shotsOnGoalAgainst;
+            if (totalShots_5on5 > 0) {
+                const shootingPct = (s5on5.goalsFor / s5on5.shotsOnGoalFor) * 100;
+                const savePct = 100 - ((s5on5.goalsAgainst / s5on5.shotsOnGoalAgainst) * 100);
+                finalStats.pdo = shootingPct + savePct;
+            }
             
             return finalStats;
 
         } catch (error) {
-            console.error(`[CRITICAL ERROR] Error during aggregation for ${team} in ${season}:`, error);
+            console.error(`[CRITICAL ERROR] Error during JS processing for ${team} in ${season}:`, error);
             return {};
         }
     }, 86400000);
@@ -711,8 +704,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
         getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
     ]);
-
-    if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
+    
+    // Check if the primary data fetch failed for either team
+    if (Object.keys(homeAdvStats).length === 0 || Object.keys(awayAdvStats).length === 0) {
          console.log(`[WARN] No data found for previous season (${previousSeasonId}). Falling back two seasons to ${twoSeasonsAgoId} as a temporary measure.`);
          [homeAdvStats, awayAdvStats] = await Promise.all([
             getTeamSeasonAdvancedStats(homeAbbr, twoSeasonsAgoId),
@@ -731,17 +725,20 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
     factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
     
+    // MODIFICATION START: Add all advanced factors from the now-working function
     if (homeAdvStats.fiveOnFiveXgPercentage && awayAdvStats.fiveOnFiveXgPercentage) {
         factors['5-on-5 xG%'] = { value: homeAdvStats.fiveOnFiveXgPercentage - awayAdvStats.fiveOnFiveXgPercentage, homeStat: `${homeAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%` };
     }
     if (homeAdvStats.hdcfPercentage && awayAdvStats.hdcfPercentage) {
         factors['High-Danger Battle'] = { value: homeAdvStats.hdcfPercentage - awayAdvStats.hdcfPercentage, homeStat: `${homeAdvStats.hdcfPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.hdcfPercentage.toFixed(1)}%` };
     }
-    
-    // Placeholder for Special Teams & PDO - can be implemented once DB function is extended
-    factors['Special Teams Duel'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
-    factors['PDO (Luck Factor)'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
-
+    if (homeAdvStats.specialTeamsRating && awayAdvStats.specialTeamsRating) {
+        factors['Special Teams Duel'] = { value: homeAdvStats.specialTeamsRating - awayAdvStats.specialTeamsRating, homeStat: `${homeAdvStats.specialTeamsRating.toFixed(2)}`, awayStat: `${awayAdvStats.specialTeamsRating.toFixed(2)}` };
+    }
+    if (homeAdvStats.pdo && awayAdvStats.pdo) {
+        factors['PDO (Luck Factor)'] = { value: homeAdvStats.pdo - awayAdvStats.pdo, homeStat: `${homeAdvStats.pdo.toFixed(1)}`, awayStat: `${awayAdvStats.pdo.toFixed(1)}` };
+    }
+    // MODIFICATION END
 
     const homeStreakVal = (homeRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeRealTimeStats.streak?.substring(1) || 0, 10);
     const awayStreakVal = (awayRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayRealTimeStats.streak?.substring(1) || 0, 10);
@@ -1218,7 +1215,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const bookmakers = await getPropBets(game.sportKey, game.id);
         if (bookmakers.length === 0 || !bookmakers[0].markets || !bookmakers[0].markets.length === 0) {
             return res.json({ 
-                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
+                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We're couldn't find any player prop bet markets for this game at the moment.</p>`
             });
         }
         let availableProps = '';
