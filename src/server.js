@@ -621,7 +621,7 @@ async function runPredictionEngine(game, sportKey, context) {
 
 // MODIFICATION START: Final and correct DB aggregation logic
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v2`;
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v3`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
@@ -629,9 +629,13 @@ async function getTeamSeasonAdvancedStats(team, season) {
             // This pipeline reads all per-game data and summarizes it for the season
             const pipeline = [
                 {
+                    // FIX: Match season as either a number or a string to handle data inconsistencies
                     $match: {
-                        season: seasonNumber,
-                        team: team
+                        team: team,
+                        $or: [
+                            { season: seasonNumber },
+                            { season: String(seasonNumber) }
+                        ]
                     }
                 },
                 {
@@ -657,7 +661,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
                 return {};
             }
             
-            // Convert array to a more accessible object, e.g., { '5on5': { ...stats }, '5on4': { ...stats } }
             const seasonalData = results.reduce((acc, curr) => {
                 acc[curr._id] = curr;
                 return acc;
@@ -787,7 +790,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     
     const homeInjuryImpact = (injuries[homeCanonical] || []).length;
     const awayInjuryImpact = (injuries[awayCanonical] || []).length;
-    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonicalName] || [] } };
 
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
