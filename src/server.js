@@ -39,6 +39,8 @@ async function connectToDb() {
         dailyFeaturesCollection = db.collection('daily_features');
         nhlStatsCollection = db.collection('nhl_advanced_stats');
         console.log('Connected to MongoDB');
+        // MODIFICATION: Added a log to confirm the exact database name
+        console.log(`[INFO] Successfully connected to database: "${db.databaseName}"`);
         return db;
     } catch (e) {
         console.error("Failed to connect to MongoDB", e);
@@ -331,7 +333,7 @@ async function getPropBets(sportKey, gameId) {
     const key = `props_${gameId}`;
     return fetchData(key, async () => {
         try {
-            const markets = 'player_points,player_rebounds,player_assist,player_pass_tds,player_pass_yds,player_strikeouts';
+            const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
             const { data } = await axios.get(url);
             return data.bookmakers || [];
@@ -619,13 +621,13 @@ async function runPredictionEngine(game, sportKey, context) {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Added one debug line to expose the query parameters
+// MODIFICATION START: Final and correct DB aggregation logic
 async function getTeamSeasonAdvancedStats(team, season) {
     const cacheKey = `adv_stats_final_agg_${team}_${season}_v4_debug`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
-
+            
             // ================== DEBUGGING LINE ==================
             console.log(`[DEBUG] Querying MongoDB for team: "${team}" (type: ${typeof team}), season: ${seasonNumber} (type: ${typeof seasonNumber})`);
             // ====================================================
