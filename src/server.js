@@ -331,7 +331,7 @@ async function getPropBets(sportKey, gameId) {
     const key = `props_${gameId}`;
     return fetchData(key, async () => {
         try {
-            const markets = 'player_points,player_rebounds,player_assists,player_pass_tds,player_pass_yds,player_strikeouts';
+            const markets = 'player_points,player_rebounds,player_assist,player_pass_tds,player_pass_yds,player_strikeouts';
             const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${gameId}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=${markets}&oddsFormat=decimal`;
             const { data } = await axios.get(url);
             return data.bookmakers || [];
@@ -619,16 +619,19 @@ async function runPredictionEngine(game, sportKey, context) {
 // NEW NHL ENGINE 2.0
 // =================================================================
 
-// MODIFICATION START: Final and correct DB aggregation logic
+// MODIFICATION START: Added one debug line to expose the query parameters
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v3`;
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v4_debug`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
 
+            // ================== DEBUGGING LINE ==================
+            console.log(`[DEBUG] Querying MongoDB for team: "${team}" (type: ${typeof team}), season: ${seasonNumber} (type: ${typeof seasonNumber})`);
+            // ====================================================
+
             const pipeline = [
                 {
-                    // FIX: Match season as either a number or a string to handle data inconsistencies
                     $match: {
                         team: team,
                         $or: [
@@ -639,8 +642,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
                 },
                 {
                     $group: {
-                        _id: "$situation", // Group by each situation (5on5, 5on4, etc.)
-                        // Sum the required fields for the entire season
+                        _id: "$situation",
                         totalxGoalsFor: { $sum: "$xGoalsFor" },
                         totalxGoalsAgainst: { $sum: "$xGoalsAgainst" },
                         totalHighDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
@@ -666,34 +668,30 @@ async function getTeamSeasonAdvancedStats(team, season) {
             }, {});
 
             const s5on5 = seasonalData['5on5'];
-            const s5on4 = seasonalData['5on4']; // Team is on the Power Play
-            const s4on5 = seasonalData['4on5']; // Team is on the Penalty Kill
+            const s5on4 = seasonalData['5on4'];
+            const s4on5 = seasonalData['4on5'];
 
             if (!s5on5) {
-                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}. Cannot calculate advanced stats.`);
+                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}. This is expected if the team had no 5on5 data for the season.`);
                 return {};
             }
 
             const finalStats = {};
 
-            // Calculate 5-on-5 xG%
             const totalXG_5on5 = s5on5.totalxGoalsFor + s5on5.totalxGoalsAgainst;
             if (totalXG_5on5 > 0) {
                 finalStats.fiveOnFiveXgPercentage = (s5on5.totalxGoalsFor / totalXG_5on5) * 100;
             }
 
-            // Calculate High-Danger Battle
             const totalHDXG_5on5 = s5on5.totalHighDangerxGoalsFor + s5on5.totalHighDangerxGoalsAgainst;
             if (totalHDXG_5on5 > 0) {
                 finalStats.hdcfPercentage = (s5on5.totalHighDangerxGoalsFor / totalHDXG_5on5) * 100;
             }
             
-            // Calculate Special Teams Duel
             const ppRating = s5on4 ? s5on4.totalxGoalsFor : 0;
             const pkRating = s4on5 ? s4on5.totalxGoalsAgainst : 0;
             finalStats.specialTeamsRating = ppRating - pkRating;
 
-            // Calculate PDO (Luck Factor)
             if (s5on5.totalShotsOnGoalFor > 0 && s5on5.totalShotsOnGoalAgainst > 0) {
                 const shootingPct = (s5on5.totalGoalsFor / s5on5.totalShotsOnGoalFor);
                 const savePct = 1 - (s5on5.totalGoalsAgainst / s5on5.totalShotsOnGoalAgainst);
@@ -708,7 +706,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
         }
     }, 86400000);
 }
-// MODIFICATION END
 
 
 async function runAdvancedNhlPredictionEngine(game, context) {
@@ -723,8 +720,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
 
     const currentYear = new Date().getFullYear();
-    const previousSeasonId = currentYear - 1; // 2024 for a 2025 run
-    const twoSeasonsAgoId = currentYear - 2; // 2023 for a 2025 run
+    const previousSeasonId = currentYear - 1; 
+    const twoSeasonsAgoId = currentYear - 2; 
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
         getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
@@ -826,7 +823,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         homeValue = homePower - homeImpliedProb;
         awayValue = (100 - homePower) - (1 / awayOdds * 100);
         factors['Betting Value'] = { value: homeValue, homeStat: `${homeValue.toFixed(1)}%`, awayStat: `${awayValue.toFixed(1)}%` };
-        homeScore += (homeValue * (weights.value / 10));
+        // FIX: Removed the buggy line that corrupted the homeScore
     } else {
          factors['Betting Value'] = { value: 0, homeStat: `N/A`, awayStat: `N/A` };
     }
@@ -963,7 +960,7 @@ app.get('/api/predictions', async (req, res) => {
         }
         res.json(predictions);
     } catch(error) {
-        console.error(`Prediction Error for ${sport}:`, error.message);
+        console.error(`Prediction Error for ${sport}:`, error.message, error.stack);
         res.status(500).json({ error: `Failed to get predictions for ${sport}`});
     }
 });
