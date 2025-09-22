@@ -704,8 +704,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
 
     const currentYear = new Date().getFullYear();
-    const previousSeasonId = currentYear - 1; // 2024
-    const twoSeasonsAgoId = currentYear - 2; // 2023
+    const previousSeasonId = currentYear - 1; // 2024 for a 2025 run
+    const twoSeasonsAgoId = currentYear - 2; // 2023 for a 2025 run
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
         getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
@@ -738,6 +738,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         factors['High-Danger Battle'] = { value: homeAdvStats.hdcfPercentage - awayAdvStats.hdcfPercentage, homeStat: `${homeAdvStats.hdcfPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.hdcfPercentage.toFixed(1)}%` };
     }
     
+    // Placeholder for Special Teams & PDO - can be implemented once DB function is extended
+    factors['Special Teams Duel'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
+    factors['PDO (Luck Factor)'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
+
+
     const homeStreakVal = (homeRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeRealTimeStats.streak?.substring(1) || 0, 10);
     const awayStreakVal = (awayRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayRealTimeStats.streak?.substring(1) || 0, 10);
     factors['Hot Streak'] = { value: homeStreakVal - awayStreakVal, homeStat: homeRealTimeStats.streak || 'N/A', awayStat: awayRealTimeStats.streak || 'N/A' };
@@ -771,6 +776,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
             const factorKey = {
                 '5-on-5 xG%': 'fiveOnFiveXg',
                 'High-Danger Battle': 'highDangerBattle',
+                'Special Teams Duel': 'specialTeamsDuel',
                 'Goalie Matchup': 'goalie',
                 'Injury Impact': 'injury',
                 'Fatigue': 'fatigue',
@@ -779,11 +785,12 @@ async function runAdvancedNhlPredictionEngine(game, context) {
                 'Record': 'record',
                 'Offensive Form (G/GP)': 'offensiveForm',
                 'Defensive Form (GA/GP)': 'defensiveForm',
-                'Faceoff Advantage': 'faceoffAdvantage'
+                'Faceoff Advantage': 'faceoffAdvantage',
+                'PDO (Luck Factor)': 'pdo'
             }[factorName];
 
             if (factorKey && weights[factorKey]) {
-                const weight = weights[factorKey]; // CRITICAL FIX
+                const weight = weights[factorKey];
                 homeScore += factors[factorName].value * weight;
             }
         }
@@ -1289,4 +1296,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
