@@ -730,9 +730,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
 
     const currentYear = new Date().getFullYear();
-    const currentSeasonId = parseInt(`${currentYear}${currentYear + 1}`, 10);
-    const previousSeasonId = parseInt(`${currentYear - 1}${currentYear}`, 10);
-    const twoSeasonsAgoId = parseInt(`${currentYear - 2}${currentYear - 1}`, 10);
+    const currentSeasonId = currentYear;
+    const previousSeasonId = currentYear - 1;
+    const twoSeasonsAgoId = currentYear - 2;
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
         getTeamSeasonAdvancedStats(homeAbbr, currentSeasonId),
@@ -740,14 +740,14 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     ]);
 
     if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
-        console.log(`Incomplete current season data. Falling back to previous season (2024) stats for ${away_team} @ ${home_team}.`);
+        console.log(`Incomplete current season data. Falling back to previous season (${previousSeasonId}) stats for ${away_team} @ ${home_team}.`);
         [homeAdvStats, awayAdvStats] = await Promise.all([
             getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
             getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
         ]);
 
         if ((!homeAdvStats || !homeAdvStats.fiveOnFiveXgPercentage) || (!awayAdvStats || !awayAdvStats.fiveOnFiveXgPercentage)) {
-             console.log(`[WARN] No data found for previous season (2024). Falling back two seasons to 2023 as a temporary measure.`);
+             console.log(`[WARN] No data found for previous season (${previousSeasonId}). Falling back two seasons to ${twoSeasonsAgoId} as a temporary measure.`);
              [homeAdvStats, awayAdvStats] = await Promise.all([
                 getTeamSeasonAdvancedStats(homeAbbr, twoSeasonsAgoId),
                 getTeamSeasonAdvancedStats(awayAbbr, twoSeasonsAgoId)
