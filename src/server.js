@@ -621,7 +621,7 @@ async function runPredictionEngine(game, sportKey, context) {
 
 // MODIFICATION START: The definitive aggregation pipeline.
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_aggregate_${team}_${season}_v8_definitive`;
+    const cacheKey = `adv_stats_aggregate_${team}_${season}_v9_definitive`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonString = String(season).substring(0, 4);
@@ -638,7 +638,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
                 // Stage 2: Group and conditionally sum stats based on 'situation'.
                 {
                     $group: {
-                        _id: null,
+                        _id: null, // Group all matched documents for the season into one.
                         xGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsFor", 0] } },
                         xGoalsAgainst_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$xGoalsAgainst", 0] } },
                         highDangerxGoalsFor_5on5: { $sum: { $cond: [{ $eq: ["$situation", "5on5"] }, "$highDangerxGoalsFor", 0] } },
