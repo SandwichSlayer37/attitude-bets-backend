@@ -38,9 +38,8 @@ async function connectToDb() {
         predictionsCollection = db.collection('predictions');
         dailyFeaturesCollection = db.collection('daily_features');
         nhlStatsCollection = db.collection('nhl_advanced_stats');
-        // MODIFICATION: Added collections for Engine 3.0
         nhlSkaterStatsCollection = db.collection('nhl_skater_stats_historical');
-        nhlShotDataCollection = db.collection('nhl_shot_data_historical'); // Assumes shot data is in this collection
+        nhlGoalieStatsCollection = db.collection('nhl_goalie_stats_historical');
         console.log('Connected to MongoDB');
         console.log(`[INFO] Successfully connected to database: "${db.databaseName}"`);
         return db;
@@ -137,6 +136,7 @@ function getDynamicWeights(sportKey) {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
     // ENGINE 3.0 HYBRID WEIGHTS
+   // ENGINE 3.0 HYBRID WEIGHTS
     if (sportKey === 'icehockey_nhl') {
         return { 
             // Engine 2.0 Advanced Factors
@@ -367,13 +367,19 @@ async function calculatePlayerImpactRatings() {
                 {
                     $match: {
                         season: { $in: lastTwoSeasons },
-                        games_played: { $gte: 20 } // Only include players with a decent sample size
+                        games_played: { $gte: 20 }, // Only include players with a decent sample size
+                        situation: "all" // Use the overall stats for a player
                     }
                 },
                 {
                     $group: {
                         _id: "$name", // Group by player name
                         avgGameScore: { $avg: "$gameScore" }
+                    }
+                },
+                {
+                    $match: {
+                        avgGameScore: { $ne: null } // Filter out any null results
                     }
                 }
             ];
@@ -391,31 +397,26 @@ async function calculatePlayerImpactRatings() {
 }
 
 async function getGoalieGSAxRatings(goalieNames) {
-    const cacheKey = `gsax_ratings_${goalieNames.join('_')}`;
+    const cacheKey = `gsax_ratings_summary_${goalieNames.join('_')}_${new Date().getFullYear() - 1}`;
     return fetchData(cacheKey, async () => {
         try {
             if (!goalieNames || goalieNames.length === 0) return {};
+            
             const lastSeason = new Date().getFullYear() - 1;
-            const pipeline = [
-                {
-                    $match: {
-                        season: lastSeason,
-                        goalieNameForShot: { $in: goalieNames }
-                    }
-                },
-                {
-                    $group: {
-                        _id: "$goalieNameForShot",
-                        totalXGoalsAgainst: { $sum: "$xGoal" },
-                        totalGoalsAgainst: { $sum: "$isGoal" }
-                    }
-                }
-            ];
-            const results = await nhlShotDataCollection.aggregate(pipeline).toArray();
+            
+            // Find the seasonal summary data for the requested goalies
+            const results = await nhlGoalieStatsCollection.find({
+                name: { $in: goalieNames },
+                season: lastSeason,
+                situation: "all" // Use the overall seasonal stats
+            }).toArray();
+
             const ratings = results.reduce((acc, goalie) => {
-                acc[goalie._id] = goalie.totalXGoalsAgainst - goalie.totalGoalsAgainst;
+                // GSAx = Expected Goals - Goals. Provided directly in the summary data.
+                acc[goalie.name] = goalie.xGoals - goalie.goals;
                 return acc;
             }, {});
+            
             return ratings;
         } catch (error) {
             console.error('[CRITICAL ERROR] Could not calculate GSAx ratings:', error);
@@ -744,6 +745,9 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000);
 }
 
+// =================================================================
+// NHL ENGINE 3.0 (PLAYER-CENTRIC PREDICTION)
+// =================================================================
 // =================================================================
 // NHL ENGINE 3.0 (PLAYER-CENTRIC PREDICTION)
 // =================================================================
@@ -1375,3 +1379,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
