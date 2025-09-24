@@ -928,6 +928,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 // MAIN API ROUTES
 // =================================================================
 async function getPredictionsForSport(sportKey) {
+    // MODIFICATION: Fetch Engine 3.0 data for NHL
+    let gsaxRatings = {};
     let playerImpactRatings = {};
     if (sportKey === 'icehockey_nhl') {
         playerImpactRatings = await calculatePlayerImpactRatings();
@@ -948,6 +950,7 @@ async function getPredictionsForSport(sportKey) {
     const injuries = {};
     const h2hRecords = {};
     const probableStarters = {};
+    const probableGoalieNames = new Set();
     if (espnDataResponse?.events) {
         espnDataResponse.events.forEach(event => {
             const competition = event.competitions?.[0];
@@ -959,6 +962,7 @@ async function getPredictionsForSport(sportKey) {
                     if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
                         const goalieName = competitor.probablePitcher.athlete.displayName;
                         probableStarters[canonicalName] = goalieName;
+                        probableGoalieNames.add(goalieName);
                     }
                 }
             });
@@ -975,6 +979,11 @@ async function getPredictionsForSport(sportKey) {
                 }
             }
         });
+    }
+
+    if (sportKey === 'icehockey_nhl' && probableGoalieNames.size > 0) {
+        // This function is removed to save storage, but the call remains in case it's added back later.
+        // gsaxRatings = await getGoalieGSAxRatings(Array.from(probableGoalieNames));
     }
 
     const predictions = [];
@@ -998,17 +1007,28 @@ async function getPredictionsForSport(sportKey) {
                 const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.home_team)?.price;
                 const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.away_team)?.price;
                 const winnerOdds = predictionData.winner === game.home_team ? homeOdds : awayOdds;
+
+                // MODIFICATION START: Use $setOnInsert to lock in odds
                 await predictionsCollection.updateOne(
                     { gameId: game.id },
                     {
-                        $set: {
-                            gameId: game.id, sportKey: sportKey, homeTeam: game.home_team, awayTeam: game.away_team,
-                            predictedWinner: predictionData.winner, gameDate: game.commence_time, status: 'pending',
+                        $set: { // These fields can be updated every time
+                            predictedWinner: predictionData.winner,
+                            status: 'pending'
+                        },
+                        $setOnInsert: { // These fields are only set ONCE when the doc is created
+                            gameId: game.id,
+                            sportKey: sportKey,
+                            homeTeam: game.home_team,
+                            awayTeam: game.away_team,
+                            gameDate: game.commence_time,
                             odds: winnerOdds || null
                         }
                     },
                     { upsert: true }
                 );
+                // MODIFICATION END
+
             } catch (dbError) {
                 console.error("DB Save Error:", dbError);
             }
@@ -1437,6 +1457,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
