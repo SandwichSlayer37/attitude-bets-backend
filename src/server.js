@@ -1249,7 +1249,8 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        const systemPrompt = `You are a master sports betting analyst and strategist. Your primary role is to act as the final decision-maker. You will be given a statistical report and recent news headlines. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
+        // MODIFICATION START: Upgraded AI Persona and Instructions
+        const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant. You are not a generic analyst; you are an opinionated expert who speaks with confidence and authority. Your tone is direct, insightful, and uses analogies to make complex data understandable. Your goal is to build a compelling, data-backed argument that persuades the user to see the game from your perspective. Go beyond simply stating the data; explain the *implications* of the key factors. For the primary risk, identify a specific, plausible scenario that could derail your pick. Your entire response must be only the JSON object specified.`;
         
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
@@ -1273,18 +1274,20 @@ ${awayNews}
 
 **JSON TO COMPLETE:**
 {
-  "finalPick": "string (Your final decision)",
-  "isOverride": "boolean (Did you change the pick?)",
+  "finalPick": "string (Your final decision based on your expert analysis)",
+  "isOverride": "boolean (Did you change the initial pick? Be bold if necessary.)",
   "confidenceScore": "string (High, Medium, or Low)",
-  "gameNarrative": "string (Tell the story of this matchup in 2-3 sentences. What is the overarching theme? E.g., 'This is a classic offense vs. defense matchup...')",
-  "keyFactor": "string (Identify the single most important factor that led to your decision. E.g., 'The overwhelming goalie advantage for the Rangers.')",
-  "primaryRisk": "string (What is the biggest risk or counter-argument to your pick? E.g., 'The primary risk is the potential for an emotional letdown after their recent big win.')"
+  "gameNarrative": "string (In 1-2 sharp sentences, what is the core thesis of this game? Frame it as a compelling clash of styles or a specific mismatch.)",
+  "keyFactor": "string (What is the single most dominant data point or mismatch that underpins your entire thesis? Explain *why* it matters and what its direct impact on the game will be.)",
+  "primaryRisk": "string (What is the one specific, plausible scenario that could make this pick fail? Acknowledge the counter-argument with respect.)"
 }`;
+        // MODIFICATION END
+
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
         const analysisData = JSON.parse(responseText);
         res.json({ analysisData });
-    } catch (error) {
+    } catch (error)
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
@@ -1424,6 +1427,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
