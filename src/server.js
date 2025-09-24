@@ -1249,7 +1249,6 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        // MODIFICATION START: Upgraded AI Persona and Instructions
         const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant. You are not a generic analyst; you are an opinionated expert who speaks with confidence and authority. Your tone is direct, insightful, and uses analogies to make complex data understandable. Your goal is to build a compelling, data-backed argument that persuades the user to see the game from your perspective. Go beyond simply stating the data; explain the *implications* of the key factors. For the primary risk, identify a specific, plausible scenario that could derail your pick. Your entire response must be only the JSON object specified.`;
         
         const model = genAI.getGenerativeModel({
@@ -1281,13 +1280,21 @@ ${awayNews}
   "keyFactor": "string (What is the single most dominant data point or mismatch that underpins your entire thesis? Explain *why* it matters and what its direct impact on the game will be.)",
   "primaryRisk": "string (What is the one specific, plausible scenario that could make this pick fail? Acknowledge the counter-argument with respect.)"
 }`;
-        // MODIFICATION END
-
+        
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
-        const analysisData = JSON.parse(responseText);
+
+        // MODIFICATION START: Clean the AI's response before parsing
+        let cleanedText = responseText;
+        const jsonMatch = cleanedText.match(/{[\s\S]*}/); // Use a regular expression to find the JSON object
+        if (jsonMatch) {
+          cleanedText = jsonMatch[0]; // Extract just the JSON part of the string
+        }
+        // MODIFICATION END
+
+        const analysisData = JSON.parse(cleanedText); // Parse the cleaned text
         res.json({ analysisData });
-    } catch (error)
+    } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
@@ -1427,6 +1434,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
