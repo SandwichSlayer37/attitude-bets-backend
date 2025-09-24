@@ -802,7 +802,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
 
     const currentYear = new Date().getFullYear();
-    const previousSeasonId = currentYear - 1; 
+    let previousSeasonId = currentYear - 1; 
     const twoSeasonsAgoId = currentYear - 2; 
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
@@ -816,6 +816,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
             getTeamSeasonAdvancedStats(homeAbbr, twoSeasonsAgoId),
             getTeamSeasonAdvancedStats(awayAbbr, twoSeasonsAgoId)
         ]);
+        previousSeasonId = twoSeasonsAgoId; // Update the season ID if we fell back
     }
 
     let homeScore = 50.0;
@@ -917,8 +918,10 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const winner = homeScore > 50 ? home_team : away_team;
     const confidence = Math.abs(50 - homeScore);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-
-    return { winner, strengthText, confidence, factors, homeValue, awayValue };
+    
+    const prediction = { winner, strengthText, confidence, factors, homeValue, awayValue };
+    prediction.historicalDataSeason = previousSeasonId; // ADD THIS LINE
+    return prediction;
 }
 
 // =================================================================
@@ -1434,6 +1437,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
