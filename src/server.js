@@ -1263,16 +1263,14 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-        const [homeNews, awayNews] = await Promise.all([
-            getTeamNewsFromReddit(homeCanonical),
-            getTeamNewsFromReddit(awayCanonical)
-        ]);
-
+        // The factorsList is already a comprehensive summary of all relevant stats.
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant. You are not a generic analyst; you are an opinionated expert who speaks with confidence and authority. Your tone is direct, insightful, and uses analogies to make complex data understandable. Your goal is to build a compelling, data-backed argument that persuades the user to see the game from your perspective. Go beyond simply stating the data; explain the *implications* of the key factors. For the primary risk, identify a specific, plausible scenario that could derail your pick. Your entire response must be only the JSON object specified.`;
+        const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant with an encyclopedic knowledge of sports history and news. Your tone is confident, direct, and persuasive. Your goal is to build a compelling, data-backed argument that goes beyond a simple summary.
+
+        When you state your Key Factor or Primary Risk, you **must cite the specific data** from the report that supports your claim. For example, "The key factor is their defensive solidity, as evidenced by their 2.1 GA/GP (Defensive Form)."
+
+        In addition to the provided data, you **must leverage your own internal knowledge** about the teams, recent news, or general narratives to add depth to your analysis. However, your final pick must be primarily driven by the provided real-time stats. Your entire response must be only the JSON object specified.`;
         
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
@@ -1288,88 +1286,30 @@ app.post('/api/ai-analysis', async (req, res) => {
 - Algorithm Confidence: ${prediction.strengthText}
 ${factorsList}
 
-**RECENT NEWS & SENTIMENT (from team subreddits):**
-- **${game.home_team} News:**
-${homeNews}
-- **${game.away_team} News:**
-${awayNews}
-
 **JSON TO COMPLETE:**
 {
   "finalPick": "string (Your final decision based on your expert analysis)",
   "isOverride": "boolean (Did you change the initial pick? Be bold if necessary.)",
   "confidenceScore": "string (High, Medium, or Low)",
-  "gameNarrative": "string (In 1-2 sharp sentences, what is the core thesis of this game? Frame it as a compelling clash of styles or a specific mismatch.)",
-  "keyFactor": "string (What is the single most dominant data point or mismatch that underpins your entire thesis? Explain *why* it matters and what its direct impact on the game will be.)",
-  "primaryRisk": "string (What is the one specific, plausible scenario that could make this pick fail? Acknowledge the counter-argument with respect.)"
+  "gameNarrative": "string (In 1-2 sharp sentences, what is the core thesis of this game? Frame it as a compelling clash of styles or a specific mismatch. Use your internal knowledge to add context.)",
+  "keyFactor": "string (What is the single most dominant data point that underpins your thesis? **You must cite the specific data values in your explanation.** Explain *why* it matters.)",
+  "primaryRisk": "string (What is the one specific, plausible scenario that could make this pick fail? Acknowledge the counter-argument with respect. **If possible, support this risk with a specific data point.**)"
 }`;
         
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
 
-        // MODIFICATION START: Clean the AI's response before parsing
         let cleanedText = responseText;
-        const jsonMatch = cleanedText.match(/{[\s\S]*}/); // Use a regular expression to find the JSON object
+        const jsonMatch = cleanedText.match(/{[\s\S]*}/);
         if (jsonMatch) {
-          cleanedText = jsonMatch[0]; // Extract just the JSON part of the string
+          cleanedText = jsonMatch[0];
         }
-        // MODIFICATION END
 
-        const analysisData = JSON.parse(cleanedText); // Parse the cleaned text
+        const analysisData = JSON.parse(cleanedText);
         res.json({ analysisData });
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
-    }
-});
-app.post('/api/parlay-ai-analysis', async (req, res) => {
-    try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        const { parlay } = req.body;
-        const leg1 = parlay.legs[0];
-        const leg2 = parlay.legs[1];
-        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-        const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-flash",
-            systemInstruction: systemPrompt,
-            generationConfig: {
-                responseMimeType: "application/json",
-            },
-        });
-        const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Data:**
-- Total Odds: ${parlay.totalOdds}
-- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
-- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
-**JSON to complete:**
-{
-  "overview": "",
-  "bullCase": "",
-  "bearCase": ""
-}`;
-        const result = await model.generateContent(userPrompt);
-        const responseText = result.response.text();
-        const parlayData = JSON.parse(responseText);
-
-        const analysisHtml = `
-            <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
-                 <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
-                 <p class="text-lg text-white mt-1">${parlayData.overview}</p>
-            </div>
-            <div class="space-y-4">
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-green-400">Bull Case (Why It Hits)</h4>
-                    <p class="mt-2 text-gray-300">${parlayData.bullCase}</p>
-                </div>
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-red-400">Bear Case (Primary Risks)</h4>
-                    <p class="mt-2 text-gray-300">${parlayData.bearCase}</p>
-                </div>
-            </div>`;
-        res.json({ analysisHtml });
-    } catch (error) {
-        console.error("Parlay AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
 app.post('/api/ai-prop-analysis', async (req, res) => {
@@ -1457,6 +1397,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
