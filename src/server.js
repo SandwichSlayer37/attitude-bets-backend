@@ -691,13 +691,10 @@ async function runPredictionEngine(game, sportKey, context) {
 // NHL ENGINE 2.0 (BASE TEAM STATS)
 // =================================================================
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v4_debug`;
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v5_faceoffs`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
-            
-            console.log(`[DEBUG] Querying MongoDB for team: "${team}" (type: ${typeof team}), season: ${seasonNumber} (type: ${typeof seasonNumber})`);
-
             const pipeline = [
                 {
                     $match: {
@@ -716,6 +713,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         totalGoalsAgainst: { $sum: "$goalsAgainst" },
                         totalShotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
                         totalShotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" },
+                        totalFaceoffsWon: { $sum: "$faceOffsWonFor" },
+                        totalFaceoffsAgainst: { $sum: "$faceOffsWonAgainst" }
                     }
                 }
             ];
@@ -735,32 +734,45 @@ async function getTeamSeasonAdvancedStats(team, season) {
             const s5on5 = seasonalData['5on5'];
             const s5on4 = seasonalData['5on4'];
             const s4on5 = seasonalData['4on5'];
+            const sAll = seasonalData['all'];
 
             if (!s5on5) {
-                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}. This is expected if the team had no 5on5 data for the season.`);
+                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}.`);
                 return {};
             }
 
             const finalStats = {};
 
+            // 5-on-5 xG%
             const totalXG_5on5 = s5on5.totalxGoalsFor + s5on5.totalxGoalsAgainst;
             if (totalXG_5on5 > 0) {
                 finalStats.fiveOnFiveXgPercentage = (s5on5.totalxGoalsFor / totalXG_5on5) * 100;
             }
 
+            // High-Danger Battle
             const totalHDXG_5on5 = s5on5.totalHighDangerxGoalsFor + s5on5.totalHighDangerxGoalsAgainst;
             if (totalHDXG_5on5 > 0) {
                 finalStats.hdcfPercentage = (s5on5.totalHighDangerxGoalsFor / totalHDXG_5on5) * 100;
             }
             
+            // Special Teams Duel
             const ppRating = s5on4 ? s5on4.totalxGoalsFor : 0;
             const pkRating = s4on5 ? s4on5.totalxGoalsAgainst : 0;
             finalStats.specialTeamsRating = ppRating - pkRating;
 
+            // PDO (Luck Factor)
             if (s5on5.totalShotsOnGoalFor > 0 && s5on5.totalShotsOnGoalAgainst > 0) {
                 const shootingPct = (s5on5.totalGoalsFor / s5on5.totalShotsOnGoalFor);
                 const savePct = 1 - (s5on5.totalGoalsAgainst / s5on5.totalShotsOnGoalAgainst);
                 finalStats.pdo = (shootingPct + savePct) * 1000;
+            }
+            
+            // Historical Faceoff %
+            if (sAll) {
+                const totalFaceoffs = sAll.totalFaceoffsWon + sAll.totalFaceoffsAgainst;
+                if (totalFaceoffs > 0) {
+                    finalStats.historicalFaceoffPct = (sAll.totalFaceoffsWon / totalFaceoffs) * 100;
+                }
             }
             
             return finalStats;
@@ -851,6 +863,10 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     if (homeAdvStats.pdo && awayAdvStats.pdo) {
         factors['PDO (Luck Factor)'] = { value: homeAdvStats.pdo - awayAdvStats.pdo, homeStat: `${homeAdvStats.pdo.toFixed(0)}`, awayStat: `${awayAdvStats.pdo.toFixed(0)}` };
     }
+    if (homeAdvStats.historicalFaceoffPct && awayAdvStats.historicalFaceoffPct) {
+        factors['Historical Faceoff %'] = { value: homeAdvStats.historicalFaceoffPct - awayAdvStats.historicalFaceoffPct, homeStat: `${homeAdvStats.historicalFaceoffPct.toFixed(1)}%`, awayStat: `${awayAdvStats.historicalFaceoffPct.toFixed(1)}%` };
+    }
+
 
     // --- Legacy & Real-Time Factors ---
     factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: homeRealTimeStats.record || '0-0', awayStat: awayRealTimeStats.record || '0-0' };
@@ -874,7 +890,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
                 '5-on-5 xG%': 'fiveOnFiveXg', 'High-Danger Battle': 'highDangerBattle', 'Special Teams Duel': 'specialTeamsDuel',
                 'Goalie Matchup': 'goalie', 'Injury Impact': 'injuryImpact', 'Fatigue': 'fatigue', 'H2H (Season)': 'h2h', 
                 'Hot Streak': 'hotStreak', 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 
-                'Defensive Form (GA/GP)': 'defensiveForm', 'Faceoff Advantage': 'faceoffAdvantage', 'PDO (Luck Factor)': 'pdo'
+                'Defensive Form (GA/GP)': 'defensiveForm', 'Faceoff Advantage': 'faceoffAdvantage', 'PDO (Luck Factor)': 'pdo',
+                'Historical Faceoff %': 'historicalFaceoffPct'
             }[factorName];
 
             if (factorKey && weights[factorKey]) {
@@ -1407,5 +1424,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
