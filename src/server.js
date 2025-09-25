@@ -1263,7 +1263,6 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
-        // The factorsList is already a comprehensive summary of all relevant stats.
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
         const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant with an encyclopedic knowledge of sports history and news. Your tone is confident, direct, and persuasive. Your goal is to build a compelling, data-backed argument that goes beyond a simple summary.
@@ -1384,13 +1383,12 @@ app.post('/api/hockey-chat', async (req, res) => {
         const schemaDescription = `
           You have access to the following MongoDB collections:
           1. 'nhl_skater_stats_historical': Contains individual skater stats per season. Key fields: 'name', 'team', 'season', 'position', 'goals', 'assists', 'points', 'gameScore'.
-          2. 'nhl_goalie_stats_historical': Contains individual goalie stats per season. Key fields: 'name', 'team', 'season', 'wins', 'savePercentage', 'goalsAgainstAverage'.
+          2. 'nhl_goalie_stats_historical': Contains individual goalie stats per season. Key fields: 'name', 'team', 'season', 'games_played', 'wins', 'xGoals', 'goals'.
           3. 'nhl_advanced_stats': Contains team stats per game. Key fields: 'team', 'season', 'situation' (e.g., '5on5', '5on4'), 'xGoalsFor', 'xGoalsAgainst', 'highDangerxGoalsFor'.
         `;
 
         const queryGenSystemPrompt = `You are a MongoDB expert. Your only task is to convert a user's question into a valid MongoDB Aggregation Pipeline JSON object based on the provided schema. The query should be efficient. The response must be ONLY the JSON object, with no extra text or markdown. The JSON object must have two keys: "collection" (the name of the collection to query) and "pipeline" (the array of aggregation stages).`;
         
-        // MODIFICATION: Added safetySettings to prevent blocking
         const safetySettings = [
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
             { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
@@ -1402,12 +1400,19 @@ app.post('/api/hockey-chat', async (req, res) => {
             model: "gemini-1.5-flash",
             systemInstruction: queryGenSystemPrompt,
             generationConfig: { responseMimeType: "application/json" },
-            safetySettings // Added this line
+            safetySettings
         });
 
         const queryGenPrompt = `${schemaDescription}\n\nConvert the following question into a MongoDB Aggregation Pipeline JSON object:\n\nQuestion: "${question}"`;
         
         const queryResult = await queryGenModel.generateContent(queryGenPrompt);
+        
+        // Robust check for a valid response
+        if (!queryResult.response || !queryResult.response.text()) {
+             console.error("AI query generation failed. Full response:", JSON.stringify(queryResult, null, 2));
+             throw new Error("AI failed to generate a valid database query. This is often due to safety filters. See server logs for details.");
+        }
+
         const queryResponseText = queryResult.response.text();
         const generatedQuery = JSON.parse(queryResponseText);
 
@@ -1422,7 +1427,7 @@ app.post('/api/hockey-chat', async (req, res) => {
         } else if (collection === 'nhl_advanced_stats') {
             dbCollection = nhlStatsCollection;
         } else {
-            throw new Error("AI selected an invalid collection.");
+            throw new Error(`AI selected an invalid collection: ${collection}`);
         }
 
         const dbResults = await dbCollection.aggregate(pipeline).toArray();
@@ -1437,7 +1442,7 @@ app.post('/api/hockey-chat', async (req, res) => {
         const answerSynthModel = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: answerSynthSystemPrompt,
-            safetySettings // Added this line for safety
+            safetySettings
         });
 
         const answerSynthPrompt = `Original Question: "${question}"\n\nDatabase Results:\n${JSON.stringify(dbResults)}\n\nProvide a friendly, conversational answer based on these results.`;
@@ -1477,6 +1482,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
