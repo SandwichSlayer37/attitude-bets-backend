@@ -1373,6 +1373,76 @@ Available Prop Bets: ${availableProps}
     }
 });
 
+app.post('/api/hockey-chat', async (req, res) => {
+    const { question } = req.body;
+    if (!question) {
+        return res.status(400).json({ error: "Question is required." });
+    }
+
+    try {
+        // --- Step 1: Generate a MongoDB Query from the user's question ---
+        const schemaDescription = `
+          You have access to the following MongoDB collections:
+          1. 'nhl_skater_stats_historical': Contains individual skater stats per season. Key fields: 'name', 'team', 'season', 'position', 'goals', 'assists', 'points', 'gameScore'.
+          2. 'nhl_goalie_stats_historical': Contains individual goalie stats per season. Key fields: 'name', 'team', 'season', 'wins', 'savePercentage', 'goalsAgainstAverage'.
+          3. 'nhl_advanced_stats': Contains team stats per game. Key fields: 'team', 'season', 'situation' (e.g., '5on5', '5on4'), 'xGoalsFor', 'xGoalsAgainst', 'highDangerxGoalsFor'.
+        `;
+
+        const queryGenSystemPrompt = `You are a MongoDB expert. Your only task is to convert a user's question into a valid MongoDB Aggregation Pipeline JSON object based on the provided schema. The query should be efficient. The response must be ONLY the JSON object, with no extra text or markdown. The JSON object must have two keys: "collection" (the name of the collection to query) and "pipeline" (the array of aggregation stages).`;
+
+        const queryGenModel = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: queryGenSystemPrompt,
+            generationConfig: { responseMimeType: "application/json" },
+        });
+
+        const queryGenPrompt = `${schemaDescription}\n\nConvert the following question into a MongoDB Aggregation Pipeline JSON object:\n\nQuestion: "${question}"`;
+        
+        const queryResult = await queryGenModel.generateContent(queryGenPrompt);
+        const queryResponseText = queryResult.response.text();
+        const generatedQuery = JSON.parse(queryResponseText);
+
+        const { collection, pipeline } = generatedQuery;
+
+        // --- Step 2: Execute the generated query against the database ---
+        let dbCollection;
+        if (collection === 'nhl_skater_stats_historical') {
+            dbCollection = nhlSkaterStatsCollection;
+        } else if (collection === 'nhl_goalie_stats_historical') {
+            dbCollection = nhlGoalieStatsCollection;
+        } else if (collection === 'nhl_advanced_stats') {
+            dbCollection = nhlStatsCollection;
+        } else {
+            throw new Error("AI selected an invalid collection.");
+        }
+
+        const dbResults = await dbCollection.aggregate(pipeline).toArray();
+
+        if (dbResults.length === 0) {
+            return res.json({ answer: "I couldn't find any data matching your question. Please try rephrasing it." });
+        }
+
+        // --- Step 3: Synthesize a human-readable answer from the data ---
+        const answerSynthSystemPrompt = `You are a friendly and knowledgeable hockey analyst. Your task is to answer the user's question based on the data provided. Summarize the data into a clear, concise, and conversational answer. Do not just repeat the raw data.`;
+        
+        const answerSynthModel = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: answerSynthSystemPrompt
+        });
+
+        const answerSynthPrompt = `Original Question: "${question}"\n\nDatabase Results:\n${JSON.stringify(dbResults)}\n\nProvide a friendly, conversational answer based on these results.`;
+
+        const answerResult = await answerSynthModel.generateContent(answerSynthPrompt);
+        const finalAnswer = answerResult.response.text();
+        
+        res.json({ answer: finalAnswer });
+
+    } catch (error) {
+        console.error("Hockey Chat Error:", error);
+        res.status(500).json({ error: "Failed to process chat request.", details: error.message });
+    }
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1397,6 +1467,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
