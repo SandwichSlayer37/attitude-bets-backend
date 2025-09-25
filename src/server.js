@@ -26,7 +26,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, nhlSkaterStatsCollection, nhlGoalieStatsCollection, nhlShotDataCollection;
+let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, nhlSkaterStatsCollection, nhlGoalieStatsCollection;
 
 async function connectToDb() {
     try {
@@ -1389,11 +1389,20 @@ app.post('/api/hockey-chat', async (req, res) => {
         `;
 
         const queryGenSystemPrompt = `You are a MongoDB expert. Your only task is to convert a user's question into a valid MongoDB Aggregation Pipeline JSON object based on the provided schema. The query should be efficient. The response must be ONLY the JSON object, with no extra text or markdown. The JSON object must have two keys: "collection" (the name of the collection to query) and "pipeline" (the array of aggregation stages).`;
+        
+        // MODIFICATION: Added safetySettings to prevent blocking
+        const safetySettings = [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ];
 
         const queryGenModel = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             systemInstruction: queryGenSystemPrompt,
             generationConfig: { responseMimeType: "application/json" },
+            safetySettings // Added this line
         });
 
         const queryGenPrompt = `${schemaDescription}\n\nConvert the following question into a MongoDB Aggregation Pipeline JSON object:\n\nQuestion: "${question}"`;
@@ -1427,7 +1436,8 @@ app.post('/api/hockey-chat', async (req, res) => {
         
         const answerSynthModel = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
-            systemInstruction: answerSynthSystemPrompt
+            systemInstruction: answerSynthSystemPrompt,
+            safetySettings // Added this line for safety
         });
 
         const answerSynthPrompt = `Original Question: "${question}"\n\nDatabase Results:\n${JSON.stringify(dbResults)}\n\nProvide a friendly, conversational answer based on these results.`;
@@ -1467,6 +1477,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
