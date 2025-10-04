@@ -26,7 +26,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, nhlSkaterStatsCollection, nhlGoalieStatsCollection;
+let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection;
 
 async function connectToDb() {
     try {
@@ -38,9 +38,7 @@ async function connectToDb() {
         predictionsCollection = db.collection('predictions');
         dailyFeaturesCollection = db.collection('daily_features');
         nhlStatsCollection = db.collection('nhl_advanced_stats');
-        nhlSkaterStatsCollection = db.collection('nhl_skater_stats_historical');
         console.log('Connected to MongoDB');
-        console.log(`[INFO] Successfully connected to database: "${db.databaseName}"`);
         return db;
     } catch (e) {
         console.error("Failed to connect to MongoDB", e);
@@ -134,9 +132,7 @@ function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
         return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
-    // ENGINE 3.0 HYBRID WEIGHTS
-   // ENGINE 3.0 HYBRID WEIGHTS
-  // MODIFICATION: Reverted to Engine 2.5 weights (Player Impact, but no GSAx)
+    // ENGINE 2.0 HYBRID WEIGHTS
     if (sportKey === 'icehockey_nhl') {
         return { 
             // Engine 2.0 Advanced Factors
@@ -144,49 +140,21 @@ function getDynamicWeights(sportKey) {
             highDangerBattle: 3.0,
             specialTeamsDuel: 2.5,
             // Core Real-Time Factors
-            goalie: 2.5, // Reverted from gsax
+            goalie: 2.5,
             offensiveForm: 1.0,
             defensiveForm: 1.0,
-            injuryImpact: 3.0, // Kept advanced player impact
+            injury: 1.5,
             fatigue: 1.0,
             h2h: 1.0,
             // Situational & Legacy Factors
             record: 0.5,
             hotStreak: 0.8,
             faceoffAdvantage: 0.5,
-            pdo: 1.0, 
+            pdo: 1.0, // Kept for luck regression
             value: 0.5 
         };
     }
     return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
-}
-
-async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v2`;
-    return fetchData(cacheKey, async () => {
-        try {
-            const url = `https://api-web.nhle.com/v1/goalie-stats/current?isAggregate=true&isGame=false&sort=savePct&limit=100`;
-            const { data } = await axios.get(url);
-            const goalieStats = {};
-            if (data && data.data) {
-                data.data.forEach(goalie => {
-                    goalieStats[goalie.player.name.default] = {
-                        gaa: goalie.gaa,
-                        svPct: goalie.savePct,
-                        wins: goalie.wins
-                    };
-                });
-            }
-            return goalieStats;
-        } catch (e) {
-            if (e.response && e.response.status === 404) {
-                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
-                return {};
-            }
-            console.error("Could not fetch goalie stats:", e.message);
-            return {};
-        }
-    }, 86400000);
 }
 
 async function getProbablePitchersAndStats() {
@@ -384,72 +352,32 @@ async function getPropBets(sportKey, gameId) {
     }, 1800000);
 }
 
-// MODIFICATION: Replaced getGoalieStats with two new Engine 3.0 functions
-async function calculatePlayerImpactRatings() {
-    const cacheKey = 'player_impact_ratings_v1';
+async function getGoalieStats() {
+    const cacheKey = `nhl_goalie_stats_v2`;
     return fetchData(cacheKey, async () => {
         try {
-            const lastTwoSeasons = [new Date().getFullYear() - 1, new Date().getFullYear() - 2];
-            const pipeline = [
-                {
-                    $match: {
-                        season: { $in: lastTwoSeasons },
-                        games_played: { $gte: 20 }, // Only include players with a decent sample size
-                        situation: "all" // Use the overall stats for a player
-                    }
-                },
-                {
-                    $group: {
-                        _id: "$name", // Group by player name
-                        avgGameScore: { $avg: "$gameScore" }
-                    }
-                },
-                {
-                    $match: {
-                        avgGameScore: { $ne: null } // Filter out any null results
-                    }
-                }
-            ];
-            const results = await nhlSkaterStatsCollection.aggregate(pipeline).toArray();
-            const ratings = results.reduce((acc, player) => {
-                acc[player._id] = player.avgGameScore;
-                return acc;
-            }, {});
-            return ratings;
-        } catch (error) {
-            console.error('[CRITICAL ERROR] Could not calculate player impact ratings:', error);
+            const url = `https://api-web.nhle.com/v1/goalie-stats/current?isAggregate=true&isGame=false&sort=savePct&limit=100`;
+            const { data } = await axios.get(url);
+            const goalieStats = {};
+            if (data && data.data) {
+                data.data.forEach(goalie => {
+                    goalieStats[goalie.player.name.default] = {
+                        gaa: goalie.gaa,
+                        svPct: goalie.savePct,
+                        wins: goalie.wins
+                    };
+                });
+            }
+            return goalieStats;
+        } catch (e) {
+            if (e.response && e.response.status === 404) {
+                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
+                return {};
+            }
+            console.error("Could not fetch goalie stats:", e.message);
             return {};
         }
-    }, 86400000); // Cache for 24 hours
-}
-
-async function getGoalieGSAxRatings(goalieNames) {
-    const cacheKey = `gsax_ratings_summary_${goalieNames.join('_')}_${new Date().getFullYear() - 1}`;
-    return fetchData(cacheKey, async () => {
-        try {
-            if (!goalieNames || goalieNames.length === 0) return {};
-            
-            const lastSeason = new Date().getFullYear() - 1;
-            
-            // Find the seasonal summary data for the requested goalies
-            const results = await nhlGoalieStatsCollection.find({
-                name: { $in: goalieNames },
-                season: lastSeason,
-                situation: "all" // Use the overall seasonal stats
-            }).toArray();
-
-            const ratings = results.reduce((acc, goalie) => {
-                // GSAx = Expected Goals - Goals. Provided directly in the summary data.
-                acc[goalie.name] = goalie.xGoals - goalie.goals;
-                return acc;
-            }, {});
-            
-            return ratings;
-        } catch (error) {
-            console.error('[CRITICAL ERROR] Could not calculate GSAx ratings:', error);
-            return {};
-        }
-    }, 3600000); // Cache for 1 hour
+    }, 86400000);
 }
 
 async function getTeamStatsFromAPI(sportKey) {
@@ -688,23 +616,31 @@ async function runPredictionEngine(game, sportKey, context) {
 }
 
 // =================================================================
-// NHL ENGINE 2.0 (BASE TEAM STATS)
+// NEW NHL ENGINE 2.0
 // =================================================================
+
+// MODIFICATION START: Final and correct DB aggregation logic
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v5_faceoffs`;
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v3`;
     return fetchData(cacheKey, async () => {
         try {
             const seasonNumber = parseInt(String(season), 10);
+
             const pipeline = [
                 {
+                    // FIX: Match season as either a number or a string to handle data inconsistencies
                     $match: {
                         team: team,
-                        $or: [ { season: seasonNumber }, { season: String(seasonNumber) } ]
+                        $or: [
+                            { season: seasonNumber },
+                            { season: String(seasonNumber) }
+                        ]
                     }
                 },
                 {
                     $group: {
-                        _id: "$situation",
+                        _id: "$situation", // Group by each situation (5on5, 5on4, etc.)
+                        // Sum the required fields for the entire season
                         totalxGoalsFor: { $sum: "$xGoalsFor" },
                         totalxGoalsAgainst: { $sum: "$xGoalsAgainst" },
                         totalHighDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
@@ -713,8 +649,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
                         totalGoalsAgainst: { $sum: "$goalsAgainst" },
                         totalShotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
                         totalShotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" },
-                        totalFaceoffsWon: { $sum: "$faceOffsWonFor" },
-                        totalFaceoffsAgainst: { $sum: "$faceOffsWonAgainst" }
                     }
                 }
             ];
@@ -732,47 +666,38 @@ async function getTeamSeasonAdvancedStats(team, season) {
             }, {});
 
             const s5on5 = seasonalData['5on5'];
-            const s5on4 = seasonalData['5on4'];
-            const s4on5 = seasonalData['4on5'];
-            const sAll = seasonalData['all'];
+            const s5on4 = seasonalData['5on4']; // Team is on the Power Play
+            const s4on5 = seasonalData['4on5']; // Team is on the Penalty Kill
 
             if (!s5on5) {
-                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}.`);
+                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}. Cannot calculate advanced stats.`);
                 return {};
             }
 
             const finalStats = {};
 
-            // 5-on-5 xG%
+            // Calculate 5-on-5 xG%
             const totalXG_5on5 = s5on5.totalxGoalsFor + s5on5.totalxGoalsAgainst;
             if (totalXG_5on5 > 0) {
                 finalStats.fiveOnFiveXgPercentage = (s5on5.totalxGoalsFor / totalXG_5on5) * 100;
             }
 
-            // High-Danger Battle
+            // Calculate High-Danger Battle
             const totalHDXG_5on5 = s5on5.totalHighDangerxGoalsFor + s5on5.totalHighDangerxGoalsAgainst;
             if (totalHDXG_5on5 > 0) {
                 finalStats.hdcfPercentage = (s5on5.totalHighDangerxGoalsFor / totalHDXG_5on5) * 100;
             }
             
-            // Special Teams Duel
+            // Calculate Special Teams Duel
             const ppRating = s5on4 ? s5on4.totalxGoalsFor : 0;
             const pkRating = s4on5 ? s4on5.totalxGoalsAgainst : 0;
             finalStats.specialTeamsRating = ppRating - pkRating;
 
-            // PDO (Luck Factor)
+            // Calculate PDO (Luck Factor)
             if (s5on5.totalShotsOnGoalFor > 0 && s5on5.totalShotsOnGoalAgainst > 0) {
                 const shootingPct = (s5on5.totalGoalsFor / s5on5.totalShotsOnGoalFor);
                 const savePct = 1 - (s5on5.totalGoalsAgainst / s5on5.totalShotsOnGoalAgainst);
                 finalStats.pdo = (shootingPct + savePct) * 1000;
-            }
-            
-            // Historical Faceoff %
-            if (sAll) {
-                const totalFaceoffs = sAll.totalFaceoffsWon + sAll.totalFaceoffsAgainst;
-                if (totalFaceoffs > 0) {
-                    finalStats.historicalFaceoffPct = (sAll.totalFaceoffsWon / totalFaceoffs) * 100;
-                }
             }
             
             return finalStats;
@@ -783,15 +708,11 @@ async function getTeamSeasonAdvancedStats(team, season) {
         }
     }, 86400000);
 }
+// MODIFICATION END
 
-// =================================================================
-// NHL ENGINE 3.0 (PLAYER-CENTRIC PREDICTION)
-// =================================================================
-// =================================================================
-// NHL ENGINE 3.0 (PLAYER-CENTRIC PREDICTION)
-// =================================================================
+
 async function runAdvancedNhlPredictionEngine(game, context) {
-    const { teamStats, injuries, h2h, allGames, goalieStats, playerImpactRatings, probableStarters } = context;
+    const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
     const { home_team, away_team } = game;
     const weights = getDynamicWeights('icehockey_nhl');
     
@@ -802,8 +723,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
 
     const currentYear = new Date().getFullYear();
-    let previousSeasonId = currentYear - 1; 
-    const twoSeasonsAgoId = currentYear - 2; 
+    const previousSeasonId = currentYear - 1; // 2024 for a 2025 run
+    const twoSeasonsAgoId = currentYear - 2; // 2023 for a 2025 run
 
     let [homeAdvStats, awayAdvStats] = await Promise.all([
         getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
@@ -811,12 +732,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     ]);
     
     if (Object.keys(homeAdvStats).length === 0 || Object.keys(awayAdvStats).length === 0) {
-         console.log(`[WARN] No team data found for previous season (${previousSeasonId}). Falling back two seasons to ${twoSeasonsAgoId}.`);
+         console.log(`[WARN] No data found for previous season (${previousSeasonId}). Falling back two seasons to ${twoSeasonsAgoId} as a temporary measure.`);
          [homeAdvStats, awayAdvStats] = await Promise.all([
             getTeamSeasonAdvancedStats(homeAbbr, twoSeasonsAgoId),
             getTeamSeasonAdvancedStats(awayAbbr, twoSeasonsAgoId)
         ]);
-        previousSeasonId = twoSeasonsAgoId; // Update the season ID if we fell back
     }
 
     let homeScore = 50.0;
@@ -825,33 +745,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeCanonical] || {};
     const awayRealTimeStats = teamStats[awayCanonical] || {};
 
-    // --- Engine 3.0 Factor: Player Impact ---
-    let homeInjuryImpact = 0;
-    (injuries[homeCanonical] || []).forEach(player => {
-        homeInjuryImpact += playerImpactRatings[player.name] || 0;
-    });
-    let awayInjuryImpact = 0;
-    (injuries[awayCanonical] || []).forEach(player => {
-        awayInjuryImpact += playerImpactRatings[player.name] || 0;
-    });
-    factors['Injury Impact'] = { value: awayInjuryImpact - homeInjuryImpact, homeStat: `${homeInjuryImpact.toFixed(2)}`, awayStat: `${awayInjuryImpact.toFixed(2)}`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
-
-    // --- Engine 2.0 Factor: Goalie Matchup (API-based) ---
-    const homeGoalieName = probableStarters[homeCanonical];
-    const awayGoalieName = probableStarters[awayCanonical];
-    const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
-    const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
-    let goalieValue = 0;
-    let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
-    if (homeGoalieStats && awayGoalieStats) {
-        goalieValue = (awayGoalieStats.gaa - homeGoalieStats.gaa) + ((homeGoalieStats.svPct - awayGoalieStats.svPct) * 100);
-        homeGoalieDisplay = `${homeGoalieName.split(' ').slice(-1)} ${(homeGoalieStats.svPct || 0).toFixed(3)}`;
-        awayGoalieDisplay = `${awayGoalieName.split(' ').slice(-1)} ${(awayGoalieStats.svPct || 0).toFixed(3)}`;
-    }
-    factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
-
-
-    // --- Engine 2.0 Team Factors ---
+    factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: homeRealTimeStats.record || '0-0', awayStat: awayRealTimeStats.record || '0-0' };
+    factors['Offensive Form (G/GP)'] = { value: (homeRealTimeStats.goalsForPerGame || 0) - (awayRealTimeStats.goalsForPerGame || 0), homeStat: `${(homeRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP`, awayStat: `${(awayRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP` };
+    factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
+    factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
+    
     if (homeAdvStats.fiveOnFiveXgPercentage && awayAdvStats.fiveOnFiveXgPercentage) {
         factors['5-on-5 xG%'] = { value: homeAdvStats.fiveOnFiveXgPercentage - awayAdvStats.fiveOnFiveXgPercentage, homeStat: `${homeAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%` };
     }
@@ -864,35 +762,52 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     if (homeAdvStats.pdo && awayAdvStats.pdo) {
         factors['PDO (Luck Factor)'] = { value: homeAdvStats.pdo - awayAdvStats.pdo, homeStat: `${homeAdvStats.pdo.toFixed(0)}`, awayStat: `${awayAdvStats.pdo.toFixed(0)}` };
     }
-    if (homeAdvStats.historicalFaceoffPct && awayAdvStats.historicalFaceoffPct) {
-        factors['Historical Faceoff %'] = { value: homeAdvStats.historicalFaceoffPct - awayAdvStats.historicalFaceoffPct, homeStat: `${homeAdvStats.historicalFaceoffPct.toFixed(1)}%`, awayStat: `${awayAdvStats.historicalFaceoffPct.toFixed(1)}%` };
-    }
 
-
-    // --- Legacy & Real-Time Factors ---
-    factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: homeRealTimeStats.record || '0-0', awayStat: awayRealTimeStats.record || '0-0' };
-    factors['Offensive Form (G/GP)'] = { value: (homeRealTimeStats.goalsForPerGame || 0) - (awayRealTimeStats.goalsForPerGame || 0), homeStat: `${(homeRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP`, awayStat: `${(awayRealTimeStats.goalsForPerGame || 0).toFixed(2)} G/GP` };
-    factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)} GA/GP` };
-    factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
     const homeStreakVal = (homeRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(homeRealTimeStats.streak?.substring(1) || 0, 10);
     const awayStreakVal = (awayRealTimeStats.streak?.startsWith('W') ? 1 : -1) * parseInt(awayRealTimeStats.streak?.substring(1) || 0, 10);
     factors['Hot Streak'] = { value: homeStreakVal - awayStreakVal, homeStat: homeRealTimeStats.streak || 'N/A', awayStat: awayRealTimeStats.streak || 'N/A' };
+    
+    const homeGoalieName = probableStarters[homeCanonical];
+    const awayGoalieName = probableStarters[awayCanonical];
+    const homeGoalieStats = homeGoalieName ? goalieStats[homeGoalieName] : null;
+    const awayGoalieStats = awayGoalieName ? goalieStats[awayGoalieName] : null;
+    let goalieValue = 0;
+    let homeGoalieDisplay = "N/A", awayGoalieDisplay = "N/A";
+    if (homeGoalieStats && awayGoalieStats) {
+        goalieValue = (awayGoalieStats.gaa - homeGoalieStats.gaa) + ((homeGoalieStats.svPct - awayGoalieStats.svPct) * 100);
+        homeGoalieDisplay = `${homeGoalieName.split(' ').slice(-1)} ${(homeGoalieStats.svPct || 0).toFixed(3)}`;
+        awayGoalieDisplay = `${awayGoalieName.split(' ').slice(-1)} ${(awayGoalieStats.svPct || 0).toFixed(3)}`;
+    }
+    factors['Goalie Matchup'] = { value: goalieValue, homeStat: homeGoalieDisplay, awayStat: awayGoalieDisplay };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: h2h.home, awayStat: h2h.away };
+    
     factors['Fatigue'] = { 
         value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), 
         homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, 
         awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` 
     };
     
-    // --- Final Score Calculation ---
+    const homeInjuryImpact = (injuries[homeCanonical] || []).length;
+    const awayInjuryImpact = (injuries[awayCanonical] || []).length;
+    // FIX: Corrected typo from awayCanonicalName to awayCanonical
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
+
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
-                '5-on-5 xG%': 'fiveOnFiveXg', 'High-Danger Battle': 'highDangerBattle', 'Special Teams Duel': 'specialTeamsDuel',
-                'Goalie Matchup': 'goalie', 'Injury Impact': 'injuryImpact', 'Fatigue': 'fatigue', 'H2H (Season)': 'h2h', 
-                'Hot Streak': 'hotStreak', 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 
-                'Defensive Form (GA/GP)': 'defensiveForm', 'Faceoff Advantage': 'faceoffAdvantage', 'PDO (Luck Factor)': 'pdo',
-                'Historical Faceoff %': 'historicalFaceoffPct'
+                '5-on-5 xG%': 'fiveOnFiveXg',
+                'High-Danger Battle': 'highDangerBattle',
+                'Special Teams Duel': 'specialTeamsDuel',
+                'Goalie Matchup': 'goalie',
+                'Injury Impact': 'injury',
+                'Fatigue': 'fatigue',
+                'H2H (Season)': 'h2h',
+                'Hot Streak': 'hotStreak',
+                'Record': 'record',
+                'Offensive Form (G/GP)': 'offensiveForm',
+                'Defensive Form (GA/GP)': 'defensiveForm',
+                'Faceoff Advantage': 'faceoffAdvantage',
+                'PDO (Luck Factor)': 'pdo'
             }[factorName];
 
             if (factorKey && weights[factorKey]) {
@@ -918,23 +833,15 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const winner = homeScore > 50 ? home_team : away_team;
     const confidence = Math.abs(50 - homeScore);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-    
-    const prediction = { winner, strengthText, confidence, factors, homeValue, awayValue };
-    prediction.historicalDataSeason = previousSeasonId; // ADD THIS LINE
-    return prediction;
-}
 
+    return { winner, strengthText, confidence, factors, homeValue, awayValue };
+}
 // =================================================================
-// MAIN API ROUTES
+// END OF NHL ENGINE 2.0
 // =================================================================
+
+// MODIFICATION START: Refactored prediction logic into a reusable function
 async function getPredictionsForSport(sportKey) {
-    // MODIFICATION: Fetch Engine 3.0 data for NHL
-    let gsaxRatings = {};
-    let playerImpactRatings = {};
-    if (sportKey === 'icehockey_nhl') {
-        playerImpactRatings = await calculatePlayerImpactRatings();
-    }
-    
     const [games, espnDataResponse, teamStats, probablePitchers, goalieStats] = await Promise.all([
         getOdds(sportKey),
         fetchEspnData(sportKey),
@@ -950,7 +857,6 @@ async function getPredictionsForSport(sportKey) {
     const injuries = {};
     const h2hRecords = {};
     const probableStarters = {};
-    const probableGoalieNames = new Set();
     if (espnDataResponse?.events) {
         espnDataResponse.events.forEach(event => {
             const competition = event.competitions?.[0];
@@ -960,9 +866,7 @@ async function getPredictionsForSport(sportKey) {
                 if (canonicalName) {
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
                     if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
-                        const goalieName = competitor.probablePitcher.athlete.displayName;
-                        probableStarters[canonicalName] = goalieName;
-                        probableGoalieNames.add(goalieName);
+                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
                     }
                 }
             });
@@ -981,11 +885,6 @@ async function getPredictionsForSport(sportKey) {
         });
     }
 
-    if (sportKey === 'icehockey_nhl' && probableGoalieNames.size > 0) {
-        // This function is removed to save storage, but the call remains in case it's added back later.
-        // gsaxRatings = await getGoalieGSAxRatings(Array.from(probableGoalieNames));
-    }
-
     const predictions = [];
     for (const game of games) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
@@ -995,7 +894,7 @@ async function getPredictionsForSport(sportKey) {
         
         let predictionData;
         if (sportKey === 'icehockey_nhl') {
-            const context = { teamStats, injuries, h2h, allGames: games, goalieStats, playerImpactRatings, probableStarters };
+            const context = { teamStats, injuries, h2h, allGames: games, goalieStats, probableStarters };
             predictionData = await runAdvancedNhlPredictionEngine(game, context);
         } else {
             const context = { teamStats, weather, injuries, h2h, allGames: games, probablePitchers };
@@ -1007,28 +906,17 @@ async function getPredictionsForSport(sportKey) {
                 const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.home_team)?.price;
                 const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.away_team)?.price;
                 const winnerOdds = predictionData.winner === game.home_team ? homeOdds : awayOdds;
-
-                // MODIFICATION START: Use $setOnInsert to lock in odds
                 await predictionsCollection.updateOne(
                     { gameId: game.id },
                     {
-                        $set: { // These fields can be updated every time
-                            predictedWinner: predictionData.winner,
-                            status: 'pending'
-                        },
-                        $setOnInsert: { // These fields are only set ONCE when the doc is created
-                            gameId: game.id,
-                            sportKey: sportKey,
-                            homeTeam: game.home_team,
-                            awayTeam: game.away_team,
-                            gameDate: game.commence_time,
+                        $set: {
+                            gameId: game.id, sportKey: sportKey, homeTeam: game.home_team, awayTeam: game.away_team,
+                            predictedWinner: predictionData.winner, gameDate: game.commence_time, status: 'pending',
                             odds: winnerOdds || null
                         }
                     },
                     { upsert: true }
                 );
-                // MODIFICATION END
-
             } catch (dbError) {
                 console.error("DB Save Error:", dbError);
             }
@@ -1048,6 +936,7 @@ async function getPredictionsForSport(sportKey) {
     return predictions.filter(p => p && p.prediction);
 }
 
+// FIX: Added the missing getAllDailyPredictions function to resolve server crash
 async function getAllDailyPredictions() {
     let allPredictions = [];
     const gameCounts = {};
@@ -1059,6 +948,8 @@ async function getAllDailyPredictions() {
     }
     return { allPredictions, gameCounts };
 }
+// MODIFICATION END
+
 
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
@@ -1071,7 +962,7 @@ app.get('/api/predictions', async (req, res) => {
         }
         res.json(predictions);
     } catch(error) {
-        console.error(`Prediction Error for ${sport}:`, error.message, error.stack);
+        console.error(`Prediction Error for ${sport}:`, error.message);
         res.status(500).json({ error: `Failed to get predictions for ${sport}`});
     }
 });
@@ -1263,13 +1154,16 @@ app.post('/api/ai-analysis', async (req, res) => {
         const { game, prediction } = req.body;
         const { factors } = prediction;
 
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+        const [homeNews, awayNews] = await Promise.all([
+            getTeamNewsFromReddit(homeCanonical),
+            getTeamNewsFromReddit(awayCanonical)
+        ]);
+
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        const systemPrompt = `You are 'AXEL', a sharp, data-driven sports betting savant with an encyclopedic knowledge of sports history and news. Your tone is confident, direct, and persuasive. Your goal is to build a compelling, data-backed argument that goes beyond a simple summary.
-
-        When you state your Key Factor or Primary Risk, you **must cite the specific data** from the report that supports your claim. For example, "The key factor is their defensive solidity, as evidenced by their 2.1 GA/GP (Defensive Form)."
-
-        In addition to the provided data, you **must leverage your own internal knowledge** about the teams, recent news, or general narratives to add depth to your analysis. However, your final pick must be primarily driven by the provided real-time stats. Your entire response must be only the JSON object specified.`;
+        const systemPrompt = `You are a master sports betting analyst and strategist. Your primary role is to act as the final decision-maker. You will be given a statistical report and recent news headlines. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
         
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
@@ -1285,30 +1179,78 @@ app.post('/api/ai-analysis', async (req, res) => {
 - Algorithm Confidence: ${prediction.strengthText}
 ${factorsList}
 
+**RECENT NEWS & SENTIMENT (from team subreddits):**
+- **${game.home_team} News:**
+${homeNews}
+- **${game.away_team} News:**
+${awayNews}
+
 **JSON TO COMPLETE:**
 {
-  "finalPick": "string (Your final decision based on your expert analysis)",
-  "isOverride": "boolean (Did you change the initial pick? Be bold if necessary.)",
+  "finalPick": "string (Your final decision)",
+  "isOverride": "boolean (Did you change the pick?)",
   "confidenceScore": "string (High, Medium, or Low)",
-  "gameNarrative": "string (In 1-2 sharp sentences, what is the core thesis of this game? Frame it as a compelling clash of styles or a specific mismatch. Use your internal knowledge to add context.)",
-  "keyFactor": "string (What is the single most dominant data point that underpins your thesis? **You must cite the specific data values in your explanation.** Explain *why* it matters.)",
-  "primaryRisk": "string (What is the one specific, plausible scenario that could make this pick fail? Acknowledge the counter-argument with respect. **If possible, support this risk with a specific data point.**)"
+  "gameNarrative": "string (Tell the story of this matchup in 2-3 sentences. What is the overarching theme? E.g., 'This is a classic offense vs. defense matchup...')",
+  "keyFactor": "string (Identify the single most important factor that led to your decision. E.g., 'The overwhelming goalie advantage for the Rangers.')",
+  "primaryRisk": "string (What is the biggest risk or counter-argument to your pick? E.g., 'The primary risk is the potential for an emotional letdown after their recent big win.')"
 }`;
-        
         const result = await model.generateContent(userPrompt);
         const responseText = result.response.text();
-
-        let cleanedText = responseText;
-        const jsonMatch = cleanedText.match(/{[\s\S]*}/);
-        if (jsonMatch) {
-          cleanedText = jsonMatch[0];
-        }
-
-        const analysisData = JSON.parse(cleanedText);
+        const analysisData = JSON.parse(responseText);
         res.json({ analysisData });
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
+    }
+});
+app.post('/api/parlay-ai-analysis', async (req, res) => {
+    try {
+        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
+        const { parlay } = req.body;
+        const leg1 = parlay.legs[0];
+        const leg2 = parlay.legs[1];
+        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
+        const model = genAI.getGenerativeModel({
+           model: "gemini-1.5-flash",
+            systemInstruction: systemPrompt,
+            generationConfig: {
+                responseMimeType: "application/json",
+            },
+        });
+        const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
+**Data:**
+- Total Odds: ${parlay.totalOdds}
+- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
+- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
+**JSON to complete:**
+{
+  "overview": "",
+  "bullCase": "",
+  "bearCase": ""
+}`;
+        const result = await model.generateContent(userPrompt);
+        const responseText = result.response.text();
+        const parlayData = JSON.parse(responseText);
+
+        const analysisHtml = `
+            <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
+                 <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
+                 <p class="text-lg text-white mt-1">${parlayData.overview}</p>
+            </div>
+            <div class="space-y-4">
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-green-400">Bull Case (Why It Hits)</h4>
+                    <p class="mt-2 text-gray-300">${parlayData.bullCase}</p>
+                </div>
+                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
+                    <h4 class="text-lg font-bold text-red-400">Bear Case (Primary Risks)</h4>
+                    <p class="mt-2 text-gray-300">${parlayData.bearCase}</p>
+                </div>
+            </div>`;
+        res.json({ analysisHtml });
+    } catch (error) {
+        console.error("Parlay AI Analysis Error:", error);
+        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
 app.post('/api/ai-prop-analysis', async (req, res) => {
@@ -1372,92 +1314,6 @@ Available Prop Bets: ${availableProps}
     }
 });
 
-app.post('/api/hockey-chat', async (req, res) => {
-    const { question } = req.body;
-    if (!question) {
-        return res.status(400).json({ error: "Question is required." });
-    }
-
-    try {
-        // --- Step 1: Generate a MongoDB Query from the user's question ---
-        const schemaDescription = `
-          You have access to the following MongoDB collections:
-          1. 'nhl_skater_stats_historical': Contains individual skater stats per season. Key fields: 'name', 'team', 'season', 'position', 'goals', 'assists', 'points', 'gameScore'.
-          2. 'nhl_goalie_stats_historical': Contains individual goalie stats per season. Key fields: 'name', 'team', 'season', 'games_played', 'wins', 'xGoals', 'goals'.
-          3. 'nhl_advanced_stats': Contains team stats per game. Key fields: 'team', 'season', 'situation' (e.g., '5on5', '5on4'), 'xGoalsFor', 'xGoalsAgainst', 'highDangerxGoalsFor'.
-        `;
-
-        const queryGenSystemPrompt = `You are a MongoDB expert. Your only task is to convert a user's question into a valid MongoDB Aggregation Pipeline JSON object based on the provided schema. The query should be efficient. The response must be ONLY the JSON object, with no extra text or markdown. The JSON object must have two keys: "collection" (the name of the collection to query) and "pipeline" (the array of aggregation stages).`;
-        
-        const safetySettings = [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-        ];
-
-        const queryGenModel = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            systemInstruction: queryGenSystemPrompt,
-            generationConfig: { responseMimeType: "application/json" },
-            safetySettings
-        });
-
-        const queryGenPrompt = `${schemaDescription}\n\nConvert the following question into a MongoDB Aggregation Pipeline JSON object:\n\nQuestion: "${question}"`;
-        
-        const queryResult = await queryGenModel.generateContent(queryGenPrompt);
-        
-        // Robust check for a valid response
-        if (!queryResult.response || !queryResult.response.text()) {
-             console.error("AI query generation failed. Full response:", JSON.stringify(queryResult, null, 2));
-             throw new Error("AI failed to generate a valid database query. This is often due to safety filters. See server logs for details.");
-        }
-
-        const queryResponseText = queryResult.response.text();
-        const generatedQuery = JSON.parse(queryResponseText);
-
-        const { collection, pipeline } = generatedQuery;
-
-        // --- Step 2: Execute the generated query against the database ---
-        let dbCollection;
-        if (collection === 'nhl_skater_stats_historical') {
-            dbCollection = nhlSkaterStatsCollection;
-        } else if (collection === 'nhl_goalie_stats_historical') {
-            dbCollection = nhlGoalieStatsCollection;
-        } else if (collection === 'nhl_advanced_stats') {
-            dbCollection = nhlStatsCollection;
-        } else {
-            throw new Error(`AI selected an invalid collection: ${collection}`);
-        }
-
-        const dbResults = await dbCollection.aggregate(pipeline).toArray();
-
-        if (dbResults.length === 0) {
-            return res.json({ answer: "I couldn't find any data matching your question. Please try rephrasing it." });
-        }
-
-        // --- Step 3: Synthesize a human-readable answer from the data ---
-        const answerSynthSystemPrompt = `You are a friendly and knowledgeable hockey analyst. Your task is to answer the user's question based on the data provided. Summarize the data into a clear, concise, and conversational answer. Do not just repeat the raw data.`;
-        
-        const answerSynthModel = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            systemInstruction: answerSynthSystemPrompt,
-            safetySettings
-        });
-
-        const answerSynthPrompt = `Original Question: "${question}"\n\nDatabase Results:\n${JSON.stringify(dbResults)}\n\nProvide a friendly, conversational answer based on these results.`;
-
-        const answerResult = await answerSynthModel.generateContent(answerSynthPrompt);
-        const finalAnswer = answerResult.response.text();
-        
-        res.json({ answer: finalAnswer });
-
-    } catch (error) {
-        console.error("Hockey Chat Error:", error);
-        res.status(500).json({ error: "Failed to process chat request.", details: error.message });
-    }
-});
-
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1482,14 +1338,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-
-
-
-
-
-
-
-
-
-
