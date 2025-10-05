@@ -16,7 +16,7 @@ app.use(express.static(path.join(__dirname, '..', 'Public')));
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
