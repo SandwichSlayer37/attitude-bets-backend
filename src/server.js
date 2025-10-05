@@ -251,10 +251,12 @@ async function updatePlayerSpotlightForSport(sport) {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
         
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
-            systemInstruction: systemPrompt,
+            model: "gemini-1.5-flash",
             generationConfig: {
                 responseMimeType: "application/json",
+            },
+            systemInstruction: {
+                parts: [{ text: systemPrompt }],
             },
         });
         
@@ -1166,10 +1168,12 @@ app.post('/api/ai-analysis', async (req, res) => {
         const systemPrompt = `You are a master sports betting analyst and strategist. Your primary role is to act as the final decision-maker. You will be given a statistical report and recent news headlines. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
         
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
-            systemInstruction: systemPrompt,
+            model: "gemini-1.5-flash",
             generationConfig: {
                 responseMimeType: "application/json",
+            },
+            systemInstruction: {
+                parts: [{ text: systemPrompt }],
             },
         });
 
@@ -1211,10 +1215,12 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         const leg2 = parlay.legs[1];
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         const model = genAI.getGenerativeModel({
-           model: "gemini-1.5-flash-latest",
-            systemInstruction: systemPrompt,
+           model: "gemini-1.5-flash",
             generationConfig: {
                 responseMimeType: "application/json",
+            },
+            systemInstruction: {
+                parts: [{ text: systemPrompt }],
             },
         });
         const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
@@ -1272,10 +1278,12 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         });
         const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest",
-            systemInstruction: systemPrompt,
+            model: "gemini-1.5-flash",
             generationConfig: {
                 responseMimeType: "application/json",
+            },
+            systemInstruction: {
+                parts: [{ text: systemPrompt }],
             },
         });
         const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
