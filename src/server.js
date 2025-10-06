@@ -1418,7 +1418,9 @@ ${awayNews}
             },
         });
         const responseText = result.response.text();
-        const analysisData = JSON.parse(responseText);
+// Add this line to clean the string
+const cleanedJsonString = responseText.replace(/^```json\s*/, '').replace(/```$/, '');
+const analysisData = JSON.parse(cleanedJsonString);
         res.json({ analysisData });
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
@@ -1558,6 +1560,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
