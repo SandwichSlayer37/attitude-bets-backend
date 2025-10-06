@@ -1228,6 +1228,57 @@ app.get('/api/records', async (req, res) => {
     }
 });
 
+// Add this new endpoint to handle chat requests
+app.post('/api/hockey-chat', async (req, res) => {
+    try {
+        const { question } = req.body;
+        if (!question) {
+            return res.status(400).json({ error: 'Question is required.' });
+        }
+
+        const chat = flashModel.startChat();
+        const result1 = await chat.sendMessage(question);
+        const response1 = result1.response;
+
+        const functionCalls = response1.functionCalls();
+
+        if (functionCalls && functionCalls.length > 0) {
+            const call = functionCalls[0];
+            console.log(`AI is requesting to call function: ${call.name}`);
+            
+            let functionResponse;
+            if (call.name === 'queryNhlStats') {
+                functionResponse = await queryNhlStats(call.args);
+            } else {
+                // Handle other potential function calls in the future
+                functionResponse = { error: `Unknown function ${call.name}` };
+            }
+
+            // Send the function's result back to the model
+            const result2 = await chat.sendMessage([
+                {
+                    functionResponse: {
+                        name: call.name,
+                        response: functionResponse,
+                    },
+                },
+            ]);
+            
+            const finalAnswer = result2.response.text();
+            res.json({ answer: finalAnswer });
+
+        } else {
+            // The model answered directly without needing the database
+            const directAnswer = response1.text();
+            res.json({ answer: directAnswer });
+        }
+
+    } catch (error) {
+        console.error("Hockey Chat Error:", error);
+        res.status(500).json({ error: 'Failed to process chat message.' });
+    }
+});
+
 app.get('/api/reconcile-results', async (req, res) => {
     const { password } = req.query;
     if (password !== RECONCILE_PASSWORD) {
@@ -1504,6 +1555,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
