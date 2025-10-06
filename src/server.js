@@ -50,17 +50,27 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
 
-// ✅ NEW: A model specifically for analysis tasks (with only search enabled)
+// ✅ CORRECTED: A model for analysis that automatically uses built-in tools like search.
 const analysisModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: [{ "googleSearch": {} }],
+    toolConfig: {
+        functionCallingConfig: {
+            mode: "AUTO",
+        },
+    },
 });
 
-// ✅ NEW: A model specifically for the hockey chat (with both search and the database tool)
+// ✅ CORRECTED: A model for chat that automatically uses built-in tools AND your custom DB tool.
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: [{ "googleSearch": {} }, queryNhlStatsTool],
+    tools: [queryNhlStatsTool],
+    toolConfig: {
+        functionCallingConfig: {
+            mode: "AUTO",
+        },
+    },
 });
+
 
 const r = new Snoowrap({
     userAgent: process.env.REDDIT_USER_AGENT,
@@ -1502,7 +1512,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const bookmakers = await getPropBets(game.sportKey, game.id);
         if (bookmakers.length === 0 || !bookmakers[0].markets || !bookmakers[0].markets.length === 0) {
             return res.json({ 
-                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
+                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We've couldn't find any player prop bet markets for this game at the moment.</p>`
             });
         }
         let availableProps = '';
@@ -1579,20 +1589,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-}
-I got this new error when I try to run the server code now,
-C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:434
-    throw new GoogleGenerativeAIFetchError(
-          ^
-GoogleGenerativeAIFetchError: [GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [400 Bad Request] Invalid JSON payload received. Unknown name "googleSearch" at 'tools[0]'.
-    at handleResponseNotOk (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:434:11)
-    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
-    at async makeRequest (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:403:9)
-    at async generateContent (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:867:22)
-    at async updatePlayerSpotlightForSport (C:\Users\alexa\WebstormProjects\attitudebets-main\src\server.js:520:22)
-    at async C:\Users\alexa\WebstormProjects\attitudebets-main\src\server.js:1545:13 {
-  status: 400,
-  statusText: 'Bad Request',
-  errorDetails: undefined
-}
