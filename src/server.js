@@ -1008,18 +1008,28 @@ app.get('/api/special-picks', async (req, res) => {
 
         let pickOfTheDay = null;
         let parlay = null;
+        let arbitrationCandidates = [];
 
+        // Identify POTD candidates first
         const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
 
+        // Sort candidates by a combined score of confidence and value
+        highValuePicks.sort((a, b) => {
+            const aValue = a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue;
+            const bValue = b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue;
+            return (b.prediction.confidence + bValue) - (a.prediction.confidence + aValue);
+        });
+
         if (highValuePicks.length > 0) {
-            pickOfTheDay = highValuePicks.reduce((best, current) => {
-                const bestValue = best.prediction.winner === best.game.home_team ? best.prediction.homeValue : best.prediction.awayValue;
-                const currentValue = current.prediction.winner === current.game.home_team ? current.prediction.homeValue : current.prediction.awayValue;
-                return (current.prediction.confidence + currentValue) > (best.prediction.confidence + bestValue) ? current : best;
-            });
+            pickOfTheDay = highValuePicks[0]; // The top pick is the default POTD
+        }
+        
+        // If we have 2 or 3 strong candidates, they are eligible for arbitration
+        if (highValuePicks.length >= 2 && highValuePicks.length <= 3) {
+            arbitrationCandidates = highValuePicks;
         }
 
         const goodPicks = upcomingTodayPredictions.filter(p => p.prediction.confidence > parlayConfidenceThreshold)
@@ -1040,7 +1050,7 @@ app.get('/api/special-picks', async (req, res) => {
                 }
             }
         }
-        res.json({ pickOfTheDay, parlay });
+        res.json({ pickOfTheDay, parlay, arbitrationCandidates });
     } catch (error) {
         console.error("Special Picks Error:", error);
         res.status(500).json({ error: 'Failed to generate special picks.' });
@@ -1338,3 +1348,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
