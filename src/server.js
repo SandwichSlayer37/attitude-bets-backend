@@ -1057,6 +1057,58 @@ app.get('/api/special-picks', async (req, res) => {
     }
 });
 
+const ARBITER_SCHEMA = {
+    "bestBet": {
+        "matchup": "string (e.g., 'Team A @ Team B')",
+        "pick": "string (The winning team's name)"
+    },
+    "comparativeAnalysis": "string (A detailed 2-3 sentence narrative comparing the pros and cons of each bet.)",
+    "finalVerdict": "string (A concluding sentence explaining why the chosen bet is superior to the others.)"
+};
+
+app.post('/api/arbitrate-picks', async (req, res) => {
+    try {
+        const { candidates } = req.body; // Expect an array of top picks
+        if (!candidates || candidates.length < 2) {
+            return res.status(400).json({ error: "Not enough candidates for arbitration." });
+        }
+
+        const candidatesSummary = candidates.map((c, index) => {
+            const value = c.prediction.winner === c.game.home_team ? c.prediction.homeValue : c.prediction.awayValue;
+            return `
+Candidate ${index + 1}: Pick ${c.prediction.winner} in ${c.game.away_team} @ ${c.game.home_team}
+- Confidence Score: ${c.prediction.confidence.toFixed(1)}
+- Value Edge: ${value.toFixed(1)}%`
+        }).join('');
+
+        const systemPrompt = `You are 'The Arbiter,' an elite sports betting analyst. Your sole task is to compare a few top-rated betting opportunities and determine the single best bet among them. You must provide a comparative analysis and a final verdict, strictly following the user's JSON schema.`;
+
+        const userPrompt = `
+**TOP CANDIDATES FOR BEST BET OF THE DAY:**
+${candidatesSummary}
+
+**TASK:**
+Analyze the candidates. Compare their relative strengths (confidence vs. value) and risks. Declare the single best bet and provide your reasoning by completing the following JSON object.
+
+**JSON TO COMPLETE:**
+${JSON.stringify(ARBITER_SCHEMA, null, 2)}
+`;
+        
+        const result = await flashModel.generateContent({
+            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+        });
+
+        const responseText = result.response.text();
+        const arbitrationData = JSON.parse(responseText);
+        res.json({ arbitrationData });
+
+    } catch (error) {
+        console.error("Arbitration AI Error:", error);
+        res.status(500).json({ error: "Failed to generate Arbitration AI analysis." });
+    }
+});
+
 app.get('/api/records', async (req, res) => {
     try {
         if (!recordsCollection) { await connectToDb(); }
@@ -1348,4 +1400,5 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
