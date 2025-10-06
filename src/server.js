@@ -5,7 +5,7 @@ const cors = require('cors');
 const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI, GoogleSearchRetriever } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
@@ -50,13 +50,17 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
 
-// Update your flashModel definition
+// ✅ DEFINE YOUR MODEL ONCE HERE
 const flashModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     generationConfig: {
         responseMimeType: "application/json",
     },
-    tools: [new GoogleSearchRetriever(), queryNhlStatsTool], // Add the new tool here
+    // This is the corrected way to enable the tools
+    tools: [
+        { "google_search_retriever": {} },
+        queryNhlStatsTool
+    ],
 });
 
 const r = new Snoowrap({
@@ -1555,6 +1559,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
