@@ -56,9 +56,8 @@ const flashModel = genAI.getGenerativeModel({
     generationConfig: {
         responseMimeType: "application/json",
     },
-    // This is the corrected way to enable the tools
     tools: [
-        { "google_search_retriever": {} },
+        { "googleSearchRetriever": {} }, // CORRECTED: from snake_case to camelCase
         queryNhlStatsTool
     ],
 });
@@ -1559,6 +1558,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
