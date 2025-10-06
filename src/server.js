@@ -48,27 +48,18 @@ const queryNhlStatsTool = {
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1beta' }); // Using v1beta for tools
 
-// ✅ CORRECTED: A model for analysis that automatically uses built-in tools like search.
+// ✅ FINAL FIX: Use the documented 'googleSearchRetrieval' key.
 const analysisModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    toolConfig: {
-        functionCallingConfig: {
-            mode: "AUTO",
-        },
-    },
+    tools: [{ "googleSearchRetrieval": {} }],
 });
 
-// ✅ CORRECTED: A model for chat that automatically uses built-in tools AND your custom DB tool.
+// ✅ FINAL FIX: Use the documented 'googleSearchRetrieval' key alongside the custom tool.
 const chatModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    tools: [queryNhlStatsTool],
-    toolConfig: {
-        functionCallingConfig: {
-            mode: "AUTO",
-        },
-    },
+    tools: [{ "googleSearchRetrieval": {} }, queryNhlStatsTool],
 });
 
 
@@ -153,10 +144,15 @@ const teamToSubredditMap = {
 };
 
 // --- HELPER FUNCTIONS ---
-// ✅ NEW HELPER FUNCTION TO CLEAN AND PARSE JSON
 function cleanAndParseJson(jsonString) {
+    if (!jsonString) return null;
     const cleanedString = jsonString.replace(/^```json\s*/, '').replace(/```$/, '');
-    return JSON.parse(cleanedString);
+    try {
+        return JSON.parse(cleanedString);
+    } catch (e) {
+        console.error("Failed to parse cleaned JSON string:", cleanedString);
+        throw e; // Re-throw the error after logging the problematic string
+    }
 }
 
 const parseRecord = (rec) => {
@@ -187,7 +183,6 @@ async function getTeamNewsFromReddit(teamName) {
     }
 }
 
-// Add this new helper function
 async function queryNhlStats(args) {
     console.log("Executing NHL Stats Query with args:", args);
     const { season, stat, team, sortOrder = 'desc', limit = 5 } = args;
@@ -199,7 +194,6 @@ async function queryNhlStats(args) {
     try {
         const seasonNumber = parseInt(season, 10);
         
-        // Define how to calculate each stat from the raw DB fields
         const statCalculations = {
             fiveOnFiveXgPercentage: { $multiply: [{ $divide: ["$totalxGoalsFor", { $add: ["$totalxGoalsFor", "$totalxGoalsAgainst"] }] }, 100] },
             powerPlayXg: "$totalxGoalsFor",
@@ -214,21 +208,18 @@ async function queryNhlStats(args) {
 
         const pipeline = [];
 
-        // Initial match for season and the required situation (e.g., '5on5')
         pipeline.push({
             $match: {
                 season: seasonNumber,
-                situation: situationMap[stat] || '5on5' // Default to 5on5 if stat is unknown
+                situation: situationMap[stat] || '5on5'
             }
         });
         
-        // If a specific team is requested, filter for that team
         if (team) {
              const teamAbbr = teamToAbbrMap[team] || team.toUpperCase();
              pipeline.push({ $match: { team: teamAbbr } });
         }
         
-        // Group by team to aggregate stats
         pipeline.push({
             $group: {
                 _id: "$team",
@@ -237,7 +228,6 @@ async function queryNhlStats(args) {
             }
         });
 
-        // Project the final calculated stat
         pipeline.push({
             $project: {
                 team: "$_id",
@@ -245,7 +235,6 @@ async function queryNhlStats(args) {
             }
         });
 
-        // Sort and limit the results
         pipeline.push({ $sort: { statValue: sortOrder === 'desc' ? -1 : 1 } });
         pipeline.push({ $limit: parseInt(limit, 10) });
 
@@ -1512,7 +1501,7 @@ app.post('/api/ai-prop-analysis', async (req, res) => {
         const bookmakers = await getPropBets(game.sportKey, game.id);
         if (bookmakers.length === 0 || !bookmakers[0].markets || !bookmakers[0].markets.length === 0) {
             return res.json({ 
-                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We've couldn't find any player prop bet markets for this game at the moment.</p>`
+                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
             });
         }
         let availableProps = '';
