@@ -143,6 +143,12 @@ const teamToSubredditMap = {
 };
 
 // --- HELPER FUNCTIONS ---
+// ✅ NEW HELPER FUNCTION TO CLEAN AND PARSE JSON
+function cleanAndParseJson(jsonString) {
+    const cleanedString = jsonString.replace(/^```json\s*/, '').replace(/```$/, '');
+    return JSON.parse(cleanedString);
+}
+
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
     const parts = rec.split('-');
@@ -383,7 +389,7 @@ ${propsForPrompt}
             },
         });
         const responseText = result.response.text();
-        const analysisResult = JSON.parse(responseText);
+        const analysisResult = cleanAndParseJson(responseText);
 
         await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { data: analysisResult, error: null, updatedAt: new Date() } }, { upsert: true });
         console.log(`--- BACKGROUND JOB COMPLETE: AI Player Spotlight for ${sport.name} updated. ---`);
@@ -1207,7 +1213,7 @@ ${JSON.stringify(ARBITER_SCHEMA, null, 2)}
         });
 
         const responseText = result.response.text();
-        const arbitrationData = JSON.parse(responseText);
+        const arbitrationData = cleanAndParseJson(responseText);
         res.json({ arbitrationData });
 
     } catch (error) {
@@ -1374,6 +1380,22 @@ app.get('/api/recent-bets', async (req, res) => {
     }
 });
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
+// STEP 1: Define the new, more detailed JSON schema just before your endpoint.
+const V2_ANALYSIS_SCHEMA = {
+  "finalPick": "string",
+  "isOverride": "boolean",
+  "confidenceScore": "string (High, Medium, or Low)",
+  "confidenceRationale": "string (A brief explanation for the confidence level, citing data.)",
+  "gameNarrative": "string (The story of the matchup in 2-3 sentences.)",
+  "keyFactorWithData": {
+    "factor": "string (The single most important factor, e.g., 'Starting Pitcher Duel')",
+    "data": "string (The specific stats that make this factor critical, e.g., 'Home pitcher has a 1.85 ERA over his last 5 starts, while the away pitcher's is 5.50.')"
+  },
+  "counterArgument": "string (The strongest argument AGAINST your final pick.)",
+  "rebuttal": "string (Why you believe your pick is still the right one despite the counter-argument.)",
+  "xFactor": "string (A player, stat, or condition that could unexpectedly swing the outcome.)"
+};
+
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
@@ -1388,7 +1410,8 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        const systemPrompt = `You are a master sports betting analyst and strategist. Your primary role is to act as the final decision-maker. You will be given a statistical report and recent news headlines. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
+        // STEP 2: Update the system and user prompts
+        const systemPrompt = `You are a master sports betting analyst and strategist, acting as the final decision-maker. Your task is to synthesize a statistical report and recent news to produce a detailed, data-driven strategic breakdown. You must rigorously follow the user's JSON schema, citing specific data points from the report in your reasoning. Your response must be only the JSON object specified.`;
         
         const userPrompt = `
 **STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
@@ -1402,15 +1425,12 @@ ${homeNews}
 - **${game.away_team} News:**
 ${awayNews}
 
+**TASK:**
+Analyze all provided information and complete the following JSON object with your strategic breakdown. Ensure every field is populated with deep, data-driven insights.
+
 **JSON TO COMPLETE:**
-{
-  "finalPick": "string (Your final decision)",
-  "isOverride": "boolean (Did you change the pick?)",
-  "confidenceScore": "string (High, Medium, or Low)",
-  "gameNarrative": "string (Tell the story of this matchup in 2-3 sentences. What is the overarching theme? E.g., 'This is a classic offense vs. defense matchup...')",
-  "keyFactor": "string (Identify the single most important factor that led to your decision. E.g., 'The overwhelming goalie advantage for the Rangers.')",
-  "primaryRisk": "string (What is the biggest risk or counter-argument to your pick? E.g., 'The primary risk is the potential for an emotional letdown after their recent big win.')"
-}`;
+${JSON.stringify(V2_ANALYSIS_SCHEMA, null, 2)}
+`;
         const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: {
@@ -1418,15 +1438,14 @@ ${awayNews}
             },
         });
         const responseText = result.response.text();
-// Add this line to clean the string
-const cleanedJsonString = responseText.replace(/^```json\s*/, '').replace(/```$/, '');
-const analysisData = JSON.parse(cleanedJsonString);
+        const analysisData = cleanAndParseJson(responseText);
         res.json({ analysisData });
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
 });
+
 app.post('/api/parlay-ai-analysis', async (req, res) => {
     try {
         if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
@@ -1453,7 +1472,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
             },
         });
         const responseText = result.response.text();
-        const parlayData = JSON.parse(responseText);
+        const parlayData = cleanAndParseJson(responseText);
 
         const analysisHtml = `
             <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
@@ -1512,7 +1531,7 @@ Available Prop Bets: ${availableProps}
             },
         });
         const responseText = result.response.text();
-        const propData = JSON.parse(responseText);
+        const propData = cleanAndParseJson(responseText);
 
         const analysisHtml = `
             <div class="space-y-4">
@@ -1561,13 +1580,19 @@ connectToDb()
         process.exit(1);
     });
 
-
-
-
-
-
-
-
-
-
-
+}
+I got this new error when I try to run the server code now,
+C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:434
+    throw new GoogleGenerativeAIFetchError(
+          ^
+GoogleGenerativeAIFetchError: [GoogleGenerativeAI Error]: Error fetching from https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent: [400 Bad Request] Invalid JSON payload received. Unknown name "googleSearch" at 'tools[0]'.
+    at handleResponseNotOk (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:434:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async makeRequest (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:403:9)
+    at async generateContent (C:\Users\alexa\WebstormProjects\attitudebets-main\node_modules\@google\generative-ai\dist\index.js:867:22)
+    at async updatePlayerSpotlightForSport (C:\Users\alexa\WebstormProjects\attitudebets-main\src\server.js:520:22)
+    at async C:\Users\alexa\WebstormProjects\attitudebets-main\src\server.js:1545:13 {
+  status: 400,
+  statusText: 'Bad Request',
+  errorDetails: undefined
+}
