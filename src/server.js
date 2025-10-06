@@ -5,7 +5,7 @@ const cors = require('cors');
 const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, GoogleSearchRetriever } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
@@ -24,6 +24,8 @@ const flashModel = genAI.getGenerativeModel({
     generationConfig: {
         responseMimeType: "application/json",
     },
+    // Add this tools property
+    tools: [new GoogleSearchRetriever()],
 });
 
 const r = new Snoowrap({
@@ -256,7 +258,7 @@ async function updatePlayerSpotlightForSport(sport) {
             return gameText;
         }).join('');
 
-        const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". This player should have multiple prop bets that appear favorable or undervalued. Complete the JSON object provided by the user.`;
+       const systemPrompt = `You are a master sports betting analyst. Your primary task is to synthesize the provided statistical report and Reddit sentiment. Crucially, you MUST also perform a real-time web search using your available tools for any last-minute news, official injury updates, or lineup changes for both teams. Integrate these real-time findings into your final analysis to provide the most timely and accurate strategic breakdown possible, following the user's JSON schema.`;
         
         const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
 **Available Prop Bets Data:**
@@ -1400,5 +1402,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
