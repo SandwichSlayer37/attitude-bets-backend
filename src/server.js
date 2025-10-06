@@ -57,7 +57,7 @@ const flashModel = genAI.getGenerativeModel({
         responseMimeType: "application/json",
     },
     tools: [
-        { "googleSearchRetriever": {} }, // CORRECTED: from snake_case to camelCase
+        { "googleSearch": {} }, // CORRECTED: This is the proper declaration for the built-in search tool
         queryNhlStatsTool
     ],
 });
@@ -1558,6 +1558,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
