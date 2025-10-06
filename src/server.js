@@ -12,20 +12,51 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
+// Add this tool definition near the top of your file
+const queryNhlStatsTool = {
+  functionDeclarations: [
+    {
+      name: "queryNhlStats",
+      description: "Queries the historical NHL advanced stats database to find data for teams based on season and specific statistics.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          season: {
+            type: "NUMBER",
+            description: "The year of the NHL season to query, e.g., 2023 for the 2023-2024 season."
+          },
+          stat: {
+            type: "STRING",
+            description: "The advanced statistic to query. Supported values are 'fiveOnFiveXgPercentage', 'powerPlayXg', and 'penaltyKillXgAgainst'."
+          },
+          team: {
+            type: "STRING",
+            description: "Optional. The full name of a specific NHL team to query, e.g., 'Colorado Avalanche'."
+          },
+          limit: {
+            type: "NUMBER",
+            description: "The number of results to return. Defaults to 5."
+          },
+        },
+        required: ["season", "stat"]
+      }
+    }
+  ]
+};
+
 // --- API & DATA CONFIG ---
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
 
-// ✅ DEFINE YOUR MODEL ONCE HERE
+// Update your flashModel definition
 const flashModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
     generationConfig: {
         responseMimeType: "application/json",
     },
-    // Add this tools property
-    tools: [new GoogleSearchRetriever()],
+    tools: [new GoogleSearchRetriever(), queryNhlStatsTool], // Add the new tool here
 });
 
 const r = new Snoowrap({
@@ -134,6 +165,77 @@ async function getTeamNewsFromReddit(teamName) {
     } catch (error) {
         console.error(`Could not fetch Reddit news for ${teamName}:`, error.message);
         return "Could not fetch news.";
+    }
+}
+
+// Add this new helper function
+async function queryNhlStats(args) {
+    console.log("Executing NHL Stats Query with args:", args);
+    const { season, stat, team, sortOrder = 'desc', limit = 5 } = args;
+
+    if (!season || !stat) {
+        return { error: "A season and a stat are required to query the database." };
+    }
+
+    try {
+        const seasonNumber = parseInt(season, 10);
+        
+        // Define how to calculate each stat from the raw DB fields
+        const statCalculations = {
+            fiveOnFiveXgPercentage: { $multiply: [{ $divide: ["$totalxGoalsFor", { $add: ["$totalxGoalsFor", "$totalxGoalsAgainst"] }] }, 100] },
+            powerPlayXg: "$totalxGoalsFor",
+            penaltyKillXgAgainst: "$totalxGoalsAgainst"
+        };
+        
+        const situationMap = {
+            fiveOnFiveXgPercentage: '5on5',
+            powerPlayXg: '5on4',
+            penaltyKillXgAgainst: '4on5'
+        };
+
+        const pipeline = [];
+
+        // Initial match for season and the required situation (e.g., '5on5')
+        pipeline.push({
+            $match: {
+                season: seasonNumber,
+                situation: situationMap[stat] || '5on5' // Default to 5on5 if stat is unknown
+            }
+        });
+        
+        // If a specific team is requested, filter for that team
+        if (team) {
+             const teamAbbr = teamToAbbrMap[team] || team.toUpperCase();
+             pipeline.push({ $match: { team: teamAbbr } });
+        }
+        
+        // Group by team to aggregate stats
+        pipeline.push({
+            $group: {
+                _id: "$team",
+                totalxGoalsFor: { $sum: "$xGoalsFor" },
+                totalxGoalsAgainst: { $sum: "$xGoalsAgainst" },
+            }
+        });
+
+        // Project the final calculated stat
+        pipeline.push({
+            $project: {
+                team: "$_id",
+                statValue: statCalculations[stat]
+            }
+        });
+
+        // Sort and limit the results
+        pipeline.push({ $sort: { statValue: sortOrder === 'desc' ? -1 : 1 } });
+        pipeline.push({ $limit: parseInt(limit, 10) });
+
+        const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+        return { results };
+
+    } catch (error) {
+        console.error("Error during NHL stats query:", error);
+        return { error: "An error occurred while querying the database." };
     }
 }
 
@@ -1402,6 +1504,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
