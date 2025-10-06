@@ -50,14 +50,16 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1' });
 
-// ✅ DEFINE YOUR MODEL ONCE HERE
-const flashModel = genAI.getGenerativeModel({
+// ✅ NEW: A model specifically for analysis tasks (with only search enabled)
+const analysisModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    // The generationConfig line has been removed
-    tools: [
-        { "googleSearch": {} },
-        queryNhlStatsTool
-    ],
+    tools: [{ "googleSearch": {} }],
+});
+
+// ✅ NEW: A model specifically for the hockey chat (with both search and the database tool)
+const chatModel = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    tools: [{ "googleSearch": {} }, queryNhlStatsTool],
 });
 
 const r = new Snoowrap({
@@ -374,7 +376,7 @@ ${propsForPrompt}
   "keyBets": "List 2-3 of their most attractive prop bets that you identified."
 }`;
 
-        const result = await flashModel.generateContent({
+        const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: {
                 parts: [{ text: systemPrompt }],
@@ -1199,7 +1201,7 @@ Analyze the candidates. Compare their relative strengths (confidence vs. value) 
 ${JSON.stringify(ARBITER_SCHEMA, null, 2)}
 `;
         
-        const result = await flashModel.generateContent({
+        const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: { parts: [{ text: systemPrompt }] },
         });
@@ -1237,7 +1239,7 @@ app.post('/api/hockey-chat', async (req, res) => {
             return res.status(400).json({ error: 'Question is required.' });
         }
 
-        const chat = flashModel.startChat();
+        const chat = chatModel.startChat();
         const result1 = await chat.sendMessage(question);
         const response1 = result1.response;
 
@@ -1409,7 +1411,7 @@ ${awayNews}
   "keyFactor": "string (Identify the single most important factor that led to your decision. E.g., 'The overwhelming goalie advantage for the Rangers.')",
   "primaryRisk": "string (What is the biggest risk or counter-argument to your pick? E.g., 'The primary risk is the potential for an emotional letdown after their recent big win.')"
 }`;
-        const result = await flashModel.generateContent({
+        const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: {
                 parts: [{ text: systemPrompt }],
@@ -1442,7 +1444,7 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
   "bullCase": "",
   "bearCase": ""
 }`;
-        const result = await flashModel.generateContent({
+        const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: {
                 parts: [{ text: systemPrompt }],
@@ -1501,7 +1503,7 @@ Available Prop Bets: ${availableProps}
   "rationale": "",
   "risk": ""
 }`;
-        const result = await flashModel.generateContent({
+        const result = await analysisModel.generateContent({
             contents: [{ role: "user", parts: [{ text: userPrompt }] }],
             systemInstruction: {
                 parts: [{ text: systemPrompt }],
@@ -1556,6 +1558,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
