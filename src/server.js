@@ -53,11 +53,9 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: '
 // ✅ DEFINE YOUR MODEL ONCE HERE
 const flashModel = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
-    generationConfig: {
-        responseMimeType: "application/json",
-    },
+    // The generationConfig line has been removed
     tools: [
-        { "googleSearch": {} }, // CORRECTED: This is the proper declaration for the built-in search tool
+        { "googleSearch": {} },
         queryNhlStatsTool
     ],
 });
@@ -1558,6 +1556,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
