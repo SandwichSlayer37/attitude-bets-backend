@@ -30,7 +30,8 @@ const queryNhlStatsTool = {
           },
           stat: {
             type: "STRING",
-            description: "The exact data field to query. Key examples include: 'I_F_goals', 'I_F_points', 'gameScore', 'onIce_corsiPercentage', 'xGoalsFor', 'xGoalsAgainst', 'faceoffsWon', 'hitsFor'."
+            // ✅ UPDATED: This description is now much more detailed to guide the AI
+            description: "The exact, case-sensitive data field to query. This must be a valid field name from the database. \n- For individual player stats (prefix I_F_), key examples are: 'I_F_goals', 'I_F_points', 'I_F_shotsOnGoal', 'I_F_hits', 'I_F_takeaways', 'I_F_giveaways', 'I_F_penalityMinutes'. \n- For on-ice team stats when a player is on the ice (prefix OnIce_), key examples are: 'onIce_xGoalsPercentage', 'onIce_corsiPercentage', 'OnIce_F_goals', 'OnIce_A_goals'. \n- For overall player metrics, key examples are: 'gameScore', 'icetime', 'penaltiesDrawn'."
           },
           playerName: {
             type: "STRING",
@@ -1617,6 +1618,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
