@@ -9,7 +9,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// ✅ FIX: Increase the JSON payload size limit to prevent 'PayloadTooLargeError'
+app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // Add this tool definition near the top of your file
@@ -48,7 +49,7 @@ const queryNhlStatsTool = {
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1beta' }); // Using v1beta for tools
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY, { apiVersion: 'v1beta' });
 
 // ✅ FINAL FIX: Use the documented 'googleSearchRetrieval' key.
 const analysisModel = genAI.getGenerativeModel({
@@ -327,76 +328,12 @@ async function getProbablePitchersAndStats() {
     }, 14400000);
 }
 
+// ✅ FIX: Disable the broken prop bet logic to prevent log spam
 async function updatePlayerSpotlightForSport(sport) {
-    console.log(`--- Starting BACKGROUND JOB: AI Player Spotlight for ${sport.name} ---`);
-    try {
-        const gamesForSport = await getOdds(sport.key);
-        let allPropBets = [];
-        for (const game of gamesForSport) {
-            const props = await getPropBets(game.sportKey, game.id);
-            if (props.length > 0) {
-                allPropBets.push({
-                    matchup: `${game.away_team} @ ${game.home_team}`,
-                    bookmakers: props
-                });
-            }
-            await new Promise(resolve => setTimeout(resolve, 2500)); 
-        }
-
-        const dbKey = `spotlight_${sport.key}`;
-        if (allPropBets.length < 3) {
-            console.log(`Not enough prop data for ${sport.name}. Skipping update.`);
-            await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `Not enough prop bet data available for ${sport.name}.`, updatedAt: new Date() } }, { upsert: true });
-            return;
-        }
-
-        const propsForPrompt = allPropBets.map(game => {
-            let gameText = `\nMatchup: ${game.matchup}\n`;
-            if (game.bookmakers && Array.isArray(game.bookmakers)) {
-                game.bookmakers.forEach(bookmaker => {
-                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
-                        bookmaker.markets.forEach(market => {
-                            if (market.outcomes && Array.isArray(market.outcomes)) {
-                                market.outcomes.forEach(outcome => {
-                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-            return gameText;
-        }).join('');
-
-       const systemPrompt = `You are a master sports betting analyst. Your primary task is to synthesize the provided statistical report and Reddit sentiment. Crucially, you MUST also perform a real-time web search using your available tools for any last-minute news, official injury updates, or lineup changes for both teams. Integrate these real-time findings into your final analysis to provide the most timely and accurate strategic breakdown possible, following the user's JSON schema.`;
-        
-        const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Available Prop Bets Data:**
-${propsForPrompt}
-**JSON to complete:**
-{
-  "playerName": "",
-  "teamName": "",
-  "rationale": "Provide a 3-4 sentence analysis explaining why this player is the 'hottest player'. Mention the specific matchups or statistical advantages that make their props attractive.",
-  "keyBets": "List 2-3 of their most attractive prop bets that you identified."
-}`;
-
-        const result = await analysisModel.generateContent({
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-            systemInstruction: {
-                parts: [{ text: systemPrompt }],
-            },
-        });
-        const responseText = result.response.text();
-        const analysisResult = cleanAndParseJson(responseText);
-
-        await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { data: analysisResult, error: null, updatedAt: new Date() } }, { upsert: true });
-        console.log(`--- BACKGROUND JOB COMPLETE: AI Player Spotlight for ${sport.name} updated. ---`);
-    } catch (error) {
-        console.error(`Error during background Player Spotlight update for ${sport.key}:`, error);
-        const dbKey = `spotlight_${sport.key}`;
-        await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `An unexpected error occurred during analysis for ${sport.name}.`, updatedAt: new Date() } }, { upsert: true });
-    }
+    console.log(`--- SKIPPING BACKGROUND JOB: AI Player Spotlight for ${sport.name} (Feature disabled due to API plan limitations) ---`);
+    const dbKey = `spotlight_${sport.key}`;
+    await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `Player Spotlight is currently unavailable.`, updatedAt: new Date() } }, { upsert: true });
+    return;
 }
 
 async function fetchData(key, fetcherFn, ttl = 3600000) {
@@ -1494,60 +1431,12 @@ app.post('/api/parlay-ai-analysis', async (req, res) => {
         res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
+
 app.post('/api/ai-prop-analysis', async (req, res) => {
     try {
-        const { game, prediction } = req.body;
-        if (!game || !prediction) return res.status(400).json({ error: 'Game and prediction data are required.' });
-        const bookmakers = await getPropBets(game.sportKey, game.id);
-        if (bookmakers.length === 0 || !bookmakers[0].markets || !bookmakers[0].markets.length === 0) {
-            return res.json({ 
-                analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>No Prop Bets Found</h4><p>We couldn't find any player prop bet markets for this game at the moment.</p>`
-            });
-        }
-        let availableProps = '';
-        bookmakers[0].markets.forEach(market => {
-            availableProps += `\nMarket: ${market.key}\n`;
-            market.outcomes.forEach(outcome => {
-                availableProps += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-            });
+        return res.json({ 
+            analysisHtml: `<h4 class='text-lg font-bold text-yellow-400 mb-2'>Feature Unavailable</h4><p>The Top Prop Bet feature is currently unavailable due to limitations with our odds provider's API plan. This feature will be re-enabled in the future.</p>`
         });
-        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-
-        const userPrompt = `Based on the following data, identify the single best prop bet and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Data:**
-Main Game Analysis: The algorithm predicts ${prediction.winner} will win.
-Available Prop Bets: ${availableProps}
-**JSON to complete:**
-{
-  "pick": "",
-  "rationale": "",
-  "risk": ""
-}`;
-        const result = await analysisModel.generateContent({
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-            systemInstruction: {
-                parts: [{ text: systemPrompt }],
-            },
-        });
-        const responseText = result.response.text();
-        const propData = cleanAndParseJson(responseText);
-
-        const analysisHtml = `
-            <div class="space-y-4">
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-teal-500 text-center">
-                     <h4 class="text-sm font-bold text-gray-400 uppercase">Top AI Prop Pick</h4>
-                     <p class="text-xl font-bold text-white mt-1">${propData.pick}</p>
-                </div>
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-green-400">Rationale</h4>
-                    <p class="mt-2 text-gray-300">${propData.rationale}</p>
-                </div>
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-red-400">Risk Factor</h4>
-                    <p class="mt-2 text-gray-300">${propData.risk}</p>
-                </div>
-            </div>`;
-        res.json({ analysisHtml });
     } catch (error) {
         console.error("AI Prop Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate AI prop analysis." });
