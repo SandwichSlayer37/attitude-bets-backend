@@ -193,7 +193,6 @@ async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
 
-    // ✅ NEW: Translation layer for common conceptual stats
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4', description: 'Power Play xGoals For' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5', description: 'Penalty Kill xGoals Against' },
@@ -203,9 +202,8 @@ async function queryNhlStats(args) {
     if (statTranslationMap[stat]) {
         console.log(`Translating conceptual stat '${stat}' to a query for '${statTranslationMap[stat].newStat}' in situation '${statTranslationMap[stat].situation}'.`);
         situationOverride = statTranslationMap[stat].situation;
-        stat = statTranslationMap[stat].newStat; // Overwrite the stat variable with the valid field name
+        stat = statTranslationMap[stat].newStat;
     }
-    // End of new translation logic
 
     if (!season || !dataType || !stat) {
         return { error: "A season, dataType ('skater', 'goalie', or 'team'), and a stat are required." };
@@ -218,21 +216,12 @@ async function queryNhlStats(args) {
         const seasonNumber = parseInt(season, 10);
         const pipeline = [];
 
-        // Base filter for the season
         pipeline.push({ $match: { season: seasonNumber } });
         
-        // Handle situation from translation or use 'all' situations if not specified
         if (situationOverride) {
             pipeline.push({ $match: { situation: situationOverride } });
-        } else {
-             // If we are querying a player, we often want their 'all' situations stats unless specified.
-             // This can be expanded later if needed.
-             if(dataType === 'player' || dataType === 'goalie') {
-                pipeline.push({ $match: { situation: 'all' } });
-             }
         }
-
-        // Translate dataType into a filter on the 'position' field
+        
         if (dataType === 'skater') {
             pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
         } else if (dataType === 'goalie') {
@@ -251,6 +240,7 @@ async function queryNhlStats(args) {
             pipeline.push({ $match: { name: playerName } });
         }
         
+        // This logic is now unified for all data types
         pipeline.push({ $sort: { [stat]: -1 } });
         pipeline.push({ $limit: parseInt(limit, 10) });
 
@@ -258,6 +248,7 @@ async function queryNhlStats(args) {
             _id: 0,
             statValue: `$${stat}`
         };
+
         if (dataType === 'skater' || dataType === 'goalie') {
             projectFields.name = 1;
             projectFields.team = 1;
@@ -1647,6 +1638,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
