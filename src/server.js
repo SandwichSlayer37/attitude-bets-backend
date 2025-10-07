@@ -30,7 +30,8 @@ const queryNhlStatsTool = {
           },
           stat: {
             type: "STRING",
-            description: "The exact, case-sensitive data field to query. Examples: 'I_F_goals', 'I_F_points', 'gameScore', 'onIce_corsiPercentage', 'xGoalsFor', 'xGoalsAgainst', 'faceoffsWon', 'hitsFor'."
+            // ✅ UPDATED: This description is now much more explicit to prevent errors.
+            description: "The exact, case-sensitive data field to query. CRITICAL: If dataType is 'team', you MUST use an aggregated team-level field like 'goalsFor', 'xGoalsFor', or 'shotsOnGoalFor'. Do NOT use player-specific fields (like those with 'I_F_' or 'onIce_' prefixes) with dataType 'team'. Player-specific fields like 'I_F_goals', 'gameScore', etc. should only be used with dataType 'skater' or 'goalie'."
           },
           playerName: {
             type: "STRING",
@@ -39,6 +40,10 @@ const queryNhlStatsTool = {
           teamName: {
             type: "STRING",
             description: "Optional. The full name of a specific team to filter by, e.g., 'Edmonton Oilers'."
+          },
+          position: {
+            type: "STRING",
+            description: "Optional. Filter for a specific position, e.g., 'D', 'C', 'L', 'R'."
           },
           limit: {
             type: "NUMBER",
@@ -1620,6 +1625,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
