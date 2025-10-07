@@ -1380,7 +1380,6 @@ const V2_ANALYSIS_SCHEMA = {
   "rebuttal": "string (Why you believe your pick is still the right one despite the counter-argument.)",
   "xFactor": "string (A player, stat, or condition that could unexpectedly swing the outcome.)"
 };
-
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
@@ -1395,8 +1394,8 @@ app.post('/api/ai-analysis', async (req, res) => {
 
         const factorsList = Object.entries(factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
 
-        // ✅ FIX: Removed instruction to use search tools from the prompt.
-        const systemPrompt = `You are a master sports betting analyst and strategist, acting as the final decision-maker. You will be given a statistical report and recent news headlines from team communities. Your task is to synthesize all of this information to create a compelling game narrative, identify the single most important factor, and acknowledge any risks before making your final pick. Your response must be only the JSON object specified.`;
+        // New system prompt encouraging the AI to use its database tool
+        const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. If the initial data seems insufficient or a particular stat seems unusually important for this matchup, use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome before making your final conclusion. You must always return your final analysis in the specified JSON format.`;
         
         const userPrompt = `
 **STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
@@ -1411,20 +1410,55 @@ ${homeNews}
 ${awayNews}
 
 **TASK:**
-Analyze all provided information and complete the following JSON object with your strategic breakdown. Ensure every field is populated with deep, data-driven insights.
+Analyze all provided information, using your database query tool if necessary to find more context. Then, complete the following JSON object with your final strategic breakdown.
 
 **JSON TO COMPLETE:**
 ${JSON.stringify(V2_ANALYSIS_SCHEMA, null, 2)}
 `;
-        const result = await analysisModel.generateContent({
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        // --- Start Function Calling Logic ---
+        
+        // Start a chat session with the system prompt
+        const chat = chatModel.startChat({
             systemInstruction: {
                 parts: [{ text: systemPrompt }],
             },
         });
-        const responseText = result.response.text();
+
+        // Step 1: Send the main prompt to the AI
+        const result1 = await chat.sendMessage(userPrompt);
+        const response1 = result1.response;
+        const functionCalls = response1.functionCalls();
+
+        // Step 2: Check if the AI wants to call our database function
+        if (functionCalls && functionCalls.length > 0) {
+            const call = functionCalls[0]; // Process the first function call
+            console.log(`AI is requesting to call function: ${call.name}`);
+            
+            if (call.name === 'queryNhlStats') {
+                const apiResponse = await queryNhlStats(call.args);
+
+                // Step 3: Send the database results back to the AI
+                const result2 = await chat.sendMessage([
+                    {
+                        functionResponse: {
+                            name: call.name,
+                            response: apiResponse,
+                        },
+                    },
+                ]);
+                
+                // The AI's final analysis is in this second response
+                const responseText = result2.response.text();
+                const analysisData = cleanAndParseJson(responseText);
+                return res.json({ analysisData });
+            }
+        }
+        
+        // If there were no function calls, the AI made its decision with the initial data
+        const responseText = response1.text();
         const analysisData = cleanAndParseJson(responseText);
         res.json({ analysisData });
+
     } catch (error) {
         console.error("Advanced AI Analysis Error:", error);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
@@ -1566,4 +1600,5 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
