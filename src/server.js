@@ -1375,19 +1375,27 @@ app.get('/api/recent-bets', async (req, res) => {
 });
 app.get('/api/futures', (req, res) => res.json(FUTURES_PICKS_DB));
 // STEP 1: Define the new, more detailed JSON schema just before your endpoint.
-const V2_ANALYSIS_SCHEMA = {
+// Replace the old V2 schema with this new V3 version
+const V3_ANALYSIS_SCHEMA = {
   "finalPick": "string",
   "isOverride": "boolean",
-  "confidenceScore": "string (High, Medium, or Low)",
-  "confidenceRationale": "string (A brief explanation for the confidence level, citing data.)",
-  "gameNarrative": "string (The story of the matchup in 2-3 sentences.)",
+  "investmentThesis": "string (A 1-2 sentence professional summary of the core reason this bet is valuable.)",
+  "dynamicResearch": [
+    {
+      "question": "string (The specific question the AI asked the database.)",
+      "finding": "string (The data/answer the AI found that influenced its decision.)"
+    }
+  ],
+  "gameNarrative": "string",
   "keyFactorWithData": {
-    "factor": "string (The single most important factor, e.g., 'Starting Pitcher Duel')",
-    "data": "string (The specific stats that make this factor critical, e.g., 'Home pitcher has a 1.85 ERA over his last 5 starts, while the away pitcher's is 5.50.')"
+    "factor": "string",
+    "data": "string"
   },
-  "counterArgument": "string (The strongest argument AGAINST your final pick.)",
-  "rebuttal": "string (Why you believe your pick is still the right one despite the counter-argument.)",
-  "xFactor": "string (A player, stat, or condition that could unexpectedly swing the outcome.)"
+  "counterArgument": "string",
+  "rebuttal": "string",
+  "xFactor": "string",
+  "confidenceScore": "string (High, Medium, or Low)",
+  "confidenceRationale": "string"
 };
 app.post('/api/ai-analysis', async (req, res) => {
     try {
@@ -1422,7 +1430,7 @@ ${awayNews}
 Analyze all provided information, using your database query tool if necessary to find more context. Then, complete the following JSON object with your final strategic breakdown.
 
 **JSON TO COMPLETE:**
-${JSON.stringify(V2_ANALYSIS_SCHEMA, null, 2)}
+${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 `;
         // --- Start Function Calling Logic ---
         
@@ -1609,6 +1617,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
