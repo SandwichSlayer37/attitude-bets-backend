@@ -17,7 +17,7 @@ const queryNhlStatsTool = {
   functionDeclarations: [
     {
       name: "queryNhlStats",
-      description: "Queries the historical NHL advanced stats database to find data for teams based on season and specific statistics.",
+      description: "Queries a comprehensive historical NHL database for player or team statistics. Can aggregate data to find league leaders or retrieve stats for a specific player/team in a given season.",
       parameters: {
         type: "OBJECT",
         properties: {
@@ -25,20 +25,28 @@ const queryNhlStatsTool = {
             type: "NUMBER",
             description: "The year of the NHL season to query, e.g., 2023 for the 2023-2024 season."
           },
+          dataType: {
+            type: "STRING",
+            description: "The type of data to query. Supported values are 'player' for individual player stats, and 'team' for aggregated team stats.",
+          },
           stat: {
             type: "STRING",
-            description: "The advanced statistic to query. Supported values are 'fiveOnFiveXgPercentage', 'powerPlayXg', and 'penaltyKillXgAgainst'."
+            description: "The exact, case-sensitive data field to query, such as 'I_F_goals', 'onIce_corsiPercentage', 'xGoalsFor', etc."
           },
-          team: {
+          playerName: {
             type: "STRING",
-            description: "Optional. The full name of a specific NHL team to query, e.g., 'Colorado Avalanche'."
+            description: "Optional. The full name of a specific player to query, e.g., 'Connor McDavid'. Required if dataType is 'player'."
+          },
+          teamName: {
+            type: "STRING",
+            description: "Optional. The full name of a specific team to aggregate or filter by, e.g., 'Edmonton Oilers'."
           },
           limit: {
             type: "NUMBER",
             description: "The number of results to return. Defaults to 5."
           },
         },
-        required: ["season", "stat"]
+        required: ["season", "dataType", "stat"]
       }
     }
   ]
@@ -180,66 +188,62 @@ async function getTeamNewsFromReddit(teamName) {
     }
 }
 
-async function queryNhlStats(args) {
-    console.log("Executing NHL Stats Query with args:", args);
-    const { season, stat, team, sortOrder = 'desc', limit = 5 } = args;
+// A Set containing all valid, queryable stat fields for security.
+const ALLOWED_STATS = new Set(['playerId','season','name','team','position','situation','games_played','icetime','xGoals','goals','unblocked_shot_attempts','xRebounds','rebounds','xFreeze','freeze','xOnGoal','ongoal','xPlayStopped','playStopped','xPlayContinuedInZone','playContinuedInZone','xPlayContinuedOutsideZone','playContinuedOutsideZone','flurryAdjustedxGoals','lowDangerShots','mediumDangerShots','highDangerShots','lowDangerxGoals','mediumDangerxGoals','highDangerxGoals','lowDangerGoals','mediumDangerGoals','highDangerGoals','blocked_shot_attempts','penalityMinutes','penalties','lineId','iceTimeRank','xGoalsPercentage','corsiPercentage','fenwickPercentage','xOnGoalFor','xGoalsFor','xReboundsFor','xFreezeFor','xPlayStoppedFor','xPlayContinuedInZoneFor','xPlayContinuedOutsideZoneFor','flurryAdjustedxGoalsFor','scoreVenueAdjustedxGoalsFor','flurryScoreVenueAdjustedxGoalsFor','shotsOnGoalFor','missedShotsFor','blockedShotAttemptsFor','shotAttemptsFor','goalsFor','reboundsFor','reboundGoalsFor','freezeFor','playStoppedFor','playContinuedInZoneFor','playContinuedOutsideZoneFor','savedShotsOnGoalFor','savedUnblockedShotAttemptsFor','penaltiesFor','penalityMinutesFor','faceOffsWonFor','hitsFor','takeawaysFor','giveawaysFor','lowDangerShotsFor','mediumDangerShotsFor','highDangerShotsFor','lowDangerxGoalsFor','mediumDangerxGoalsFor','highDangerxGoalsFor','lowDangerGoalsFor','mediumDangerGoalsFor','highDangerGoalsFor','scoreAdjustedShotsAttemptsFor','unblockedShotAttemptsFor','scoreAdjustedUnblockedShotAttemptsFor','dZoneGiveawaysFor','xGoalsFromxReboundsOfShotsFor','xGoalsFromActualReboundsOfShotsFor','reboundxGoalsFor','totalShotCreditFor','scoreAdjustedTotalShotCreditFor','scoreFlurryAdjustedTotalShotCreditFor','xOnGoalAgainst','xGoalsAgainst','xReboundsAgainst','xFreezeAgainst','xPlayStoppedAgainst','xPlayContinuedInZoneAgainst','xPlayContinuedOutsideZoneAgainst','flurryAdjustedxGoalsAgainst','scoreVenueAdjustedxGoalsAgainst','flurryScoreVenueAdjustedxGoalsAgainst','shotsOnGoalAgainst','missedShotsAgainst','blockedShotAttemptsAgainst','shotAttemptsAgainst','goalsAgainst','reboundsAgainst','reboundGoalsAgainst','freezeAgainst','playStoppedAgainst','playContinuedInZoneAgainst','playContinuedOutsideZoneAgainst','savedShotsOnGoalAgainst','savedUnblockedShotAttemptsAgainst','penaltiesAgainst','penalityMinutesAgainst','faceOffsWonAgainst','hitsAgainst','takeawaysAgainst','giveawaysAgainst','lowDangerShotsAgainst','mediumDangerShotsAgainst','highDangerShotsAgainst','lowDangerxGoalsAgainst','mediumDangerxGoalsAgainst','highDangerxGoalsAgainst','lowDangerGoalsAgainst','mediumDangerGoalsAgainst','highDangerGoalsAgainst','scoreAdjustedShotsAttemptsAgainst','unblockedShotAttemptsAgainst','scoreAdjustedUnblockedShotAttemptsAgainst','dZoneGiveawaysAgainst','xGoalsFromxReboundsOfShotsAgainst','xGoalsFromActualReboundsOfShotsAgainst','reboundxGoalsAgainst','totalShotCreditAgainst','scoreAdjustedTotalShotCreditAgainst','scoreFlurryAdjustedTotalShotCreditAgainst','shifts','gameScore','onIce_xGoalsPercentage','offIce_xGoalsPercentage','onIce_corsiPercentage','offIce_corsiPercentage','onIce_fenwickPercentage','offIce_fenwickPercentage','I_F_xOnGoal','I_F_xGoals','I_F_xRebounds','I_F_xFreeze','I_F_xPlayStopped','I_F_xPlayContinuedInZone','I_F_xPlayContinuedOutsideZone','I_F_flurryAdjustedxGoals','I_F_scoreVenueAdjustedxGoals','I_F_flurryScoreVenueAdjustedxGoals','I_F_primaryAssists','I_F_secondaryAssists','I_F_shotsOnGoal','I_F_missedShots','I_F_blockedShotAttempts','I_F_shotAttempts','I_F_points','I_F_goals','I_F_rebounds','I_F_reboundGoals','I_F_freeze','I_F_playStopped','I_F_playContinuedInZone','I_F_playContinuedOutsideZone','I_F_savedShotsOnGoal','I_F_savedUnblockedShotAttempts','I_F_penalityMinutes','I_F_faceOffsWon','I_F_hits','I_F_takeaways','I_F_giveaways','I_F_lowDangerShots','I_F_mediumDangerShots','I_F_highDangerShots','I_F_lowDangerxGoals','I_F_mediumDangerxGoals','I_F_highDangerxGoals','I_F_lowDangerGoals','I_F_mediumDangerGoals','I_F_highDangerGoals','I_F_scoreAdjustedShotsAttempts','I_F_unblockedShotAttempts','I_F_scoreAdjustedUnblockedShotAttempts','I_F_dZoneGiveaways','I_F_xGoalsFromxReboundsOfShots','I_F_xGoalsFromActualReboundsOfShots','I_F_reboundxGoals','I_F_xGoals_with_earned_rebounds','I_F_xGoals_with_earned_rebounds_scoreAdjusted','I_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','I_F_shifts','I_F_oZoneShiftStarts','I_F_dZoneShiftStarts','I_F_neutralZoneShiftStarts','I_F_flyShiftStarts','I_F_oZoneShiftEnds','I_F_dZoneShiftEnds','I_F_neutralZoneShiftEnds','I_F_flyShiftEnds','faceoffsWon','faceoffsLost','timeOnBench','penalityMinutesDrawn','penaltiesDrawn','shotsBlockedByPlayer','OnIce_F_xOnGoal','OnIce_F_xGoals','OnIce_F_flurryAdjustedxGoals','OnIce_F_scoreVenueAdjustedxGoals','OnIce_F_flurryScoreVenueAdjustedxGoals','OnIce_F_shotsOnGoal','OnIce_F_missedShots','OnIce_F_blockedShotAttempts','OnIce_F_shotAttempts','OnIce_F_goals','OnIce_F_rebounds','OnIce_F_reboundGoals','OnIce_F_lowDangerShots','OnIce_F_mediumDangerShots','OnIce_F_highDangerShots','OnIce_F_lowDangerxGoals','OnIce_F_mediumDangerxGoals','OnIce_F_highDangerxGoals','OnIce_F_lowDangerGoals','OnIce_F_mediumDangerGoals','OnIce_F_highDangerGoals','OnIce_F_scoreAdjustedShotsAttempts','OnIce_F_unblockedShotAttempts','OnIce_F_scoreAdjustedUnblockedShotAttempts','OnIce_F_xGoalsFromxReboundsOfShots','OnIce_F_xGoalsFromActualReboundsOfShots','OnIce_F_reboundxGoals','OnIce_F_xGoals_with_earned_rebounds','OnIce_F_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OnIce_A_xOnGoal','OnIce_A_xGoals','OnIce_A_flurryAdjustedxGoals','OnIce_A_scoreVenueAdjustedxGoals','OnIce_A_flurryScoreVenueAdjustedxGoals','OnIce_A_shotsOnGoal','OnIce_A_missedShots','OnIce_A_blockedShotAttempts','OnIce_A_shotAttempts','OnIce_A_goals','OnIce_A_rebounds','OnIce_A_reboundGoals','OnIce_A_lowDangerShots','OnIce_A_mediumDangerShots','OnIce_A_highDangerShots','OnIce_A_lowDangerxGoals','OnIce_A_mediumDangerxGoals','OnIce_A_highDangerxGoals','OnIce_A_lowDangerGoals','OnIce_A_mediumDangerGoals','OnIce_A_highDangerGoals','OnIce_A_scoreAdjustedShotsAttempts','OnIce_A_unblockedShotAttempts','OnIce_A_scoreAdjustedUnblockedShotAttempts','OnIce_A_xGoalsFromxReboundsOfShots','OnIce_A_xGoalsFromActualReboundsOfShots','OnIce_A_reboundxGoals','OnIce_A_xGoals_with_earned_rebounds','OnIce_A_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_A_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OffIce_F_xGoals','OffIce_A_xGoals','OffIce_F_shotAttempts','OffIce_A_shotAttempts','xGoalsForAfterShifts','xGoalsAgainstAfterShifts','corsiForAfterShifts','corsiAgainstAfterShifts','fenwickForAfterShifts','fenwickAgainstAfterShifts']);
 
-    if (!season || !stat) {
-        return { error: "A season and a stat are required to query the database." };
+async function queryNhlStats(args) {
+    console.log("Executing Dynamic NHL Stats Query with args:", args);
+    const { season, dataType, stat, playerName, teamName, limit = 5 } = args;
+
+    if (!season || !dataType || !stat) {
+        return { error: "A season, dataType ('player' or 'team'), and a stat are required." };
+    }
+    if (!ALLOWED_STATS.has(stat)) {
+        return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
 
     try {
         const seasonNumber = parseInt(season, 10);
-        
-        const statCalculations = {
-            fiveOnFiveXgPercentage: { $multiply: [{ $divide: ["$totalxGoalsFor", { $add: ["$totalxGoalsFor", "$totalxGoalsAgainst"] }] }, 100] },
-            powerPlayXg: "$totalxGoalsFor",
-            penaltyKillXgAgainst: "$totalxGoalsAgainst"
-        };
-        
-        const situationMap = {
-            fiveOnFiveXgPercentage: '5on5',
-            powerPlayXg: '5on4',
-            penaltyKillXgAgainst: '4on5'
-        };
-
         const pipeline = [];
 
-        pipeline.push({
-            $match: {
-                season: seasonNumber,
-                situation: situationMap[stat] || '5on5'
-            }
-        });
+        // Match the season first
+        pipeline.push({ $match: { season: seasonNumber } });
         
-        if (team) {
-             const teamAbbr = teamToAbbrMap[team] || team.toUpperCase();
-             pipeline.push({ $match: { team: teamAbbr } });
+        let results;
+
+        if (dataType === 'player') {
+            if (!playerName) return { error: "playerName is required for dataType 'player'." };
+            
+            pipeline.push({ $match: { name: playerName } });
+            pipeline.push({ $limit: 1 });
+            pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, games_played: 1, statValue: `$${stat}` } });
+            results = await nhlStatsCollection.aggregate(pipeline).toArray();
+
+        } else if (dataType === 'team') {
+            if (teamName) {
+                const teamAbbr = teamToAbbrMap[teamName] || teamName.toUpperCase();
+                pipeline.push({ $match: { team: teamAbbr } });
+            }
+            
+            pipeline.push({
+                $group: {
+                    _id: "$team",
+                    statValue: { $sum: `$${stat}` } // Aggregate the requested stat
+                }
+            });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+            pipeline.push({ $project: { _id: 0, team: "$_id", statValue: 1 } });
+            results = await nhlStatsCollection.aggregate(pipeline).toArray();
+
+        } else {
+            return { error: "Invalid dataType. Must be 'player' or 'team'." };
         }
         
-        pipeline.push({
-            $group: {
-                _id: "$team",
-                totalxGoalsFor: { $sum: "$xGoalsFor" },
-                totalxGoalsAgainst: { $sum: "$xGoalsAgainst" },
-            }
-        });
-
-        pipeline.push({
-            $project: {
-                team: "$_id",
-                statValue: statCalculations[stat]
-            }
-        });
-
-        pipeline.push({ $sort: { statValue: sortOrder === 'desc' ? -1 : 1 } });
-        pipeline.push({ $limit: parseInt(limit, 10) });
-
-        const results = await nhlStatsCollection.aggregate(pipeline).toArray();
         return { results };
 
     } catch (error) {
-        console.error("Error during NHL stats query:", error);
+        console.error("Error during Dynamic NHL stats query:", error);
         return { error: "An error occurred while querying the database." };
     }
 }
@@ -1115,13 +1119,11 @@ app.get('/api/special-picks', async (req, res) => {
         let parlay = null;
         let arbitrationCandidates = [];
 
-        // Identify POTD candidates first
         const highValuePicks = upcomingTodayPredictions.filter(p => {
             const value = p.prediction.winner === p.game.home_team ? p.prediction.homeValue : p.prediction.awayValue;
             return p.prediction.confidence > potdConfidenceThreshold && typeof value === 'number' && value > potdValueThreshold;
         });
 
-        // Sort candidates by a combined score of confidence and value
         highValuePicks.sort((a, b) => {
             const aValue = a.prediction.winner === a.game.home_team ? a.prediction.homeValue : a.prediction.awayValue;
             const bValue = b.prediction.winner === b.game.home_team ? b.prediction.homeValue : b.prediction.awayValue;
@@ -1129,10 +1131,9 @@ app.get('/api/special-picks', async (req, res) => {
         });
 
         if (highValuePicks.length > 0) {
-            pickOfTheDay = highValuePicks[0]; // The top pick is the default POTD
+            pickOfTheDay = highValuePicks[0];
         }
         
-        // If we have 2 or 3 strong candidates, they are eligible for arbitration
         if (highValuePicks.length >= 2 && highValuePicks.length <= 3) {
             arbitrationCandidates = highValuePicks;
         }
@@ -1159,6 +1160,55 @@ app.get('/api/special-picks', async (req, res) => {
     } catch (error) {
         console.error("Special Picks Error:", error);
         res.status(500).json({ error: 'Failed to generate special picks.' });
+    }
+});
+
+const ARBITER_SCHEMA = {
+    "bestBet": {
+        "matchup": "string (e.g., 'Team A @ Team B')",
+        "pick": "string (The winning team's name)"
+    },
+    "comparativeAnalysis": "string (A detailed 2-3 sentence narrative comparing the pros and cons of each bet.)",
+    "finalVerdict": "string (A concluding sentence explaining why the chosen bet is superior to the others.)"
+};
+
+app.post('/api/arbitrate-picks', async (req, res) => {
+    try {
+        const { candidates } = req.body; // Expect an array of top picks
+        if (!candidates || candidates.length < 2) {
+            return res.status(400).json({ error: "Not enough candidates for arbitration." });
+        }
+
+        const candidatesSummary = candidates.map((c, index) => {
+            const value = c.prediction.winner === c.game.home_team ? c.prediction.homeValue : c.prediction.awayValue;
+            return `
+Candidate ${index + 1}: Pick ${c.prediction.winner} in ${c.game.away_team} @ ${c.game.home_team}
+- Confidence Score: ${c.prediction.confidence.toFixed(1)}
+- Value Edge: ${value.toFixed(1)}%`
+        }).join('');
+
+        const systemPrompt = `You are 'The Arbiter,' an elite sports betting analyst. Your sole task is to compare a few top-rated betting opportunities and determine the single best bet among them. You must provide a comparative analysis and a final verdict, strictly following the user's JSON schema.`;
+
+        const userPrompt = `
+**TOP CANDIDATES FOR BEST BET OF THE DAY:**
+${candidatesSummary}
+
+**TASK:**
+Analyze the candidates. Compare their relative strengths (confidence vs. value) and risks. Declare the single best bet and provide your reasoning by completing the following JSON object.
+
+**JSON TO COMPLETE:**
+${JSON.stringify(ARBITER_SCHEMA, null, 2)}
+`;
+        
+        const result = await analysisModel.generateContent(userPrompt);
+
+        const responseText = result.response.text();
+        const arbitrationData = cleanAndParseJson(responseText);
+        res.json({ arbitrationData });
+
+    } catch (error) {
+        console.error("Arbitration AI Error:", error);
+        res.status(500).json({ error: "Failed to generate Arbitration AI analysis." });
     }
 });
 
@@ -1573,3 +1623,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
