@@ -161,12 +161,25 @@ function cleanAndParseJson(jsonString) {
 }
 
 async function getHistoricalTopLineMetrics(season) {
-    const cacheKey = `historical_topline_${season}`;
+    const primarySeason = parseInt(String(season), 10);
+    const fallbackSeason = primarySeason - 1;
+
+    let results = await fetchHistoricalTopLineMetrics(primarySeason);
+
+    if (Object.keys(results).length === 0) {
+        console.log(`[WARN] No top line metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
+        results = await fetchHistoricalTopLineMetrics(fallbackSeason);
+    }
+    
+    return results;
+}
+
+async function fetchHistoricalTopLineMetrics(season) {
+    const cacheKey = `historical_topline_${season}_v2`;
     return fetchData(cacheKey, async () => {
         try {
-            const seasonNumber = parseInt(season, 10);
             const pipeline = [
-                { $match: { season: seasonNumber, position: 'line', iceTimeRank: 1 } },
+                { $match: { season: season, position: 'line', iceTimeRank: 1 } },
                 { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
             ];
             const results = await nhlStatsCollection.aggregate(pipeline).toArray();
@@ -185,26 +198,37 @@ async function getHistoricalTopLineMetrics(season) {
 
 // Add this new function to fetch historical metrics
 async function getHistoricalTeamAndGoalieMetrics(season) {
-    const cacheKey = `historical_metrics_${season}`;
+    const primarySeason = parseInt(String(season), 10);
+    const fallbackSeason = primarySeason - 1;
+
+    let results = await fetchHistoricalMetrics(primarySeason);
+    
+    if (Object.keys(results).length === 0) {
+        console.log(`[WARN] No team/goalie metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
+        results = await fetchHistoricalMetrics(fallbackSeason);
+    }
+    
+    return results;
+}
+
+async function fetchHistoricalMetrics(season) {
+    const cacheKey = `historical_metrics_${season}_v2`;
     return fetchData(cacheKey, async () => {
         try {
-            const seasonNumber = parseInt(season, 10);
             const pipeline = [
-                { $match: { season: seasonNumber, situation: 'all' } },
+                { $match: { season: season, situation: 'all' } },
                 {
                     $group: {
                         _id: "$team",
-                        // Team-level stats
                         goalsFor: { $sum: "$goalsFor" },
                         xGoalsFor: { $sum: "$xGoalsFor" },
                         penalityMinutes: { $sum: "$penalityMinutes" },
-                        // Goalie stats (will be an array of goalies per team)
                         goalies: {
                             $push: {
                                 $cond: [
                                     { $eq: ["$position", "G"] },
                                     { name: "$name", goals: "$goals", xGoals: "$xGoals" },
-                                    "$$REMOVE" // Exclude non-goalies from the array
+                                    "$$REMOVE"
                                 ]
                             }
                         }
@@ -213,7 +237,6 @@ async function getHistoricalTeamAndGoalieMetrics(season) {
             ];
             const results = await nhlStatsCollection.aggregate(pipeline).toArray();
             
-            // Re-structure the data for easy lookup
             const metrics = {};
             results.forEach(teamData => {
                 metrics[teamData._id] = {
@@ -228,7 +251,7 @@ async function getHistoricalTeamAndGoalieMetrics(season) {
             console.error(`Error fetching historical metrics for season ${season}:`, error);
             return {};
         }
-    }, 86400000); // Cache for 24 hours
+    }, 86400000);
 }
 
 
@@ -837,26 +860,31 @@ async function runPredictionEngine(game, sportKey, context) {
 
 // MODIFICATION START: Final and correct DB aggregation logic
 async function getTeamSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v3`;
+    const primarySeason = parseInt(String(season), 10);
+    const fallbackSeason = primarySeason - 1;
+
+    // First, try the primary season
+    let results = await fetchSeasonAdvancedStats(team, primarySeason);
+    
+    // If no data, try the fallback season
+    if (Object.keys(results).length === 0) {
+        console.log(`[WARN] No advanced stats found for ${team} in ${primarySeason}. Falling back to ${fallbackSeason}.`);
+        results = await fetchSeasonAdvancedStats(team, fallbackSeason);
+    }
+    
+    return results;
+}
+
+// We've moved the core logic into a reusable helper function
+async function fetchSeasonAdvancedStats(team, season) {
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v4`;
     return fetchData(cacheKey, async () => {
         try {
-            const seasonNumber = parseInt(String(season), 10);
-
             const pipeline = [
-                {
-                    // FIX: Match season as either a number or a string to handle data inconsistencies
-                    $match: {
-                        team: team,
-                        $or: [
-                            { season: seasonNumber },
-                            { season: String(seasonNumber) }
-                        ]
-                    }
-                },
+                { $match: { team: team, season: season } },
                 {
                     $group: {
-                        _id: "$situation", // Group by each situation (5on5, 5on4, etc.)
-                        // Sum the required fields for the entire season
+                        _id: "$situation",
                         totalxGoalsFor: { $sum: "$xGoalsFor" },
                         totalxGoalsAgainst: { $sum: "$xGoalsAgainst" },
                         totalHighDangerxGoalsFor: { $sum: "$highDangerxGoalsFor" },
@@ -872,7 +900,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
             const results = await nhlStatsCollection.aggregate(pipeline).toArray();
 
             if (!results || results.length === 0) {
-                console.log(`[DATA NOT FOUND] Aggregation returned no documents for ${team} in season ${seasonNumber}.`);
+                console.log(`[DATA NOT FOUND] Aggregation returned no documents for ${team} in season ${season}.`);
                 return {};
             }
             
@@ -882,34 +910,19 @@ async function getTeamSeasonAdvancedStats(team, season) {
             }, {});
 
             const s5on5 = seasonalData['5on5'];
-            const s5on4 = seasonalData['5on4']; // Team is on the Power Play
-            const s4on5 = seasonalData['4on5']; // Team is on the Penalty Kill
-
-            if (!s5on5) {
-                console.log(`[WARN] Aggregated 5on5 data missing for ${team} in ${seasonNumber}. Cannot calculate advanced stats.`);
-                return {};
-            }
+            if (!s5on5) return {};
 
             const finalStats = {};
-
-            // Calculate 5-on-5 xG%
             const totalXG_5on5 = s5on5.totalxGoalsFor + s5on5.totalxGoalsAgainst;
-            if (totalXG_5on5 > 0) {
-                finalStats.fiveOnFiveXgPercentage = (s5on5.totalxGoalsFor / totalXG_5on5) * 100;
-            }
+            if (totalXG_5on5 > 0) finalStats.fiveOnFiveXgPercentage = (s5on5.totalxGoalsFor / totalXG_5on5) * 100;
 
-            // Calculate High-Danger Battle
             const totalHDXG_5on5 = s5on5.totalHighDangerxGoalsFor + s5on5.totalHighDangerxGoalsAgainst;
-            if (totalHDXG_5on5 > 0) {
-                finalStats.hdcfPercentage = (s5on5.totalHighDangerxGoalsFor / totalHDXG_5on5) * 100;
-            }
+            if (totalHDXG_5on5 > 0) finalStats.hdcfPercentage = (s5on5.totalHighDangerxGoalsFor / totalHDXG_5on5) * 100;
             
-            // Calculate Special Teams Duel
-            const ppRating = s5on4 ? s5on4.totalxGoalsFor : 0;
-            const pkRating = s4on5 ? s4on5.totalxGoalsAgainst : 0;
+            const ppRating = seasonalData['5on4'] ? seasonalData['5on4'].totalxGoalsFor : 0;
+            const pkRating = seasonalData['4on5'] ? seasonalData['4on5'].totalxGoalsAgainst : 0;
             finalStats.specialTeamsRating = ppRating - pkRating;
 
-            // Calculate PDO (Luck Factor)
             if (s5on5.totalShotsOnGoalFor > 0 && s5on5.totalShotsOnGoalAgainst > 0) {
                 const shootingPct = (s5on5.totalGoalsFor / s5on5.totalShotsOnGoalFor);
                 const savePct = 1 - (s5on5.totalGoalsAgainst / s5on5.totalShotsOnGoalAgainst);
@@ -1743,6 +1756,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
