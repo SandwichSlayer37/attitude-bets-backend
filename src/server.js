@@ -160,6 +160,29 @@ function cleanAndParseJson(jsonString) {
     }
 }
 
+async function getHistoricalTopLineMetrics(season) {
+    const cacheKey = `historical_topline_${season}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const seasonNumber = parseInt(season, 10);
+            const pipeline = [
+                { $match: { season: seasonNumber, position: 'line', iceTimeRank: 1 } },
+                { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
+            ];
+            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+            
+            const metrics = {};
+            results.forEach(lineData => {
+                metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
+            });
+            return metrics;
+        } catch (error) {
+            console.error(`Error fetching historical top line metrics for season ${season}:`, error);
+            return {};
+        }
+    }, 86400000);
+}
+
 // Add this new function to fetch historical metrics
 async function getHistoricalTeamAndGoalieMetrics(season) {
     const cacheKey = `historical_metrics_${season}`;
@@ -323,9 +346,9 @@ async function queryNhlStats(args) {
 }
 
 
-async function getDynamicWeights(sportKey) {
+function getDynamicWeights(sportKey) {
     if (sportKey === 'baseball_mlb') {
-        // ... (this part is unchanged)
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
     }
     // ENGINE 2.0 HYBRID WEIGHTS - UPDATED
     if (sportKey === 'icehockey_nhl') {
@@ -334,8 +357,9 @@ async function getDynamicWeights(sportKey) {
             fiveOnFiveXg: 3.5,
             highDangerBattle: 3.0,
             specialTeamsDuel: 2.5,
-            // NEW Historical Factors
-            historicalGoalie: 2.0, // GSAx
+            topLinePower: 2.5, // ✅ NEW FACTOR
+            // Historical Factors
+            historicalGoalie: 2.0,
             finishingSkill: 1.5,
             discipline: 1.0,
             // Core Real-Time Factors
@@ -917,17 +941,20 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const currentYear = new Date().getFullYear();
     const previousSeasonId = currentYear - 1;
 
-    // ✅ FIX: Fetch data for BOTH legacy and new factors
-    const [historicalMetrics, [homeAdvStats, awayAdvStats]] = await Promise.all([
+    // Fetch all historical data at once
+    const [historicalMetrics, [homeAdvStats, awayAdvStats], topLineMetrics] = await Promise.all([
         getHistoricalTeamAndGoalieMetrics(previousSeasonId),
         Promise.all([
             getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId),
             getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId)
-        ])
+        ]),
+        getHistoricalTopLineMetrics(previousSeasonId) // ✅ FETCH NEW DATA
     ]);
     
     const homeHist = historicalMetrics[homeAbbr] || {};
     const awayHist = historicalMetrics[awayAbbr] || {};
+    const homeTopLine = topLineMetrics[homeAbbr] || {};
+    const awayTopLine = topLineMetrics[awayAbbr] || {};
 
     let homeScore = 50.0;
     const factors = {};
@@ -935,7 +962,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeCanonical] || {};
     const awayRealTimeStats = teamStats[awayCanonical] || {};
 
-    // --- NEW HISTORICAL FACTOR CALCULATIONS ---
+    // --- HISTORICAL FACTOR CALCULATIONS ---
     const homeGoalieName = probableStarters[homeCanonical];
     const awayGoalieName = probableStarters[awayCanonical];
     let homeGSAx = 0, awayGSAx = 0;
@@ -957,11 +984,17 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let homePIM = homeHist.penalityMinutes || 0;
     let awayPIM = awayHist.penalityMinutes || 0;
     factors['Team Discipline (PIMs)'] = { value: awayPIM - homePIM, homeStat: `${homePIM}`, awayStat: `${awayPIM}` };
+    
+    // ✅ NEW FACTOR CALCULATION
+    const homeTopLineXG = homeTopLine.xGoalsPercentage || 0.5;
+    const awayTopLineXG = awayTopLine.xGoalsPercentage || 0.5;
+    factors['Top Line Power (xG%)'] = { value: (homeTopLineXG - awayTopLineXG) * 100, homeStat: `${(homeTopLineXG * 100).toFixed(1)}%`, awayStat: `${(awayTopLineXG * 100).toFixed(1)}%` };
 
-    // ✅ FIX: ADDED LEGACY FACTORS BACK ---
+    // --- LEGACY & CURRENT FACTORS ---
     if (homeAdvStats.fiveOnFiveXgPercentage && awayAdvStats.fiveOnFiveXgPercentage) {
         factors['5-on-5 xG%'] = { value: homeAdvStats.fiveOnFiveXgPercentage - awayAdvStats.fiveOnFiveXgPercentage, homeStat: `${homeAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.fiveOnFiveXgPercentage.toFixed(1)}%` };
     }
+    // ... (rest of the function is the same, just pasting it all for safety) ...
     if (homeAdvStats.hdcfPercentage && awayAdvStats.hdcfPercentage) {
         factors['High-Danger Battle'] = { value: homeAdvStats.hdcfPercentage - awayAdvStats.hdcfPercentage, homeStat: `${homeAdvStats.hdcfPercentage.toFixed(1)}%`, awayStat: `${awayAdvStats.hdcfPercentage.toFixed(1)}%` };
     }
@@ -972,9 +1005,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         factors['PDO (Luck Factor)'] = { value: homeAdvStats.pdo - awayAdvStats.pdo, homeStat: `${homeAdvStats.pdo.toFixed(0)}`, awayStat: `${awayAdvStats.pdo.toFixed(0)}` };
     }
     factors['Faceoff Advantage'] = { value: (homeRealTimeStats.faceoffWinPct || 0) - (awayRealTimeStats.faceoffWinPct || 0), homeStat: `${(homeRealTimeStats.faceoffWinPct || 0).toFixed(1)}%`, awayStat: `${(awayRealTimeStats.faceoffWinPct || 0).toFixed(1)}%` };
-
-
-    // --- CURRENT/LIVE FACTORS ---
     factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: homeRealTimeStats.record || '0-0', awayStat: awayRealTimeStats.record || '0-0' };
     factors['Offensive Form (G/GP)'] = { value: (homeRealTimeStats.goalsForPerGame || 0) - (awayRealTimeStats.goalsForPerGame || 0), homeStat: `${(homeRealTimeStats.goalsForPerGame || 0).toFixed(2)}`, awayStat: `${(awayRealTimeStats.goalsForPerGame || 0).toFixed(2)}` };
     factors['Defensive Form (GA/GP)'] = { value: (awayRealTimeStats.goalsAgainstPerGame || 0) - (homeRealTimeStats.goalsAgainstPerGame || 0), homeStat: `${(homeRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)}`, awayStat: `${(awayRealTimeStats.goalsAgainstPerGame || 0).toFixed(2)}` };
@@ -1002,13 +1032,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayInjuryImpact = (injuries[awayCanonical] || []).length;
     factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
 
-    // This loop now applies weights to all factors, including our new ones
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
                 'Historical Goalie Edge (GSAx)': 'historicalGoalie',
                 'Team Finishing Skill': 'finishingSkill',
                 'Team Discipline (PIMs)': 'discipline',
+                'Top Line Power (xG%)': 'topLinePower', // ✅ APPLY WEIGHT
                 '5-on-5 xG%': 'fiveOnFiveXg',
                 'High-Danger Battle': 'highDangerBattle',
                 'Special Teams Duel': 'specialTeamsDuel',
@@ -1713,6 +1743,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
