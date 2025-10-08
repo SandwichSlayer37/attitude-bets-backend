@@ -1089,6 +1089,13 @@ async function getPredictionsForSport(sportKey) {
 
     const predictions = [];
     for (const game of games) {
+        
+        // ✅ FIX: Added a validation check to handle incomplete data from the API
+        if (!game.home_team || !game.away_team) {
+            console.warn(`[WARN] Skipping a game object from The Odds API due to missing team data. Game ID: ${game.id}`);
+            continue; // Skip to the next game
+        }
+
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
         const weather = await getWeatherData(homeCanonical);
@@ -1702,3 +1709,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
