@@ -1586,7 +1586,7 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
         // Step 1: Send the main prompt to the AI
         const result1 = await chat.sendMessage(userPrompt);
         const response1 = result1.response;
-        const functionCalls = response1.functionCalls();
+       const functionCalls = response1.functionCalls() || [];
 
         // Step 2: Check if the AI wants to call our database function
         if (functionCalls && functionCalls.length > 0) {
@@ -1759,6 +1759,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
