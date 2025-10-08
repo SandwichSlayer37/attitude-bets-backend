@@ -1063,18 +1063,25 @@ async function getPredictionsForSport(sportKey) {
         espnDataResponse.events.forEach(event => {
             const competition = event.competitions?.[0];
             if (!competition) return;
+            
             competition.competitors.forEach(competitor => {
-                const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()];
-                if (canonicalName) {
-                    injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
-                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
+                // Defensive check in case team data is missing
+                if (competitor.team?.displayName) {
+                    const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()];
+                    if (canonicalName) {
+                        injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
+                        if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
+                            probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
+                        }
                     }
                 }
             });
+
             const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
             const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-            if (competition.series && homeTeam && awayTeam) {
+
+            // ✅ FIX: Added a robust validation check for ESPN data to prevent crashes
+            if (competition.series && homeTeam?.team?.displayName && awayTeam?.team?.displayName) {
                 const homeCanonical = canonicalTeamNameMap[homeTeam.team.displayName.toLowerCase()];
                 const awayCanonical = canonicalTeamNameMap[awayTeam.team.displayName.toLowerCase()];
                 if (homeCanonical && awayCanonical) {
@@ -1090,10 +1097,9 @@ async function getPredictionsForSport(sportKey) {
     const predictions = [];
     for (const game of games) {
         
-        // ✅ FIX: Added a validation check to handle incomplete data from the API
         if (!game.home_team || !game.away_team) {
             console.warn(`[WARN] Skipping a game object from The Odds API due to missing team data. Game ID: ${game.id}`);
-            continue; // Skip to the next game
+            continue; 
         }
 
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
@@ -1113,7 +1119,7 @@ async function getPredictionsForSport(sportKey) {
         if (predictionData && predictionData.winner && predictionsCollection) {
             try {
                 const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.home_team)?.price;
-                const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.away_team)?.price;
+                const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
                 const winnerOdds = predictionData.winner === game.home_team ? homeOdds : awayOdds;
                 await predictionsCollection.updateOne(
                     { gameId: game.id },
@@ -1136,7 +1142,7 @@ async function getPredictionsForSport(sportKey) {
             if (!competitors) return false;
             const home = competitors.find(c => c.homeAway === 'home');
             const away = competitors.find(c => c.homeAway === 'away');
-            if (!home || !away) return false;
+            if (!home?.team?.displayName || !away?.team?.displayName) return false; // Defensive check
             return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === homeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === awayCanonical);
         });
 
@@ -1709,4 +1715,5 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
