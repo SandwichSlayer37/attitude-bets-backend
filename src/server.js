@@ -297,79 +297,92 @@ async function queryNhlStats(args) {
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
 
     const statTranslationMap = {
-        'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4', description: 'Power Play xGoals For' },
-        'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5', description: 'Penalty Kill xGoals Against' },
+        'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
+        'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
+        'shootingPercentage': { customCalculation: true },
+        'xGoalsForPercentage': { newStat: 'xGoalsPercentage' } // ✅ NEW TRANSLATION
     };
 
     let situationOverride = null;
+    let customCalculation = false;
+
     if (statTranslationMap[stat]) {
-        console.log(`Translating conceptual stat '${stat}' to a query for '${statTranslationMap[stat].newStat}' in situation '${statTranslationMap[stat].situation}'.`);
-        situationOverride = statTranslationMap[stat].situation;
-        stat = statTranslationMap[stat].newStat;
+        const translation = statTranslationMap[stat];
+        console.log(`Translating conceptual stat '${stat}'...`);
+        if (translation.customCalculation) {
+            customCalculation = true;
+        } else {
+            if(translation.situation) situationOverride = translation.situation;
+            stat = translation.newStat;
+        }
     }
 
-    if (!season || !dataType || !stat) {
-        return { error: "A season, dataType ('skater', 'goalie', or 'team'), and a stat are required." };
+    if (!season || !dataType || (!stat && !customCalculation)) {
+        return { error: "A season, dataType, and a stat are required." };
     }
-    if (!ALLOWED_STATS.has(stat)) {
+    if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
 
     try {
         const seasonNumber = parseInt(season, 10);
-        const pipeline = [];
-
+        let pipeline = [];
         pipeline.push({ $match: { season: seasonNumber } });
-        
-        // Add optional filters
+
         if (teamName) {
             const teamAbbr = teamToAbbrMap[teamName] || teamName.toUpperCase();
             pipeline.push({ $match: { team: teamAbbr } });
         }
-        if (playerName) {
-            pipeline.push({ $match: { name: playerName } });
-        }
 
-        let results;
-
-        if (dataType === 'skater' || dataType === 'goalie') {
-            pipeline.push({ $match: { situation: 'all' } }); // For individuals, we still want their 'all' situations total
-            if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
-            if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
-            
-            pipeline.push({ $sort: { [stat]: -1 } });
-            pipeline.push({ $limit: parseInt(limit, 10) });
-            pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: `$${stat}` } });
-            results = await nhlStatsCollection.aggregate(pipeline).toArray();
-
-        } else if (dataType === 'team') {
-            // ✅ FIX: This section is completely rewritten for robust team aggregation.
-            // It no longer filters for situation: 'all'. Instead, it groups by team and sums the stat across ALL situations.
+        if (customCalculation && stat === 'shootingPercentage' && dataType === 'team') {
             pipeline.push({ $match: { position: 'Team Level' } });
             pipeline.push({
                 $group: {
-                    _id: { team: "$team", name: "$name" }, // Group by team abbreviation and name
-                    statValue: { $sum: `$${stat}` }      // Sum the requested stat across all situations
+                    _id: { team: "$team", name: "$name" },
+                    totalGoalsFor: { $sum: "$goalsFor" },
+                    totalShotsOnGoalFor: { $sum: "$shotsOnGoalFor" }
+                }
+            });
+            pipeline.push({
+                $project: {
+                    _id: 0,
+                    team: "$_id.name",
+                    statValue: {
+                        $cond: [{ $eq: ["$totalShotsOnGoalFor", 0] }, 0, { $divide: ["$totalGoalsFor", "$totalShotsOnGoalFor"] }]
+                    }
                 }
             });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
-            pipeline.push({ 
-                $project: { 
-                    _id: 0, 
-                    team: "$_id.name", 
-                    statValue: 1
-                } 
-            });
-            results = await nhlStatsCollection.aggregate(pipeline).toArray();
 
-        } else {
-            return { error: "Invalid dataType. Must be 'skater', 'goalie', or 'team'." };
+        } else { // Standard pipeline logic
+            if (situationOverride) {
+                pipeline.push({ $match: { situation: situationOverride } });
+            } else if (dataType !== 'team') {
+                pipeline.push({ $match: { situation: 'all' } });
+            }
+
+            if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
+            else if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
+            else if (dataType === 'team') pipeline.push({ $match: { position: 'Team Level' } });
+            else return { error: "Invalid dataType." };
+
+            if (playerName) pipeline.push({ $match: { name: playerName } });
+
+            if (dataType === 'team' && !situationOverride) { // This check is key
+                pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, statValue: { $sum: `$${stat}` } } });
+                pipeline.push({ $sort: { statValue: -1 } });
+                pipeline.push({ $limit: parseInt(limit, 10) });
+                pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: 1 } });
+            } else {
+                pipeline.push({ $sort: { [stat]: -1 } });
+                pipeline.push({ $limit: parseInt(limit, 10) });
+                pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: `$${stat}` } });
+            }
         }
-        
-        if (results.length === 0) {
-            return { error: `No data was found in the database for the specified criteria (season: ${season}, type: ${dataType}, etc.).` };
-        }
+
+        const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+        if (results.length === 0) return { error: `No data was found in the database for the specified criteria.` };
 
         return { results };
 
@@ -1739,6 +1752,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
