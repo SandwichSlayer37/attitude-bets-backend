@@ -198,25 +198,11 @@ async function fetchHistoricalTopLineMetrics(season) {
 
 // Add this new function to fetch historical metrics
 async function getHistoricalTeamAndGoalieMetrics(season) {
-    const primarySeason = parseInt(String(season), 10);
-    const fallbackSeason = primarySeason - 1;
-
-    let results = await fetchHistoricalMetrics(primarySeason);
-    
-    if (Object.keys(results).length === 0) {
-        console.log(`[WARN] No team/goalie metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
-        results = await fetchHistoricalMetrics(fallbackSeason);
-    }
-    
-    return results;
-}
-
-async function fetchHistoricalMetrics(season) {
-    const cacheKey = `historical_metrics_${season}_v2`;
+    const cacheKey = `historical_metrics_${season}_v3`;
     return fetchData(cacheKey, async () => {
         try {
             const pipeline = [
-                { $match: { season: season, situation: 'all' } },
+                { $match: { season: season } },
                 {
                     $group: {
                         _id: "$team",
@@ -243,7 +229,7 @@ async function fetchHistoricalMetrics(season) {
                     goalsFor: teamData.goalsFor,
                     xGoalsFor: teamData.xGoalsFor,
                     penalityMinutes: teamData.penalityMinutes,
-                    goalies: teamData.goalies
+                    goalies: teamData.goalies.filter(g => g.situation === 'all')
                 };
             });
             return metrics;
@@ -254,6 +240,28 @@ async function fetchHistoricalMetrics(season) {
     }, 86400000);
 }
 
+// REPLACE this function
+async function getHistoricalTopLineMetrics(season) {
+    const cacheKey = `historical_topline_${season}_v3`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const pipeline = [
+                { $match: { season: season, position: 'line', iceTimeRank: 1 } },
+                { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
+            ];
+            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+            
+            const metrics = {};
+            results.forEach(lineData => {
+                metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
+            });
+            return metrics;
+        } catch (error) {
+            console.error(`Error fetching historical top line metrics for season ${season}:`, error);
+            return {};
+        }
+    }, 86400000);
+}
 
 const parseRecord = (rec) => {
     if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
@@ -863,24 +871,7 @@ async function runPredictionEngine(game, sportKey, context) {
 
 // MODIFICATION START: Final and correct DB aggregation logic
 async function getTeamSeasonAdvancedStats(team, season) {
-    const primarySeason = parseInt(String(season), 10);
-    const fallbackSeason = primarySeason - 1;
-
-    // First, try the primary season
-    let results = await fetchSeasonAdvancedStats(team, primarySeason);
-    
-    // If no data, try the fallback season
-    if (Object.keys(results).length === 0) {
-        console.log(`[WARN] No advanced stats found for ${team} in ${primarySeason}. Falling back to ${fallbackSeason}.`);
-        results = await fetchSeasonAdvancedStats(team, fallbackSeason);
-    }
-    
-    return results;
-}
-
-// We've moved the core logic into a reusable helper function
-async function fetchSeasonAdvancedStats(team, season) {
-    const cacheKey = `adv_stats_final_agg_${team}_${season}_v4`;
+    const cacheKey = `adv_stats_final_agg_${team}_${season}_v5`;
     return fetchData(cacheKey, async () => {
         try {
             const pipeline = [
@@ -899,19 +890,10 @@ async function fetchSeasonAdvancedStats(team, season) {
                     }
                 }
             ];
-            
             const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-
-            if (!results || results.length === 0) {
-                console.log(`[DATA NOT FOUND] Aggregation returned no documents for ${team} in season ${season}.`);
-                return {};
-            }
+            if (!results || results.length === 0) return {};
             
-            const seasonalData = results.reduce((acc, curr) => {
-                acc[curr._id] = curr;
-                return acc;
-            }, {});
-
+            const seasonalData = results.reduce((acc, curr) => { (acc[curr._id] = curr); return acc; }, {});
             const s5on5 = seasonalData['5on5'];
             if (!s5on5) return {};
 
@@ -931,9 +913,7 @@ async function fetchSeasonAdvancedStats(team, season) {
                 const savePct = 1 - (s5on5.totalGoalsAgainst / s5on5.totalShotsOnGoalAgainst);
                 finalStats.pdo = (shootingPct + savePct) * 1000;
             }
-            
             return finalStats;
-
         } catch (error) {
             console.error(`[CRITICAL ERROR] Error during aggregation for ${team} in ${season}:`, error);
             return {};
@@ -1759,6 +1739,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
