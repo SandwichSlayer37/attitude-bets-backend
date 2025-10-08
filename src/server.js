@@ -218,10 +218,13 @@ async function queryNhlStats(args) {
 
         pipeline.push({ $match: { season: seasonNumber } });
         
+        // ✅ CORRECTED LOGIC: Default to 'all' situations for overall stats.
         if (situationOverride) {
             pipeline.push({ $match: { situation: situationOverride } });
+        } else {
+            pipeline.push({ $match: { situation: 'all' } });
         }
-        
+
         if (dataType === 'skater') {
             pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
         } else if (dataType === 'goalie') {
@@ -240,7 +243,6 @@ async function queryNhlStats(args) {
             pipeline.push({ $match: { name: playerName } });
         }
         
-        // This logic is now unified for all data types
         pipeline.push({ $sort: { [stat]: -1 } });
         pipeline.push({ $limit: parseInt(limit, 10) });
 
@@ -248,12 +250,11 @@ async function queryNhlStats(args) {
             _id: 0,
             statValue: `$${stat}`
         };
-
         if (dataType === 'skater' || dataType === 'goalie') {
             projectFields.name = 1;
             projectFields.team = 1;
             projectFields.position = 1;
-        } else { // dataType === 'team'
+        } else {
             projectFields.team = "$name";
         }
         pipeline.push({ $project: projectFields });
@@ -261,7 +262,7 @@ async function queryNhlStats(args) {
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
 
         if (results.length === 0) {
-            return { error: `No data was found in the database for the specified criteria (season: ${season}, type: ${dataType}, etc.).` };
+            return { error: `No data was found in the database for the specified criteria (season: ${season}, type: ${dataType}, situation: 'all', etc.).` };
         }
 
         return { results };
@@ -1638,6 +1639,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
