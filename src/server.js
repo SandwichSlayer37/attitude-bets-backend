@@ -313,23 +313,7 @@ async function queryNhlStats(args) {
 
         pipeline.push({ $match: { season: seasonNumber } });
         
-        // ✅ CORRECTED LOGIC: Default to 'all' situations for overall stats.
-        if (situationOverride) {
-            pipeline.push({ $match: { situation: situationOverride } });
-        } else {
-            pipeline.push({ $match: { situation: 'all' } });
-        }
-
-        if (dataType === 'skater') {
-            pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
-        } else if (dataType === 'goalie') {
-            pipeline.push({ $match: { position: 'G' } });
-        } else if (dataType === 'team') {
-            pipeline.push({ $match: { position: 'Team Level' } });
-        } else {
-            return { error: "Invalid dataType. Must be 'skater', 'goalie', or 'team'." };
-        }
-        
+        // Add optional filters
         if (teamName) {
             const teamAbbr = teamToAbbrMap[teamName] || teamName.toUpperCase();
             pipeline.push({ $match: { team: teamAbbr } });
@@ -337,27 +321,46 @@ async function queryNhlStats(args) {
         if (playerName) {
             pipeline.push({ $match: { name: playerName } });
         }
-        
-        pipeline.push({ $sort: { [stat]: -1 } });
-        pipeline.push({ $limit: parseInt(limit, 10) });
 
-        const projectFields = {
-            _id: 0,
-            statValue: `$${stat}`
-        };
+        let results;
+
         if (dataType === 'skater' || dataType === 'goalie') {
-            projectFields.name = 1;
-            projectFields.team = 1;
-            projectFields.position = 1;
+            pipeline.push({ $match: { situation: 'all' } }); // For individuals, we still want their 'all' situations total
+            if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
+            if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
+            
+            pipeline.push({ $sort: { [stat]: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+            pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: `$${stat}` } });
+            results = await nhlStatsCollection.aggregate(pipeline).toArray();
+
+        } else if (dataType === 'team') {
+            // ✅ FIX: This section is completely rewritten for robust team aggregation.
+            // It no longer filters for situation: 'all'. Instead, it groups by team and sums the stat across ALL situations.
+            pipeline.push({ $match: { position: 'Team Level' } });
+            pipeline.push({
+                $group: {
+                    _id: { team: "$team", name: "$name" }, // Group by team abbreviation and name
+                    statValue: { $sum: `$${stat}` }      // Sum the requested stat across all situations
+                }
+            });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+            pipeline.push({ 
+                $project: { 
+                    _id: 0, 
+                    team: "$_id.name", 
+                    statValue: 1
+                } 
+            });
+            results = await nhlStatsCollection.aggregate(pipeline).toArray();
+
         } else {
-            projectFields.team = "$name";
+            return { error: "Invalid dataType. Must be 'skater', 'goalie', or 'team'." };
         }
-        pipeline.push({ $project: projectFields });
-
-        const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-
+        
         if (results.length === 0) {
-            return { error: `No data was found in the database for the specified criteria (season: ${season}, type: ${dataType}, situation: 'all', etc.).` };
+            return { error: `No data was found in the database for the specified criteria (season: ${season}, type: ${dataType}, etc.).` };
         }
 
         return { results };
@@ -1756,6 +1759,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
