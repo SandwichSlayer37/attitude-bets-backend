@@ -503,47 +503,7 @@ async function getProbablePitchersAndStats() {
     }, 14400000);
 }
 
-// ✅ FIX: Re-enabled the prop bet logic, it will now run.
-async function updatePlayerSpotlightForSport(sport) {
-    console.log(`--- Starting BACKGROUND JOB: AI Player Spotlight for ${sport.name} ---`);
-    try {
-        const gamesForSport = await getOdds(sport.key);
-        let allPropBets = [];
-        for (const game of gamesForSport) {
-            const props = await getPropBets(game.sportKey, game.id);
-            if (props.length > 0) {
-                allPropBets.push({
-                    matchup: `${game.away_team} @ ${game.home_team}`,
-                    bookmakers: props
-                });
-            }
-            await new Promise(resolve => setTimeout(resolve, 2500)); 
-        }
 
-        const dbKey = `spotlight_${sport.key}`;
-        if (allPropBets.length < 3) {
-            console.log(`Not enough prop data for ${sport.name} to generate spotlight. Skipping update.`);
-            await dailyFeaturesCollection.updateOne({ _id: dbKey }, { $set: { error: `Not enough prop bet data available for ${sport.name}.`, updatedAt: new Date() } }, { upsert: true });
-            return;
-        }
-
-        const propsForPrompt = allPropBets.map(game => {
-            let gameText = `\nMatchup: ${game.matchup}\n`;
-            if (game.bookmakers && Array.isArray(game.bookmakers)) {
-                game.bookmakers.forEach(bookmaker => {
-                    if (bookmaker.markets && Array.isArray(bookmaker.markets)) {
-                        bookmaker.markets.forEach(market => {
-                            if (market.outcomes && Array.isArray(market.outcomes)) {
-                                market.outcomes.forEach(outcome => {
-                                    gameText += `- ${outcome.description} (${outcome.name}): ${outcome.price}\n`;
-                                });
-                            }
-                        });
-                    }
-                });
-            }
-            return gameText;
-        }).join('');
 
         // ✅ FIX: Removed instruction to use search tools from the prompt.
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". Complete the JSON object provided by the user.`;
@@ -1245,23 +1205,6 @@ app.get('/api/predictions', async (req, res) => {
     }
 });
 
-app.get('/api/player-spotlight', async (req, res) => {
-    const { sport } = req.query;
-    if (!sport) {
-        return res.status(400).json({ error: "Sport parameter is required." });
-    }
-    try {
-        const spotlightDoc = await dailyFeaturesCollection.findOne({ _id: `spotlight_${sport}` });
-        if (spotlightDoc) {
-            res.json(spotlightDoc);
-        } else {
-            res.status(404).json({ error: "Spotlight analysis not yet available." });
-        }
-    } catch (error) {
-        console.error("Player Spotlight GET Endpoint Error:", error);
-        res.status(500).json({ error: "Failed to retrieve Player Spotlight analysis." });
-    }
-});
 
 app.get('/api/special-picks', async (req, res) => {
     try {
@@ -1758,26 +1701,18 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
-function runSpotlightJobs() {
-    console.log("Kicking off sequential spotlight jobs...");
-    (async () => {
-        for (const sport of SPORTS_DB) {
-            await updatePlayerSpotlightForSport(sport);
-        }
-        console.log("All spotlight jobs complete.");
-    })();
-}
 
 const PORT = process.env.PORT || 10000;
 connectToDb()
     .then(() => {
         app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-        setTimeout(runSpotlightJobs, 30000); 
+        
     })
     .catch(error => {
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
