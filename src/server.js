@@ -431,7 +431,7 @@ async function getProbablePitchersAndStats() {
 
 
 
-        // ✅ FIX: Removed instruction to use search tools from the prompt.
+async function updatePlayerSpotlight(sport) {
         const systemPrompt = `You are an expert sports betting analyst. Your only task is to analyze a massive list of available player prop bets for the day and identify the single "Hottest Player". Complete the JSON object provided by the user.`;
         
         const userPrompt = `Based on the following comprehensive list of player prop bets, identify the single best "Hottest Player" of the day and complete the JSON object below. Do not add any extra text, markdown, or explanations.
@@ -445,7 +445,7 @@ ${propsForPrompt}
   "keyBets": "List 2-3 of their most attractive prop bets that you identified."
 }`;
 
-        const result = await analysisModel.generateContent(userPrompt);
+        const result = await analysisModel.generateContent(userPrompt); // This was causing a crash
         const responseText = result.response.text();
         const analysisResult = cleanAndParseJson(responseText);
 
