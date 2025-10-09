@@ -336,7 +336,6 @@ async function queryNhlStats(args) {
         }
 
         if (customCalculation === 'shootingPercentage' && dataType === 'team') {
-            // ✅ FIX: Removed the restrictive 'position: Team Level' match
             pipeline.push({
                 $group: {
                     _id: { team: "$team", name: "$name" },
@@ -347,7 +346,7 @@ async function queryNhlStats(args) {
             pipeline.push({
                 $project: {
                     _id: 0,
-                    team: "$_id.name", // Using name field which should be the full team name
+                    team: "$_id.name",
                     statValue: {
                         $cond: [{ $eq: ["$totalShotsOnGoalFor", 0] }, 0, { $divide: ["$totalGoalsFor", "$totalShotsOnGoalFor"] }]
                     }
@@ -357,9 +356,29 @@ async function queryNhlStats(args) {
             pipeline.push({ $limit: parseInt(limit, 10) });
 
         } else if (customCalculation === 'savePercentage' && dataType === 'team') {
-            // ✅ FIX: Removed the restrictive 'position: Team Level' match
             pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, totalGoalsAgainst: { $sum: "$goalsAgainst" }, totalShotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" } } });
             pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalAgainst", 0] }, 0, { $subtract: [1, { $divide: ["$totalGoalsAgainst", "$totalShotsOnGoalAgainst"] }] }] } } });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+
+        // ✨ NEW LOGIC BLOCK TO FIX THE GOALIE BUG
+        } else if (customCalculation === 'savePercentage' && dataType === 'goalie') {
+            pipeline.push({ $match: { position: 'G', situation: 'all' } });
+            if (playerName) pipeline.push({ $match: { name: playerName } });
+            pipeline.push({
+                $project: {
+                    _id: 0,
+                    name: 1,
+                    team: 1,
+                    statValue: {
+                        $cond: [
+                            { $eq: ["$unblocked_shot_attempts", 0] },
+                            0,
+                            { $subtract: [1, { $divide: ["$goals", "$unblocked_shot_attempts"] }] }
+                        ]
+                    }
+                }
+            });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
 
@@ -372,15 +391,11 @@ async function queryNhlStats(args) {
 
             if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
             else if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
-            // ❌ REMOVED: The line below was the cause of the issue.
-            // else if (dataType === 'team') pipeline.push({ $match: { position: 'Team Level' } });
             else if (dataType !== 'team') return { error: "Invalid dataType." };
-
 
             if (playerName) pipeline.push({ $match: { name: playerName } });
 
             if (dataType === 'team') {
-                 // This logic correctly groups all documents by team, summing up the requested stat
                 pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, statValue: { $sum: `$${stat}` } } });
                 pipeline.push({ $sort: { statValue: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
@@ -1763,6 +1778,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
