@@ -160,19 +160,6 @@ function cleanAndParseJson(jsonString) {
     }
 }
 
-async function getHistoricalTopLineMetrics(season) {
-    const primarySeason = parseInt(String(season), 10);
-    const fallbackSeason = primarySeason - 1;
-
-    let results = await fetchHistoricalTopLineMetrics(primarySeason);
-
-    if (Object.keys(results).length === 0) {
-        console.log(`[WARN] No top line metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
-        results = await fetchHistoricalTopLineMetrics(fallbackSeason);
-    }
-    
-    return results;
-}
 
 async function fetchHistoricalTopLineMetrics(season) {
     const cacheKey = `historical_topline_${season}_v2`;
@@ -1712,6 +1699,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
