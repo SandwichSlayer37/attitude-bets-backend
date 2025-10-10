@@ -159,30 +159,7 @@ function cleanAndParseJson(jsonString) {
     }
 }
 
-async function getHistoricalTopLineMetrics(season) {
-    const primarySeason = parseInt(String(season), 10);
-    const fallbackSeason = primarySeason - 1;
 
-    const fetchMetricsForSeason = async (year) => {
-        const cacheKey = `historical_topline_${year}_v4`;
-        return fetchData(cacheKey, async () => {
-            try {
-                const pipeline = [
-                    { $match: { season: year, position: 'FORWARD 1', iceTimeRank: 1 } },
-                    { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
-                ];
-                const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-                const metrics = {};
-                results.forEach(lineData => {
-                    metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
-                });
-                return metrics;
-            } catch (error) {
-                console.error(`Error fetching historical top line metrics for season ${year}:`, error);
-                return {};
-            }
-        }, 86400000);
-    };
 
     let results = await fetchMetricsForSeason(primarySeason);
 
@@ -1543,3 +1520,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
