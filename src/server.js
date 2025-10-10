@@ -120,6 +120,7 @@ const teamLocationMap = {
     'Utah Mammoth': { lat: 40.7608, lon: -111.8910 } // Added for new NHL team
 };
 // REPLACE your entire teamAliasMap constant with this one
+// REPLACE your entire teamAliasMap constant with this one
 const teamAliasMap = {
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
@@ -151,14 +152,25 @@ const teamToSubredditMap = {
 };
 
 // --- HELPER FUNCTIONS ---
-function cleanAndParseJson(jsonString) {
-    if (!jsonString) return null;
-    const cleanedString = jsonString.replace(/^```json\s*/, '').replace(/```$/, '');
+function cleanAndParseJson(text) {
+    if (!text) return null;
+
+    // Find the first '{' and the last '}' to extract the main JSON object
+    const firstBracket = text.indexOf('{');
+    const lastBracket = text.lastIndexOf('}');
+
+    if (firstBracket === -1 || lastBracket === -1 || lastBracket < firstBracket) {
+        console.error("Could not find a valid JSON object within the text:", text);
+        return null;
+    }
+
+    const jsonString = text.substring(firstBracket, lastBracket + 1);
+
     try {
-        return JSON.parse(cleanedString);
+        return JSON.parse(jsonString);
     } catch (e) {
-        console.error("Failed to parse cleaned JSON string:", cleanedString);
-        throw e;
+        console.error("Failed to parse extracted JSON string:", jsonString);
+        throw e; 
     }
 }
 
@@ -574,6 +586,7 @@ async function getTeamStatsFromAPI(sportKey) {
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
+            // MLB logic remains the same
             const currentYear = new Date().getFullYear();
             try {
                 const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
@@ -616,21 +629,21 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
-                if (e.response && e.response.status === 404) {
-                    console.log(`[MLB] API returned 404 for ${sportKey}, likely an off-day. Proceeding gracefully.`);
-                    return {};
-                }
                 console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
                 return stats;
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
                 const today = new Date().toISOString().slice(0, 10);
+                const currentSeasonId = "20252026"; // Manually set for the new season
+                
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
-                    axios.get('https://api-web.nhle.com/v1/club-stats/team/summary?cayenneExp=season=20252026')
+                    // Explicitly request the current season for club stats
+                    axios.get(`https://api-web.nhle.com/v1/club-stats/team/summary?cayenneExp=season=${currentSeasonId}`)
                 ]);
 
+                // Robustly build the stats object from both sources
                 if (standingsResponse.data && standingsResponse.data.standings) {
                     standingsResponse.data.standings.forEach(s => {
                         const canonicalName = s.teamName?.default ? canonicalTeamNameMap[s.teamName.default.toLowerCase()] : null;
@@ -644,7 +657,8 @@ async function getTeamStatsFromAPI(sportKey) {
                 if (teamStatsResponse.data && teamStatsResponse.data.data) {
                     teamStatsResponse.data.data.forEach(team => {
                         const canonicalName = team.teamFullName ? canonicalTeamNameMap[team.teamFullName.toLowerCase()] : null;
-                        if (canonicalName && stats[canonicalName]) {
+                        if (canonicalName) {
+                            if (!stats[canonicalName]) stats[canonicalName] = {}; // Ensure entry exists
                             stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
                             stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
                             stats[canonicalName].powerPlayPct = team.powerPlayPct;
@@ -655,10 +669,6 @@ async function getTeamStatsFromAPI(sportKey) {
                 }
                 return stats;
             } catch (e) {
-                if (e.response && e.response.status === 404) {
-                    console.log(`[NHL] API returned 404 for ${sportKey}, likely offseason. Proceeding gracefully.`);
-                    return {};
-                }
                 console.error(`Could not fetch stats from NHL API: ${e.message}`);
                 return {};
             }
@@ -1570,5 +1580,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
