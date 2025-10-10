@@ -1006,8 +1006,9 @@ async function getPredictionsForSport(sportKey) {
             const competition = event.competitions?.[0];
             if (!competition) return;
             competition.competitors.forEach(competitor => {
+                // Safely access displayName with optional chaining
                 const competitorName = competitor.team?.displayName;
-                if (!competitorName) return;
+                if (!competitorName) return; // Skip if no name
                 const canonicalName = canonicalTeamNameMap[competitorName.toLowerCase()];
                 
                 if (canonicalName) {
