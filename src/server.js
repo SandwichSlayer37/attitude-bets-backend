@@ -184,8 +184,9 @@ async function fetchHistoricalTopLineMetrics(season) {
     }, 86400000);
 }
 
+// ...with this corrected version.
 async function getHistoricalTeamAndGoalieMetrics(season) {
-    const cacheKey = `historical_metrics_${season}_v3`;
+    const cacheKey = `historical_metrics_${season}_v4`; // Use a new cache key
     return fetchData(cacheKey, async () => {
         try {
             const pipeline = [
@@ -200,6 +201,7 @@ async function getHistoricalTeamAndGoalieMetrics(season) {
                             $push: {
                                 $cond: [
                                     { $eq: ["$position", "G"] },
+                                    // This now correctly includes the 'situation' field for filtering
                                     { name: "$name", goals: "$goals", xGoals: "$xGoals", situation: "$situation" },
                                     "$$REMOVE"
                                 ]
@@ -227,15 +229,38 @@ async function getHistoricalTeamAndGoalieMetrics(season) {
     }, 86400000);
 }
 
+// This single function replaces BOTH of the old ones.
 async function getHistoricalTopLineMetrics(season) {
     const primarySeason = parseInt(String(season), 10);
     const fallbackSeason = primarySeason - 1;
 
-    let results = await fetchHistoricalTopLineMetrics(primarySeason);
+    // Helper function to perform the actual query
+    const fetchMetricsForSeason = async (year) => {
+        const cacheKey = `historical_topline_${year}_v4`; // Use a new cache key
+        return fetchData(cacheKey, async () => {
+            try {
+                const pipeline = [
+                    { $match: { season: year, position: 'FORWARD 1', iceTimeRank: 1 } },
+                    { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
+                ];
+                const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+                const metrics = {};
+                results.forEach(lineData => {
+                    metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
+                });
+                return metrics;
+            } catch (error) {
+                console.error(`Error fetching historical top line metrics for season ${year}:`, error);
+                return {};
+            }
+        }, 86400000);
+    };
+
+    let results = await fetchMetricsForSeason(primarySeason);
 
     if (Object.keys(results).length === 0) {
         console.log(`[WARN] No top line metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
-        results = await fetchHistoricalTopLineMetrics(fallbackSeason);
+        results = await fetchMetricsForSeason(fallbackSeason);
     }
     
     return results;
@@ -1514,5 +1539,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
