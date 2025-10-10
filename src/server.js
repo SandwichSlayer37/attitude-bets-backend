@@ -316,8 +316,9 @@ async function queryNhlStats(args) {
             pipeline.push({
                 $group: {
                     _id: { team: "$team", name: "$name" },
-                    totalGoalsFor: { $sum: "$goalsFor" },
-                    totalShotsOnGoalFor: { $sum: "$shotsOnGoalFor" }
+                    // FIX: Convert fields to numbers before summing
+                    totalGoalsFor: { $sum: { $toDouble: "$goalsFor" } },
+                    totalShotsOnGoalFor: { $sum: { $toDouble: "$shotsOnGoalFor" } }
                 }
             });
             pipeline.push({
@@ -333,7 +334,14 @@ async function queryNhlStats(args) {
             pipeline.push({ $limit: parseInt(limit, 10) });
 
         } else if (customCalculation === 'savePercentage' && dataType === 'team') {
-            pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, totalGoalsAgainst: { $sum: "$goalsAgainst" }, totalShotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" } } });
+            pipeline.push({ 
+                $group: { 
+                    _id: { team: "$team", name: "$name" }, 
+                    // FIX: Convert fields to numbers before summing
+                    totalGoalsAgainst: { $sum: { $toDouble: "$goalsAgainst" } }, 
+                    totalShotsOnGoalAgainst: { $sum: { $toDouble: "$shotsOnGoalAgainst" } } 
+                } 
+            });
             pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalAgainst", 0] }, 0, { $subtract: [1, { $divide: ["$totalGoalsAgainst", "$totalShotsOnGoalAgainst"] }] }] } } });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
@@ -348,9 +356,9 @@ async function queryNhlStats(args) {
                     team: 1,
                     statValue: {
                         $cond: [
-                            { $eq: ["$unblocked_shot_attempts", 0] },
+                            { $eq: [{ $toDouble: "$unblocked_shot_attempts" }, 0] },
                             0,
-                            { $subtract: [1, { $divide: ["$goals", "$unblocked_shot_attempts"] }] }
+                            { $subtract: [1, { $divide: [{ $toDouble: "$goals" }, { $toDouble: "$unblocked_shot_attempts" }] }] }
                         ]
                     }
                 }
@@ -372,14 +380,26 @@ async function queryNhlStats(args) {
             if (playerName) pipeline.push({ $match: { name: playerName } });
 
             if (dataType === 'team') {
-                pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, statValue: { $sum: `$${stat}` } } });
+                pipeline.push({ 
+                    $group: { 
+                        _id: { team: "$team", name: "$name" }, 
+                        // FIX: Convert field to a number before summing
+                        statValue: { $sum: { $toDouble: `$${stat}` } } 
+                    } 
+                });
                 pipeline.push({ $sort: { statValue: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
                 pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: 1 } });
             } else {
-                pipeline.push({ $sort: { [stat]: -1 } });
+                // For sorting individual players, we also need to convert to double
+                pipeline.push({
+                    $set: {
+                        numericStat: { $toDouble: `$${stat}` }
+                    }
+                });
+                pipeline.push({ $sort: { numericStat: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
-                pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: `$${stat}` } });
+                pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: "$numericStat" } });
             }
         }
 
@@ -1548,3 +1568,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
