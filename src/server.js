@@ -159,84 +159,12 @@ function cleanAndParseJson(jsonString) {
     }
 }
 
-// REPLACE this entire function...
-// ...with this new version that uses the correct position label.
-async function fetchHistoricalTopLineMetrics(season) {
-    const cacheKey = `historical_topline_${season}_v2`;
-    return fetchData(cacheKey, async () => {
-        try {
-            const pipeline = [
-                // This now correctly looks for 'FORWARD 1'
-                { $match: { season: season, position: 'FORWARD 1', iceTimeRank: 1 } },
-                { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
-            ];
-            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-            
-            const metrics = {};
-            results.forEach(lineData => {
-                metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
-            });
-            return metrics;
-        } catch (error) {
-            console.error(`Error fetching historical top line metrics for season ${season}:`, error);
-            return {};
-        }
-    }, 86400000);
-}
-
-// ...with this corrected version.
-async function getHistoricalTeamAndGoalieMetrics(season) {
-    const cacheKey = `historical_metrics_${season}_v4`; // Use a new cache key
-    return fetchData(cacheKey, async () => {
-        try {
-            const pipeline = [
-                { $match: { season: season } },
-                {
-                    $group: {
-                        _id: "$team",
-                        goalsFor: { $sum: "$goalsFor" },
-                        xGoalsFor: { $sum: "$xGoalsFor" },
-                        penalityMinutes: { $sum: "$penalityMinutes" },
-                        goalies: {
-                            $push: {
-                                $cond: [
-                                    { $eq: ["$position", "G"] },
-                                    // This now correctly includes the 'situation' field for filtering
-                                    { name: "$name", goals: "$goals", xGoals: "$xGoals", situation: "$situation" },
-                                    "$$REMOVE"
-                                ]
-                            }
-                        }
-                    }
-                }
-            ];
-            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-            
-            const metrics = {};
-            results.forEach(teamData => {
-                metrics[teamData._id] = {
-                    goalsFor: teamData.goalsFor,
-                    xGoalsFor: teamData.xGoalsFor,
-                    penalityMinutes: teamData.penalityMinutes,
-                    goalies: teamData.goalies.filter(g => g.situation === 'all')
-                };
-            });
-            return metrics;
-        } catch (error) {
-            console.error(`Error fetching historical metrics for season ${season}:`, error);
-            return {};
-        }
-    }, 86400000);
-}
-
-// This single function replaces BOTH of the old ones.
 async function getHistoricalTopLineMetrics(season) {
     const primarySeason = parseInt(String(season), 10);
     const fallbackSeason = primarySeason - 1;
 
-    // Helper function to perform the actual query
     const fetchMetricsForSeason = async (year) => {
-        const cacheKey = `historical_topline_${year}_v4`; // Use a new cache key
+        const cacheKey = `historical_topline_${year}_v4`;
         return fetchData(cacheKey, async () => {
             try {
                 const pipeline = [
@@ -264,6 +192,49 @@ async function getHistoricalTopLineMetrics(season) {
     }
     
     return results;
+}
+
+async function getHistoricalTeamAndGoalieMetrics(season) {
+    const cacheKey = `historical_metrics_${season}_v4`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const pipeline = [
+                { $match: { season: season } },
+                {
+                    $group: {
+                        _id: "$team",
+                        goalsFor: { $sum: "$goalsFor" },
+                        xGoalsFor: { $sum: "$xGoalsFor" },
+                        penalityMinutes: { $sum: "$penalityMinutes" },
+                        goalies: {
+                            $push: {
+                                $cond: [
+                                    { $eq: ["$position", "G"] },
+                                    { name: "$name", goals: "$goals", xGoals: "$xGoals", situation: "$situation" },
+                                    "$$REMOVE"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ];
+            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+            
+            const metrics = {};
+            results.forEach(teamData => {
+                metrics[teamData._id] = {
+                    goalsFor: teamData.goalsFor,
+                    xGoalsFor: teamData.xGoalsFor,
+                    penalityMinutes: teamData.penalityMinutes,
+                    goalies: teamData.goalies.filter(g => g.situation === 'all')
+                };
+            });
+            return metrics;
+        } catch (error) {
+            console.error(`Error fetching historical metrics for season ${season}:`, error);
+            return {};
+        }
+    }, 86400000);
 }
 
 const parseRecord = (rec) => {
@@ -295,7 +266,7 @@ async function getTeamNewsFromReddit(teamName) {
 }
 
 const ALLOWED_STATS = new Set(['playerId','season','name','team','position','situation','games_played','icetime','xGoals','goals','unblocked_shot_attempts','xRebounds','rebounds','xFreeze','freeze','xOnGoal','ongoal','xPlayStopped','playStopped','xPlayContinuedInZone','playContinuedInZone','xPlayContinuedOutsideZone','playContinuedOutsideZone','flurryAdjustedxGoals','lowDangerShots','mediumDangerShots','highDangerShots','lowDangerxGoals','mediumDangerxGoals','highDangerxGoals','lowDangerGoals','mediumDangerGoals','highDangerGoals','blocked_shot_attempts','penalityMinutes','penalties','lineId','iceTimeRank','xGoalsPercentage','corsiPercentage','fenwickPercentage','xOnGoalFor','xGoalsFor','xReboundsFor','xFreezeFor','xPlayStoppedFor','xPlayContinuedInZoneFor','xPlayContinuedOutsideZoneFor','flurryAdjustedxGoalsFor','scoreVenueAdjustedxGoalsFor','flurryScoreVenueAdjustedxGoalsFor','shotsOnGoalFor','missedShotsFor','blockedShotAttemptsFor','shotAttemptsFor','goalsFor','reboundsFor','reboundGoalsFor','freezeFor','playStoppedFor','playContinuedInZoneFor','playContinuedOutsideZoneFor','savedShotsOnGoalFor','savedUnblockedShotAttemptsFor','penaltiesFor','penalityMinutesFor','faceOffsWonFor','hitsFor','takeawaysFor','giveawaysFor','lowDangerShotsFor','mediumDangerShotsFor','highDangerShotsFor','lowDangerxGoalsFor','mediumDangerxGoalsFor','highDangerxGoalsFor','lowDangerGoalsFor','mediumDangerGoalsFor','highDangerGoalsFor','scoreAdjustedShotsAttemptsFor','unblockedShotAttemptsFor','scoreAdjustedUnblockedShotAttemptsFor','dZoneGiveawaysFor','xGoalsFromxReboundsOfShotsFor','xGoalsFromActualReboundsOfShotsFor','reboundxGoalsFor','totalShotCreditFor','scoreAdjustedTotalShotCreditFor','scoreFlurryAdjustedTotalShotCreditFor','xOnGoalAgainst','xGoalsAgainst','xReboundsAgainst','xFreezeAgainst','xPlayStoppedAgainst','xPlayContinuedInZoneAgainst','xPlayContinuedOutsideZoneAgainst','flurryAdjustedxGoalsAgainst','scoreVenueAdjustedxGoalsAgainst','flurryScoreVenueAdjustedxGoalsAgainst','shotsOnGoalAgainst','missedShotsAgainst','blockedShotAttemptsAgainst','shotAttemptsAgainst','goalsAgainst','reboundsAgainst','reboundGoalsAgainst','freezeAgainst','playStoppedAgainst','playContinuedInZoneAgainst','playContinuedOutsideZoneAgainst','savedShotsOnGoalAgainst','savedUnblockedShotAttemptsAgainst','penaltiesAgainst','penalityMinutesAgainst','faceOffsWonAgainst','hitsAgainst','takeawaysAgainst','giveawaysAgainst','lowDangerShotsAgainst','mediumDangerShotsAgainst','highDangerShotsAgainst','lowDangerxGoalsAgainst','mediumDangerxGoalsAgainst','highDangerxGoalsAgainst','lowDangerGoalsAgainst','mediumDangerGoalsAgainst','highDangerGoalsAgainst','scoreAdjustedShotsAttemptsAgainst','unblockedShotAttemptsAgainst','scoreAdjustedUnblockedShotAttemptsAgainst','dZoneGiveawaysAgainst','xGoalsFromxReboundsOfShotsAgainst','xGoalsFromActualReboundsOfShotsAgainst','reboundxGoalsAgainst','totalShotCreditAgainst','scoreAdjustedTotalShotCreditAgainst','scoreFlurryAdjustedTotalShotCreditAgainst','shifts','gameScore','onIce_xGoalsPercentage','offIce_xGoalsPercentage','onIce_corsiPercentage','offIce_corsiPercentage','onIce_fenwickPercentage','offIce_fenwickPercentage','I_F_xOnGoal','I_F_xGoals','I_F_xRebounds','I_F_xFreeze','I_F_xPlayStopped','I_F_xPlayContinuedInZone','I_F_xPlayContinuedOutsideZone','I_F_flurryAdjustedxGoals','I_F_scoreVenueAdjustedxGoals','I_F_flurryScoreVenueAdjustedxGoals','I_F_primaryAssists','I_F_secondaryAssists','I_F_shotsOnGoal','I_F_missedShots','I_F_blockedShotAttempts','I_F_shotAttempts','I_F_points','I_F_goals','I_F_rebounds','I_F_reboundGoals','I_F_freeze','I_F_playStopped','I_F_playContinuedInZone','I_F_playContinuedOutsideZone','I_F_savedShotsOnGoal','I_F_savedUnblockedShotAttempts','I_F_penalityMinutes','I_F_faceOffsWon','I_F_hits','I_F_takeaways','I_F_giveaways','I_F_lowDangerShots','I_F_mediumDangerShots','I_F_highDangerShots','I_F_lowDangerxGoals','I_F_mediumDangerxGoals','I_F_highDangerxGoals','I_F_lowDangerGoals','I_F_mediumDangerGoals','I_F_highDangerGoals','I_F_scoreAdjustedShotsAttempts','I_F_unblockedShotAttempts','I_F_scoreAdjustedUnblockedShotAttempts','I_F_dZoneGiveaways','I_F_xGoalsFromxReboundsOfShots','I_F_xGoalsFromActualReboundsOfShots','I_F_reboundxGoals','I_F_xGoals_with_earned_rebounds','I_F_xGoals_with_earned_rebounds_scoreAdjusted','I_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','I_F_shifts','I_F_oZoneShiftStarts','I_F_dZoneShiftStarts','I_F_neutralZoneShiftStarts','I_F_flyShiftStarts','I_F_oZoneShiftEnds','I_F_dZoneShiftEnds','I_F_neutralZoneShiftEnds','I_F_flyShiftEnds','faceoffsWon','faceoffsLost','timeOnBench','penalityMinutesDrawn','penaltiesDrawn','shotsBlockedByPlayer','OnIce_F_xOnGoal','OnIce_F_xGoals','OnIce_F_flurryAdjustedxGoals','OnIce_F_scoreVenueAdjustedxGoals','OnIce_F_flurryScoreVenueAdjustedxGoals','OnIce_F_shotsOnGoal','OnIce_F_missedShots','OnIce_F_blockedShotAttempts','OnIce_F_shotAttempts','OnIce_F_goals','OnIce_F_rebounds','OnIce_F_reboundGoals','OnIce_F_lowDangerShots','OnIce_F_mediumDangerShots','OnIce_F_highDangerShots','OnIce_F_lowDangerxGoals','OnIce_F_mediumDangerxGoals','OnIce_F_highDangerxGoals','OnIce_F_lowDangerGoals','OnIce_F_mediumDangerGoals','OnIce_F_highDangerGoals','OnIce_F_scoreAdjustedShotsAttempts','OnIce_F_unblockedShotAttempts','OnIce_F_scoreAdjustedUnblockedShotAttempts','OnIce_F_xGoalsFromxReboundsOfShots','OnIce_F_xGoalsFromActualReboundsOfShots','OnIce_F_reboundxGoals','OnIce_F_xGoals_with_earned_rebounds','OnIce_F_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OnIce_A_xOnGoal','OnIce_A_xGoals','OnIce_A_flurryAdjustedxGoals','OnIce_A_scoreVenueAdjustedxGoals','OnIce_A_flurryScoreVenueAdjustedxGoals','OnIce_A_shotsOnGoal','OnIce_A_missedShots','OnIce_A_blockedShotAttempts','OnIce_A_shotAttempts','OnIce_A_goals','OnIce_A_rebounds','OnIce_A_reboundGoals','OnIce_A_lowDangerShots','OnIce_A_mediumDangerShots','OnIce_A_highDangerShots','OnIce_A_lowDangerxGoals','OnIce_A_mediumDangerxGoals','OnIce_A_highDangerxGoals','OnIce_A_lowDangerGoals','OnIce_A_mediumDangerGoals','OnIce_A_highDangerGoals','OnIce_A_scoreAdjustedShotsAttempts','OnIce_A_unblockedShotAttempts','OnIce_A_scoreAdjustedUnblockedShotAttempts','OnIce_A_xGoalsFromxReboundsOfShots','OnIce_A_xGoalsFromActualReboundsOfShots','OnIce_A_reboundxGoals','OnIce_A_xGoals_with_earned_rebounds','OnIce_A_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_A_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OffIce_F_xGoals','OffIce_A_xGoals','OffIce_F_shotAttempts','OffIce_A_shotAttempts','xGoalsForAfterShifts','xGoalsAgainstAfterShifts','corsiForAfterShifts','corsiAgainstAfterShifts','fenwickForAfterShifts','fenwickAgainstAfterShifts']);
-// REPLACE your entire queryNhlStats function with this one.
+
 async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
@@ -393,13 +364,11 @@ async function queryNhlStats(args) {
 
             if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
             else if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
-            // The strict 'position: "Team Level"' check has been removed from the 'team' logic below
             else if (dataType !== 'team') return { error: "Invalid dataType." };
 
             if (playerName) pipeline.push({ $match: { name: playerName } });
 
             if (dataType === 'team') {
-                // This now correctly groups by team without needing a specific position label
                 pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, statValue: { $sum: `$${stat}` } } });
                 pipeline.push({ $sort: { statValue: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
@@ -420,6 +389,36 @@ async function queryNhlStats(args) {
         console.error("Error during Unified NHL stats query:", error);
         return { error: "An error occurred while querying the database." };
     }
+}
+
+
+function getDynamicWeights(sportKey) {
+    if (sportKey === 'baseball_mlb') {
+        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
+    }
+    if (sportKey === 'icehockey_nhl') {
+        return {
+            fiveOnFiveXg: 3.5,
+            highDangerBattle: 3.0,
+            specialTeamsDuel: 2.5,
+            topLinePower: 2.5,
+            historicalGoalie: 2.0,
+            finishingSkill: 1.5,
+            discipline: 1.0,
+            goalie: 2.5,
+            offensiveForm: 1.0,
+            defensiveForm: 1.0,
+            injury: 1.5,
+            fatigue: 1.0,
+            h2h: 1.0,
+            record: 0.5,
+            hotStreak: 0.8,
+            faceoffAdvantage: 0.5,
+            pdo: 1.0,
+            value: 0.5
+        };
+    }
+    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
 }
 
 async function getProbablePitchersAndStats() {
@@ -1007,7 +1006,10 @@ async function getPredictionsForSport(sportKey) {
             const competition = event.competitions?.[0];
             if (!competition) return;
             competition.competitors.forEach(competitor => {
-                const canonicalName = canonicalTeamNameMap[competitor.team.displayName.toLowerCase()];
+                const competitorName = competitor.team?.displayName;
+                if (!competitorName) return;
+                const canonicalName = canonicalTeamNameMap[competitorName.toLowerCase()];
+                
                 if (canonicalName) {
                     injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
                     if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
@@ -1017,9 +1019,11 @@ async function getPredictionsForSport(sportKey) {
             });
             const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
             const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
-            if (competition.series && homeTeam && awayTeam) {
+
+            if (competition.series && homeTeam?.team?.displayName && awayTeam?.team?.displayName) {
                 const homeCanonical = canonicalTeamNameMap[homeTeam.team.displayName.toLowerCase()];
                 const awayCanonical = canonicalTeamNameMap[awayTeam.team.displayName.toLowerCase()];
+
                 if (homeCanonical && awayCanonical) {
                     const gameId = `${awayCanonical}@${homeCanonical}`;
                     const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
@@ -1072,7 +1076,7 @@ async function getPredictionsForSport(sportKey) {
             if (!competitors) return false;
             const home = competitors.find(c => c.homeAway === 'home');
             const away = competitors.find(c => c.homeAway === 'away');
-            if (!home || !away) return false;
+            if (!home?.team?.displayName || !away?.team?.displayName) return false;
             return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === homeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === awayCanonical);
         });
 
@@ -1423,9 +1427,9 @@ app.post('/api/ai-analysis', async (req, res) => {
 ${factorsList}
 
 **RECENT NEWS & SENTIMENT (from team subreddits):**
-- **${game.home_team} News:**
+- **${home_team} News:**
 ${homeNews}
-- **${game.away_team} News:**
+- **${away_team} News:**
 ${awayNews}
 
 **TASK:**
@@ -1539,6 +1543,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-
-
