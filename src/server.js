@@ -180,13 +180,19 @@ async function getHistoricalTopLineMetrics(season) {
     const fallbackSeason = primarySeason - 1;
 
     const fetchMetricsForSeason = async (year) => {
-        const cacheKey = `historical_topline_${year}_v5`; // New cache key
+        const cacheKey = `historical_topline_${year}_v6`;
         return fetchData(cacheKey, async () => {
             try {
                 const pipeline = [
-                    // This now correctly looks for 'line' as shown in your DB sample
-                    { $match: { season: year, position: 'line', iceTimeRank: 1 } },
-                    { $project: { _id: 0, team: 1, xGoalsPercentage: 1 } }
+                    { $match: { season: year, position: 'line' } },
+                    { $sort: { team: 1, iceTimeRank: 1 } },
+                    {
+                        $group: {
+                            _id: "$team",
+                            topXgPercentage: { $first: "$xGoalsPercentage" }
+                        }
+                    },
+                    { $project: { _id: 0, team: "$_id", xGoalsPercentage: "$topXgPercentage" } }
                 ];
                 const results = await nhlStatsCollection.aggregate(pipeline).toArray();
                 const metrics = {};
@@ -322,70 +328,30 @@ async function queryNhlStats(args) {
         pipeline.push({ $match: { season: seasonNumber } });
 
         if (teamName) {
-            const teamAbbr = teamToAbbrMap[teamName] || teamName.toUpperCase();
+            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+            const teamAbbr = canonicalName ? teamToAbbrMap[canonicalName] : teamName.toUpperCase();
             pipeline.push({ $match: { team: teamAbbr } });
         }
 
         if (customCalculation === 'shootingPercentage' && dataType === 'team') {
-            pipeline.push({
-                $group: {
-                    _id: { team: "$team", name: "$name" },
-                    // FIX: Convert fields to numbers before summing
-                    totalGoalsFor: { $sum: { $toDouble: "$goalsFor" } },
-                    totalShotsOnGoalFor: { $sum: { $toDouble: "$shotsOnGoalFor" } }
-                }
-            });
-            pipeline.push({
-                $project: {
-                    _id: 0,
-                    team: "$_id.name",
-                    statValue: {
-                        $cond: [{ $eq: ["$totalShotsOnGoalFor", 0] }, 0, { $divide: ["$totalGoalsFor", "$totalShotsOnGoalFor"] }]
-                    }
-                }
-            });
+            pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, totalGoalsFor: { $sum: { $toDouble: "$goalsFor" } }, totalShotsOnGoalFor: { $sum: { $toDouble: "$shotsOnGoalFor" } } } });
+            pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalFor", 0] }, 0, { $divide: ["$totalGoalsFor", "$totalShotsOnGoalFor"] }] } } });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
-
         } else if (customCalculation === 'savePercentage' && dataType === 'team') {
-            pipeline.push({ 
-                $group: { 
-                    _id: { team: "$team", name: "$name" }, 
-                    // FIX: Convert fields to numbers before summing
-                    totalGoalsAgainst: { $sum: { $toDouble: "$goalsAgainst" } }, 
-                    totalShotsOnGoalAgainst: { $sum: { $toDouble: "$shotsOnGoalAgainst" } } 
-                } 
-            });
+            pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, totalGoalsAgainst: { $sum: { $toDouble: "$goalsAgainst" } }, totalShotsOnGoalAgainst: { $sum: { $toDouble: "$shotsOnGoalAgainst" } } } });
             pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalAgainst", 0] }, 0, { $subtract: [1, { $divide: ["$totalGoalsAgainst", "$totalShotsOnGoalAgainst"] }] }] } } });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
-
         } else if (customCalculation === 'savePercentage' && dataType === 'goalie') {
             pipeline.push({ $match: { position: 'G', situation: 'all' } });
             if (playerName) pipeline.push({ $match: { name: playerName } });
-            pipeline.push({
-                $project: {
-                    _id: 0,
-                    name: 1,
-                    team: 1,
-                    statValue: {
-                        $cond: [
-                            { $eq: [{ $toDouble: "$unblocked_shot_attempts" }, 0] },
-                            0,
-                            { $subtract: [1, { $divide: [{ $toDouble: "$goals" }, { $toDouble: "$unblocked_shot_attempts" }] }] }
-                        ]
-                    }
-                }
-            });
+            pipeline.push({ $project: { _id: 0, name: 1, team: 1, statValue: { $cond: [ { $eq: [{ $toDouble: "$unblocked_shot_attempts" }, 0] }, 0, { $subtract: [1, { $divide: [{ $toDouble: "$goals" }, { $toDouble: "$unblocked_shot_attempts" }] }] } ] } } });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
-
-        } else { // Standard pipeline logic
-            if (situationOverride) {
-                pipeline.push({ $match: { situation: situationOverride } });
-            } else if (dataType !== 'team') {
-                pipeline.push({ $match: { situation: 'all' } });
-            }
+        } else {
+            if (situationOverride) pipeline.push({ $match: { situation: situationOverride } });
+            else if (dataType !== 'team') pipeline.push({ $match: { situation: 'all' } });
 
             if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
             else if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
@@ -394,23 +360,12 @@ async function queryNhlStats(args) {
             if (playerName) pipeline.push({ $match: { name: playerName } });
 
             if (dataType === 'team') {
-                pipeline.push({ 
-                    $group: { 
-                        _id: { team: "$team", name: "$name" }, 
-                        // FIX: Convert field to a number before summing
-                        statValue: { $sum: { $toDouble: `$${stat}` } } 
-                    } 
-                });
+                pipeline.push({ $group: { _id: { team: "$team", name: "$name" }, statValue: { $sum: { $toDouble: `$${stat}` } } } });
                 pipeline.push({ $sort: { statValue: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
                 pipeline.push({ $project: { _id: 0, team: "$_id.name", statValue: 1 } });
             } else {
-                // For sorting individual players, we also need to convert to double
-                pipeline.push({
-                    $set: {
-                        numericStat: { $toDouble: `$${stat}` }
-                    }
-                });
+                pipeline.push({ $set: { numericStat: { $toDouble: `$${stat}` } } });
                 pipeline.push({ $sort: { numericStat: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
                 pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: "$numericStat" } });
@@ -418,10 +373,9 @@ async function queryNhlStats(args) {
         }
 
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-        if (results.length === 0) return { error: `No data was found in the database for the specified criteria.` };
+        if (results.length === 0) return { error: `No data was found for the specified criteria.` };
 
         return { results };
-
     } catch (error) {
         console.error("Error during Unified NHL stats query:", error);
         return { error: "An error occurred while querying the database." };
@@ -582,11 +536,10 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_final_robust_FIXED`;
+    const cacheKey = `stats_api_${sportKey}_v_final_robust_FIXED_AGAIN`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
-            // MLB logic remains the same
             const currentYear = new Date().getFullYear();
             try {
                 const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
@@ -598,18 +551,11 @@ async function getTeamStatsFromAPI(sportKey) {
                             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
                             if(canonicalName) {
                                 const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                                stats[canonicalName] = {
-                                    record: `${teamRecord.wins}-${teamRecord.losses}`,
-                                    streak: teamRecord.streak?.streakCode || 'N/A',
-                                    lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0',
-                                    ops: 0.700,
-                                    teamERA: 99.99
-                                };
+                                stats[canonicalName] = { record: `${teamRecord.wins}-${teamRecord.losses}`, streak: teamRecord.streak?.streakCode || 'N/A', lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0', ops: 0.700, teamERA: 99.99 };
                             }
                         }
                     }
                 }
-
                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
                  if (leagueStatsData.stats) {
@@ -618,11 +564,8 @@ async function getTeamStatsFromAPI(sportKey) {
                             const teamName = split.team.name;
                             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
                             if (stats[canonicalName]) {
-                                if (statGroup.group.displayName === 'hitting' && split.stat) {
-                                    stats[canonicalName].ops = parseFloat(split.stat.ops);
-                                } else if (statGroup.group.displayName === 'pitching' && split.stat) {
-                                    stats[canonicalName].teamERA = parseFloat(split.stat.era);
-                                }
+                                if (statGroup.group.displayName === 'hitting' && split.stat) stats[canonicalName].ops = parseFloat(split.stat.ops);
+                                else if (statGroup.group.displayName === 'pitching' && split.stat) stats[canonicalName].teamERA = parseFloat(split.stat.era);
                             }
                         });
                     });
@@ -635,15 +578,11 @@ async function getTeamStatsFromAPI(sportKey) {
         } else if (sportKey === 'icehockey_nhl') {
             try {
                 const today = new Date().toISOString().slice(0, 10);
-                const currentSeasonId = "20252026"; // Manually set for the new season
-                
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
-                    // Explicitly request the current season for club stats
-                    axios.get(`https://api-web.nhle.com/v1/club-stats/team/summary?cayenneExp=season=${currentSeasonId}`)
+                    axios.get('https://api-web.nhle.com/v1/club-stats/now') // CORRECTED URL
                 ]);
 
-                // Robustly build the stats object from both sources
                 if (standingsResponse.data && standingsResponse.data.standings) {
                     standingsResponse.data.standings.forEach(s => {
                         const canonicalName = s.teamName?.default ? canonicalTeamNameMap[s.teamName.default.toLowerCase()] : null;
@@ -658,7 +597,7 @@ async function getTeamStatsFromAPI(sportKey) {
                     teamStatsResponse.data.data.forEach(team => {
                         const canonicalName = team.teamFullName ? canonicalTeamNameMap[team.teamFullName.toLowerCase()] : null;
                         if (canonicalName) {
-                            if (!stats[canonicalName]) stats[canonicalName] = {}; // Ensure entry exists
+                            if (!stats[canonicalName]) stats[canonicalName] = {};
                             stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
                             stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
                             stats[canonicalName].powerPlayPct = team.powerPlayPct;
@@ -1580,6 +1519,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
