@@ -105,7 +105,7 @@ const teamToAbbrMap = {
     'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJS', 
     'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TBL', 'Toronto Maple Leafs': 'TOR', 
     'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG',
-    'Utah Mammoth': 'UTA' // Added for new NHL team
+    'Utah Mammoth': 'UTA'
 };
 
 const SPORTS_DB = [ 
@@ -117,10 +117,8 @@ const teamLocationMap = {
     'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667 }, 'Atlanta Braves': { lat: 33.8907, lon: -84.4677 }, 'Baltimore Orioles': { lat: 39.2838, lon: -76.6217 }, 'Boston Red Sox': { lat: 42.3467, lon: -71.0972 }, 'Chicago Cubs': { lat: 41.9484, lon: -87.6553 }, 'Chicago White Sox': { lat: 41.8300, lon: -87.6337 }, 'Cincinnati Reds': { lat: 39.0975, lon: -84.5069 }, 'Cleveland Guardians': { lat: 41.4962, lon: -81.6852 }, 'Colorado Rockies': { lat: 39.7562, lon: -104.9942 }, 'Detroit Tigers': { lat: 42.3390, lon: -83.0552 }, 'Houston Astros': { lat: 29.7570, lon: -95.3555 }, 'Kansas City Royals': { lat: 39.0517, lon: -94.4803 }, 'Los Angeles Angels': { lat: 33.8003, lon: -117.8827 }, 'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2398 }, 'Miami Marlins': { lat: 25.7781, lon: -80.2196 }, 'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712 }, 'Minnesota Twins': { lat: 44.9817, lon: -93.2775 }, 'New York Mets': { lat: 40.7571, lon: -73.8458 }, 'New York Yankees': { lat: 40.8296, lon: -73.9262 }, 'Oakland Athletics': { lat: 37.7516, lon: -122.2005 }, 'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665 }, 'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057 }, 'San Diego Padres': { lat: 32.7073, lon: -117.1570 }, 'San Francisco Giants': { lat: 37.7786, lon: -122.3893 }, 'Seattle Mariners': { lat: 47.5914, lon: -122.3325 }, 'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928 }, 'Tampa Bay Rays': { lat: 27.7682, lon: -82.6534 }, 'Texas Rangers': { lat: 32.7513, lon: -97.0829 }, 'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894 }, 'Washington Nationals': { lat: 38.8729, lon: -77.0074 },
     'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
     'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 32.7905, lon: -96.8103 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 },
-    'Utah Mammoth': { lat: 40.7608, lon: -111.8910 } // Added for new NHL team
+    'Utah Mammoth': { lat: 40.7608, lon: -111.8910 }
 };
-// REPLACE your entire teamAliasMap constant with this one
-// REPLACE your entire teamAliasMap constant with this one
 const teamAliasMap = {
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
@@ -154,18 +152,13 @@ const teamToSubredditMap = {
 // --- HELPER FUNCTIONS ---
 function cleanAndParseJson(text) {
     if (!text) return null;
-
-    // Find the first '{' and the last '}' to extract the main JSON object
     const firstBracket = text.indexOf('{');
     const lastBracket = text.lastIndexOf('}');
-
     if (firstBracket === -1 || lastBracket === -1 || lastBracket < firstBracket) {
         console.error("Could not find a valid JSON object within the text:", text);
         return null;
     }
-
     const jsonString = text.substring(firstBracket, lastBracket + 1);
-
     try {
         return JSON.parse(jsonString);
     } catch (e) {
@@ -174,7 +167,6 @@ function cleanAndParseJson(text) {
     }
 }
 
-// REPLACE your getHistoricalTopLineMetrics function with this one
 async function getHistoricalTopLineMetrics(season) {
     const primarySeason = parseInt(String(season), 10);
     const fallbackSeason = primarySeason - 1;
@@ -511,7 +503,7 @@ async function getGoalieStats() {
     const cacheKey = `nhl_goalie_stats_v2`;
     return fetchData(cacheKey, async () => {
         try {
-            const url = `https://api-web.nhle.com/v1/goalie-stats/current?isAggregate=true&isGame=false&sort=savePct&limit=100`;
+            const url = `https://api-web.nhle.com/v1/goalie-stats/now`;
             const { data } = await axios.get(url);
             const goalieStats = {};
             if (data && data.data) {
@@ -525,11 +517,7 @@ async function getGoalieStats() {
             }
             return goalieStats;
         } catch (e) {
-            if (e.response && e.response.status === 404) {
-                console.log(`[NHL] Goalie Stats API returned 404, likely offseason. Proceeding gracefully.`);
-                return {};
-            }
-            console.error("Could not fetch goalie stats:", e.message);
+            console.error(`Could not fetch goalie stats: ${e.message}`);
             return {};
         }
     }, 86400000);
@@ -580,7 +568,7 @@ async function getTeamStatsFromAPI(sportKey) {
                 const today = new Date().toISOString().slice(0, 10);
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
-                    axios.get('https://api-web.nhle.com/v1/club-stats/now') // CORRECTED URL
+                    axios.get('https://api-web.nhle.com/v1/club-stats/now')
                 ]);
 
                 if (standingsResponse.data && standingsResponse.data.standings) {
@@ -1273,61 +1261,91 @@ app.get('/api/reconcile-results', async (req, res) => {
     }
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
         const pendingPredictions = await predictionsCollection.find({
             status: 'pending',
-            gameDate: { $lt: today.toISOString() }
+            gameDate: { $gte: threeDaysAgo.toISOString() }
         }).toArray();
+
         if (pendingPredictions.length === 0) {
-            return res.json({ message: "No pending predictions from previous days to reconcile." });
+            return res.json({ message: "No recent pending predictions to reconcile." });
         }
+
         let reconciledCount = 0;
         const sportKeys = [...new Set(pendingPredictions.map(p => p.sportKey))];
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const formattedDate = `${yesterday.getFullYear()}${(yesterday.getMonth() + 1).toString().padStart(2, '0')}${yesterday.getDate().toString().padStart(2, '0')}`;
-        for (const sportKey of sportKeys) {
-            const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
-            if (!map) continue;
-            const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
-            const { data: espnData } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0...' }});
-            if (!espnData.events) continue;
-            for (const prediction of pendingPredictions.filter(p => p.sportKey === sportKey)) {
-                const gameEvent = espnData.events.find(e => {
-                    const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
-                    const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
-                    const eventHome = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                    const eventAway = e.competitions[0].competitors.find(c => c.homeAway === 'away');
-                    if (!eventHome || !eventAway) return false;
-                    const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
-                    const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
-                    return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
-                });
-                if (gameEvent && gameEvent.status.type.completed) {
-                    const competition = gameEvent.competitions[0];
-                    const winnerData = competition.competitors.find(c => c.winner === true);
-                    if (!winnerData) continue;
-                    const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
-                    const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
-                    const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
-                    let profit = 0;
-                    if (result === 'win') {
-                        profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
-                    } else {
-                        profit = -10;
+        
+        let allRecentEvents = [];
+        for (let i = 0; i < 3; i++) {
+            const dateToFetch = new Date();
+            dateToFetch.setDate(dateToFetch.getDate() - i);
+            const formattedDate = `${dateToFetch.getFullYear()}${(dateToFetch.getMonth() + 1).toString().padStart(2, '0')}${dateToFetch.getDate().toString().padStart(2, '0')}`;
+            
+            for (const sportKey of sportKeys) {
+                 const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
+                 if (!map) continue;
+                 try {
+                    const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
+                    const { data: espnData } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0...' }});
+                    if (espnData.events) {
+                        allRecentEvents.push(...espnData.events);
                     }
-                    await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
-                    const updateField = result === 'win'
-                        ? { $inc: { wins: 1, totalProfit: profit } }
-                        : { $inc: { losses: 1, totalProfit: profit } };
-                    await recordsCollection.updateOne(
-                        { sport: sportKey },
-                        updateField,
-                        { upsert: true }
-                    );
-                    reconciledCount++;
+                 } catch (apiError) {
+                    console.error(`Could not fetch ESPN data for ${formattedDate}: ${apiError.message}`);
+                 }
+            }
+        }
+
+        for (const prediction of pendingPredictions) {
+            const gameEvent = allRecentEvents.find(e => {
+                const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
+                const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
+
+                const competitors = e.competitions?.[0]?.competitors;
+                if (!competitors) return false;
+
+                const eventHome = competitors.find(c => c.homeAway === 'home');
+                const eventAway = competitors.find(c => c.homeAway === 'away');
+
+                if (!eventHome?.team?.displayName || !eventAway?.team?.displayName) return false;
+                
+                const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
+                const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
+                
+                return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
+            });
+
+            if (gameEvent && gameEvent.status.type.completed) {
+                const competition = gameEvent.competitions[0];
+                const winnerData = competition.competitors.find(c => c.winner === true);
+                if (!winnerData?.team?.displayName) continue;
+
+                const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
+                const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
+                
+                const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
+                
+                let profit = 0;
+                if (result === 'win') {
+                    profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
+                } else {
+                    profit = -10;
                 }
+
+                await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
+                
+                const updateField = result === 'win'
+                    ? { $inc: { wins: 1, totalProfit: profit } }
+                    : { $inc: { losses: 1, totalProfit: profit } };
+                
+                await recordsCollection.updateOne(
+                    { sport: prediction.sportKey },
+                    updateField,
+                    { upsert: true }
+                );
+                reconciledCount++;
             }
         }
         res.json({ message: `Reconciliation complete. Processed ${reconciledCount} predictions.` });
@@ -1519,7 +1537,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-
-
-
