@@ -294,7 +294,7 @@ async function queryNhlStats(args) {
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
-        'powerPlayGoals': { newStat: 'goals', situation: '5on4' }, // Teach AI about powerPlayGoals
+        'powerPlayGoals': { newStat: 'goals', situation: '5on4'}, // Teach AI about powerPlayGoals
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
         'GSAx': { customCalculation: 'GSAx' } // Teach AI about GSAx
@@ -518,10 +518,10 @@ async function getOdds(sportKey) {
 }
 
 async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v2`;
+    const cacheKey = `nhl_goalie_stats_v3_final`;
     return fetchData(cacheKey, async () => {
         try {
-            const url = `https://api-web.nhle.com/v1/goalie-stats/now`;
+            const url = `https://api-web.nhle.com/v1/goalie-stats/now`; // CORRECTED URL
             const { data } = await axios.get(url);
             const goalieStats = {};
             if (data && data.data) {
@@ -542,7 +542,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_FINAL_4`; // New cache key to ensure fresh data
+    const cacheKey = `stats_api_${sportKey}_v_FINAL_5`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -1555,6 +1555,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
