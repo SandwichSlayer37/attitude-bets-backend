@@ -158,40 +158,40 @@ const teamToSubredditMap = {
  * @param {string} text The raw text response from the AI.
  * @returns {object|null} The parsed JSON object, or null if no valid JSON is found.
  */
+/**
+ * A robust function to find and parse the final JSON analysis from a raw string.
+ * This is critical because the Gemini API, when using tools, may return a
+ * string containing preliminary text or tool responses before the final JSON object.
+ * This function uses a regular expression to guarantee it only extracts the
+ * valid JSON object containing the required "finalPick" key.
+ * @param {string} text The raw text response from the AI.
+ * @returns {object|null} The parsed JSON object, or null if no valid JSON is found.
+ */
 function cleanAndParseJson(text) {
-    if (!text || typeof text !== 'string') return null;
-
-    // Find the last occurrence of '{', which marks the beginning of the final JSON object.
-    const lastBracketIndex = text.lastIndexOf('{');
-
-    // Find the first '}' that appears AFTER that last '{', marking the end.
-    // Add 1 to include the closing bracket in the substring.
-    const lastClosingBracketIndex = text.indexOf('}', lastBracketIndex) + 1;
-
-    if (lastBracketIndex === -1 || lastClosingBracketIndex === 0) {
-        console.error("Could not find a valid JSON object within the text:", text);
+    if (!text || typeof text !== 'string') {
+        console.error("cleanAndParseJson received invalid input:", text);
         return null;
     }
 
-    // Extract the substring that we believe is the final, complete JSON object.
-    const jsonString = text.substring(lastBracketIndex, lastClosingBracketIndex);
+    // Use a regular expression to find a JSON object that starts with '{',
+    // contains the unique key "finalPick", and ends with '}'.
+    // This is the most reliable way to isolate the correct JSON block.
+    const jsonRegex = /{[^]*"finalPick"[^]*}/;
+    const match = text.match(jsonRegex);
 
-    try {
-        // Attempt to parse the extracted string.
-        return JSON.parse(jsonString);
-    } catch (e) {
-        // If parsing fails, log the specific string that failed and the error.
-        console.error("Failed to parse extracted JSON string:", jsonString);
-        console.error("Original Parsing Error:", e.message);
-        // As a last resort, try to find ANY JSON block
-        const fallbackMatch = text.match(/{[\s\S]*}/);
-        if (fallbackMatch) {
-            try {
-                return JSON.parse(fallbackMatch[0]);
-            } catch (fallbackError) {
-                 console.error("Fallback JSON parsing also failed.");
-            }
+    if (match && match[0]) {
+        const jsonString = match[0];
+        try {
+            // Attempt to parse the surgically extracted JSON string.
+            return JSON.parse(jsonString);
+        } catch (e) {
+            console.error("Failed to parse the extracted JSON string:", jsonString);
+            console.error("Parsing Error:", e.message);
+            return null; // Return null if parsing the extracted string fails
         }
+    } else {
+        // This log will appear if the AI fails to return a valid JSON with the required key.
+        console.error("Could not find a valid JSON object with the key 'finalPick' in the text:", text);
         return null;
     }
 }
@@ -1635,6 +1635,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
