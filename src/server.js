@@ -172,7 +172,7 @@ async function getHistoricalTopLineMetrics(season) {
     const fallbackSeason = primarySeason - 1;
 
     const fetchMetricsForSeason = async (year) => {
-        const cacheKey = `historical_topline_${year}_v7_final`;
+        const cacheKey = `historical_topline_${year}_v8`;
         return fetchData(cacheKey, async () => {
             try {
                 const pipeline = [
@@ -290,9 +290,10 @@ async function queryNhlStats(args) {
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
+        'powerPlayGoals': { newStat: 'goals', situation: '5on4'},
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
-        'GSAx': { customCalculation: 'GSAx' } // Teach the AI about GSAx
+        'GSAx': { customCalculation: 'GSAx' }
     };
 
     let situationOverride = null;
@@ -312,7 +313,7 @@ async function queryNhlStats(args) {
     if (!season || !dataType || (!stat && !customCalculation)) {
         return { error: "A season, dataType, and a stat are required." };
     }
-    if (!customCalculation && !ALLOWED_STATS.has(stat) && stat !== 'powerPlayGoals') {
+    if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
 
@@ -537,7 +538,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_FINAL_2`;
+    const cacheKey = `stats_api_${sportKey}_v_FINAL_3`; // New cache key to ensure fresh data
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -581,7 +582,7 @@ async function getTeamStatsFromAPI(sportKey) {
                 const today = new Date().toISOString().slice(0, 10);
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
                     axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
-                    axios.get('https://api-web.nhle.com/v1/club-stats/now')
+                    axios.get('https://api-web.nhle.com/v1/club-stats/now') // CORRECTED URL
                 ]);
 
                 if (standingsResponse.data && standingsResponse.data.standings) {
@@ -1550,5 +1551,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
