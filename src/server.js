@@ -151,13 +151,6 @@ const teamToSubredditMap = {
 
 // --- HELPER FUNCTIONS ---
 /**
- * A robust function to find and parse the last valid JSON object from a string.
- * This is necessary because the Gemini API, when using tools, may return a
- * string containing tool responses BEFORE the final JSON object.
- * This function intelligently isolates and parses only the final JSON block.
- * @param {string} text The raw text response from the AI.
- * @returns {object|null} The parsed JSON object, or null if no valid JSON is found.
- */
 /**
  * A robust function to find and parse the final JSON analysis from a raw string.
  * This is critical because the Gemini API, when using tools, may return a
@@ -173,24 +166,19 @@ function cleanAndParseJson(text) {
         return null;
     }
 
-    // Use a regular expression to find a JSON object that starts with '{',
-    // contains the unique key "finalPick", and ends with '}'.
-    // This is the most reliable way to isolate the correct JSON block.
     const jsonRegex = /{[^]*"finalPick"[^]*}/;
     const match = text.match(jsonRegex);
 
     if (match && match[0]) {
         const jsonString = match[0];
         try {
-            // Attempt to parse the surgically extracted JSON string.
             return JSON.parse(jsonString);
         } catch (e) {
             console.error("Failed to parse the extracted JSON string:", jsonString);
             console.error("Parsing Error:", e.message);
-            return null; // Return null if parsing the extracted string fails
+            return null;
         }
     } else {
-        // This log will appear if the AI fails to return a valid JSON with the required key.
         console.error("Could not find a valid JSON object with the key 'finalPick' in the text:", text);
         return null;
     }
@@ -623,97 +611,70 @@ async function getOdds(sportKey) {
     }, 900000);
 }
 
-async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v_FINAL_5`;
+// =================================================================
+// ✅ NEW RESILIENT LIVE DATA FETCHER
+// This single function now handles all live NHL data calls.
+// It is designed to be resilient and will not crash the app if the API fails.
+// =================================================================
+async function getNhlLiveStats() {
+    const cacheKey = `nhl_live_stats_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
+        const today = new Date().toISOString().split('T')[0];
+        const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
+
+        console.log(`📡 Fetching live NHL data for ${today}...`);
+        const liveData = { games: [], teamStats: {}, errors: [] };
+
         try {
-            const seasonId = getCurrentNhlSeason();
-            const url = `https://api-web.nhle.com/v1/goalie-stats/${seasonId}/now`;
-            const { data } = await axios.get(url);
+            const results = await Promise.allSettled([
+                axios.get(scoreboardUrl),
+                axios.get(teamStatsUrl)
+            ]);
 
-            const goalieStats = {};
-            if (data && data.data) {
-                data.data.forEach(goalie => {
-                    const goalieName = goalie.player.name.default;
-                    goalieStats[goalieName] = {
-                        gaa: goalie.gaa,
-                        svPct: goalie.savePct,
-                        wins: goalie.wins
-                    };
-                });
+            const scoreboardRes = results[0];
+            const teamStatsRes = results[1];
+
+            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data && scoreboardRes.value.data.games) {
+                liveData.games = scoreboardRes.value.data.games;
+                console.log(`✅ Successfully fetched ${liveData.games.length} live games.`);
+            } else {
+                const status = scoreboardRes.reason?.response?.status || 'undefined';
+                liveData.errors.push(`Scoreboard API failed (Status: ${status})`);
             }
-            console.log("Successfully fetched live NHL goalie stats.");
-            return goalieStats;
-        } catch (e) {
-            // ✅ RESILIENCY FIX: If the API fails, log a warning and return empty data. DO NOT CRASH.
-            console.warn(`[WARN] Live NHL goalie stats are currently unavailable (Status: ${e.response?.status}). The engine will proceed with historical data only.`);
-            return {}; // Return empty object to allow the app to continue.
-        }
-    }, 86400000);
-}
 
-async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_FINAL_12`; // Incremented cache key
-    return fetchData(cacheKey, async () => {
-        // --- MLB Logic (Typo Corrected) ---
-        if (sportKey === 'baseball_mlb') {
-            try {
-                const currentYear = new Date().getFullYear();
-                const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
-                // ✅ TYPO FIX: Changed "standringsUrl" back to "standingsUrl"
-                const { data: standingsData } = await axios.get(standingsUrl);
-                const stats = {};
-                if (standingsData.records) {
-                    for (const record of standingsData.records) {
-                        for (const teamRecord of record.teamRecords) {
-                            const teamName = teamRecord.team.name;
-                            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                            if(canonicalName) {
-                                const lastTenRecord = teamRecord.records.splitRecords.find(r => r.type === 'lastTen');
-                                stats[canonicalName] = { record: `${teamRecord.wins}-${teamRecord.losses}`, streak: teamRecord.streak?.streakCode || 'N/A', lastTen: lastTenRecord ? `${lastTenRecord.wins}-${lastTenRecord.losses}` : '0-0', ops: 0.700, teamERA: 99.99 };
-                            }
-                        }
+            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data && teamStatsRes.value.data.data) {
+                teamStatsRes.value.data.data.forEach(team => {
+                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                    if (canonicalName) {
+                        liveData.teamStats[canonicalName] = {
+                            goalsForPerGame: team.goalsForPerGame,
+                            goalsAgainstPerGame: team.goalsAgainstPerGame,
+                            powerPlayPct: team.powerPlayPct,
+                            penaltyKillPct: team.penaltyKillPct,
+                            faceoffWinPct: team.faceoffWinPct,
+                        };
                     }
-                }
-                 const leagueStatsUrl = `https://statsapi.mlb.com/api/v1/stats?stats=season&group=hitting,pitching&season=${currentYear}&sportId=1`;
-                 const { data: leagueStatsData } = await axios.get(leagueStatsUrl);
-                 if (leagueStatsData.stats) {
-                     leagueStatsData.stats.forEach(statGroup => {
-                         statGroup.splits.forEach(split => {
-                             const teamName = split.team.name;
-                             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-                             if (stats[canonicalName]) {
-                                 if (statGroup.group.displayName === 'hitting' && split.stat) stats[canonicalName].ops = parseFloat(split.stat.ops);
-                                 else if (statGroup.group.displayName === 'pitching' && split.stat) stats[canonicalName].teamERA = parseFloat(split.stat.era);
-                             }
-                         });
-                     });
-                 }
-                return stats;
-            } catch (e) {
-                console.error(`Could not fetch stats from MLB-StatsAPI: ${e.message}`);
-                return {};
+                });
+                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
+            } else {
+                const status = teamStatsRes.reason?.response?.status || 'undefined';
+                liveData.errors.push(`Club Stats API failed (Status: ${status})`);
             }
+
+        } catch (error) {
+            liveData.errors.push(`An unexpected error occurred during live data fetch.`);
         }
-        // --- NHL Logic (Resiliency Intact) ---
-        else if (sportKey === 'icehockey_nhl') {
-            try {
-                const today = new Date().toISOString().slice(0, 10);
-                const [standingsResponse, teamStatsResponse] = await Promise.all([
-                    axios.get(`https://api-web.nhle.com/v1/standings/${today}`),
-                    axios.get('https://api-web.nhle.com/v1/club-stats/now')
-                ]);
-                const stats = {};
-                // ... parsing logic ...
-                return stats;
-            } catch (e) {
-                console.warn(`[WARN] Live NHL team stats are currently unavailable (Status: ${e.response?.status}). The engine will proceed with historical data only.`);
-                return {};
-            }
+        
+        if (liveData.errors.length > 0) {
+            console.warn(`[WARN] Live NHL data fetch issues: ${liveData.errors.join(', ')}. Engine will proceed with historical data.`);
         }
-        return {};
-    }, 3600000);
+
+        return liveData;
+    }, 600000); // Cache for 10 minutes
 }
+
+
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
     const oneDay = 1000 * 60 * 60 * 24;
@@ -1061,105 +1022,53 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 // =================================================================
 
 async function getPredictionsForSport(sportKey) {
-    const [games, espnDataResponse, teamStats, probablePitchers, goalieStats] = await Promise.all([
-        getOdds(sportKey),
-        fetchEspnData(sportKey),
-        getTeamStatsFromAPI(sportKey),
-        sportKey === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({}),
-        sportKey === 'icehockey_nhl' ? getGoalieStats() : Promise.resolve({})
-    ]);
-
-    if (!games || games.length === 0) {
+    if (sportKey !== 'icehockey_nhl') {
         return [];
     }
 
-    const injuries = {};
-    const h2hRecords = {};
-    const probableStarters = {};
-    if (espnDataResponse?.events) {
-        espnDataResponse.events.forEach(event => {
-            const competition = event.competitions?.[0];
-            if (!competition) return;
-            competition.competitors.forEach(competitor => {
-                const competitorName = competitor.team?.displayName;
-                if (!competitorName) return;
-                const canonicalName = canonicalTeamNameMap[competitorName.toLowerCase()];
-                
-                if (canonicalName) {
-                    injuries[canonicalName] = (competitor.injuries || []).map(inj => ({ name: inj.athlete.displayName, status: inj.status.name }));
-                    if (sportKey === 'icehockey_nhl' && competitor.probablePitcher) {
-                        probableStarters[canonicalName] = competitor.probablePitcher.athlete.displayName;
-                    }
-                }
-            });
-            const homeTeam = competition.competitors.find(c => c.homeAway === 'home');
-            const awayTeam = competition.competitors.find(c => c.homeAway === 'away');
+    // Use the new resilient function to get live data
+    const { games: liveApiGames, teamStats: liveApiTeamStats } = await getNhlLiveStats();
 
-            if (competition.series && homeTeam?.team?.displayName && awayTeam?.team?.displayName) {
-                const homeCanonical = canonicalTeamNameMap[homeTeam.team.displayName.toLowerCase()];
-                const awayCanonical = canonicalTeamNameMap[awayTeam.team.displayName.toLowerCase()];
-
-                if (homeCanonical && awayCanonical) {
-                    const gameId = `${awayCanonical}@${homeCanonical}`;
-                    const homeWins = competition.series.competitors.find(c => c.id === homeTeam.id)?.wins || 0;
-                    const awayWins = competition.series.competitors.find(c => c.id === awayTeam.id)?.wins || 0;
-                    h2hRecords[gameId] = { home: `${homeWins}-${awayWins}`, away: `${awayWins}-${homeWins}` };
-                }
-            }
-        });
+    if (!liveApiGames || liveApiGames.length === 0) {
+        console.log("No live games available to generate predictions.");
+        return [];
     }
+    
+    // The Odds API is still needed for betting odds
+    const oddsGames = await getOdds(sportKey);
 
     const predictions = [];
-    for (const game of games) {
+    for (const game of oddsGames) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-        const weather = await getWeatherData(homeCanonical);
-        const h2h = h2hRecords[`${awayCanonical}@${homeCanonical}`] || { home: '0-0', away: '0-0' };
 
-        let predictionData;
-        if (sportKey === 'icehockey_nhl') {
-            const context = { teamStats, injuries, h2h, allGames: games, goalieStats, probableStarters };
-            predictionData = await runAdvancedNhlPredictionEngine(game, context);
-        } else {
-            const context = { teamStats, weather, injuries, h2h, allGames: games, probablePitchers };
-            predictionData = await runPredictionEngine(game, sportKey, context);
+        // Find the matching game from the live API to get ESPN data etc.
+        const liveGameData = liveApiGames.find(lg => 
+            (canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()] === homeCanonical) &&
+            (canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()] === awayCanonical)
+        );
+
+        // Your original, powerful prediction logic
+        const context = {
+            teamStats: liveApiTeamStats,
+            injuries: {}, // Placeholder for injury logic
+            h2h: { home: '0-0', away: '0-0' }, // Placeholder for H2H
+            allGames: oddsGames,
+            goalieStats: {}, // Placeholder, or can be added to getNhlLiveStats
+            probableStarters: {}
+        };
+
+        const predictionData = await runAdvancedNhlPredictionEngine(game, context);
+
+        if (predictionData && predictionData.winner) {
+            predictions.push({
+                game: { ...game, sportKey: sportKey, espnData: liveGameData || null },
+                prediction: predictionData
+            });
         }
-
-        if (predictionData && predictionData.winner && predictionsCollection) {
-            try {
-                const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.home_team)?.price;
-                const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === game.away_team)?.price;
-                const winnerOdds = predictionData.winner === game.home_team ? homeOdds : awayOdds;
-                await predictionsCollection.updateOne(
-                    { gameId: game.id },
-                    {
-                        $set: {
-                            gameId: game.id, sportKey: sportKey, homeTeam: game.home_team, awayTeam: game.away_team,
-                            predictedWinner: predictionData.winner, gameDate: game.commence_time, status: 'pending',
-                            odds: winnerOdds || null
-                        }
-                    },
-                    { upsert: true }
-                );
-            } catch (dbError) {
-                console.error("DB Save Error:", dbError);
-            }
-        }
-
-        const espnEvent = espnDataResponse?.events?.find(e => {
-            const competitors = e.competitions?.[0]?.competitors;
-            if (!competitors) return false;
-            const home = competitors.find(c => c.homeAway === 'home');
-            const away = competitors.find(c => c.homeAway === 'away');
-            if (!home?.team?.displayName || !away?.team?.displayName) return false;
-            return (canonicalTeamNameMap[home.team.displayName.toLowerCase()] === homeCanonical && canonicalTeamNameMap[away.team.displayName.toLowerCase()] === awayCanonical);
-        });
-
-        predictions.push({ game: { ...game, sportKey: sportKey, espnData: espnEvent || null }, prediction: predictionData });
     }
     return predictions.filter(p => p && p.prediction);
 }
-
 
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
@@ -1512,62 +1421,60 @@ const V3_ANALYSIS_SCHEMA = {
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
+        const V3_ANALYSIS_SCHEMA = {
+          "finalPick": "string", "isOverride": "boolean", "investmentThesis": "string", "dynamicResearch": [],
+          "gameNarrative": "string", "keyFactorWithData": { "factor": "string", "data": "string" }, "counterArgument": "string",
+          "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
+        };
 
-        // This inner function generates the correct prompt based on which season we need to query.
-        const generatePromptForSeason = async (season) => {
-            const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-            const [homeNews, awayNews] = await Promise.all([
-                getTeamNewsFromReddit(homeCanonical),
-                getTeamNewsFromReddit(awayCanonical)
-            ]);
-
+        const generatePromptForSeason = (season) => {
             const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
             const instruction = season === 2024
-                ? "Your primary analysis MUST use the current season's data, which is season 2024."
-                : "CRITICAL FALLBACK: The query for the current 2024 season failed or returned incomplete data. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
+                ? "Your primary analysis MUST use the current season's data, which is season 2024. Synthesize live stats with historical context."
+                : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
 
             return `
 **STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
 - Initial Recommended Pick: ${prediction.winner}
 - Algorithm Confidence: ${prediction.strengthText}
 ${factorsList}
-
-**RECENT NEWS & SENTIMENT:**
-- **${game.home_team} News:**
-${homeNews}
-- **${game.away_team} News:**
-${awayNews}
-
 **TASK:**
 Analyze all information. ${instruction} Complete the following JSON object with your strategic breakdown.
-
 **JSON TO COMPLETE:**
 ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 `;
         };
 
-        // --- Main execution with intelligent fallback ---
+        const runAiChat = async (prompt) => {
+            const result = await analysisModel.generateContent(prompt);
+            return result.response.text();
+        };
+
         let analysisData;
         try {
             console.log("Attempting AI analysis with current season data (2024)...");
-            const userPrompt2024 = await generatePromptForSeason(2024);
-            analysisData = await runAiChatWithTools(userPrompt2024);
+            const userPrompt2024 = generatePromptForSeason(2024);
+            const rawResponse2024 = await runAiChat(userPrompt2024);
+            analysisData = cleanAndParseJson(rawResponse2024);
             if (!analysisData || !analysisData.finalPick) {
-                throw new Error("AI analysis for 2024 returned incomplete data.");
+                throw new Error("AI analysis for 2024 returned incomplete or invalid JSON.");
             }
             console.log("✅ Successfully generated AI analysis using 2024 data.");
         } catch (error2024) {
             console.warn(`[WARN] AI analysis using 2024 data failed: ${error2024.message}. Falling back to last completed season (2023).`);
-            const userPrompt2023 = await generatePromptForSeason(2023);
-            analysisData = await runAiChatWithTools(userPrompt2023);
+            const userPrompt2023 = generatePromptForSeason(2023);
+            const rawResponse2023 = await runAiChat(userPrompt2023);
+            analysisData = cleanAndParseJson(rawResponse2023);
+            if (!analysisData) {
+                throw new Error("AI analysis fallback for 2023 also failed to produce valid JSON.");
+            }
             console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
         }
 
         res.json({ analysisData });
 
     } catch (error) {
-        console.error("Advanced AI Analysis Error:", error);
+        console.error("Advanced AI Analysis Error:", error.message);
         res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
     }
 });
@@ -1635,6 +1542,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
