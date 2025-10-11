@@ -613,11 +613,10 @@ async function getOdds(sportKey) {
 
 // =================================================================
 // ✅ FINAL RESILIENT LIVE DATA FETCHER w/ ESPN FALLBACK
-// This function first tries the official NHL API. If it fails, it
-// automatically falls back to the more reliable ESPN API.
+// This version restores detailed parsing for live game status (score, clock, etc.)
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_fallback_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const nhlScoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -633,13 +632,11 @@ async function getNhlLiveStats() {
                 liveData.games = nhlResponse.data.games;
                 liveData.source = 'NHL';
                 console.log(`✅ Successfully fetched ${liveData.games.length} games from the NHL API.`);
-                return liveData; // Success! Exit the function.
+                return liveData;
             }
             throw new Error("NHL API returned no games.");
         } catch (nhlError) {
-            const status = nhlError.response ? nhlError.response.status : 'undefined';
-            console.warn(`[WARN] NHL API failed (Status: ${status}). Attempting ESPN fallback...`);
-            liveData.errors.push(`NHL API failed: ${status}`);
+            console.warn(`[WARN] NHL API failed. Attempting ESPN fallback...`);
         }
 
         // --- Step 2: If NHL API Fails, Use ESPN Fallback ---
@@ -647,32 +644,43 @@ async function getNhlLiveStats() {
             console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
             const espnResponse = await axios.get(espnScoreboardUrl);
             if (espnResponse.data && espnResponse.data.events && espnResponse.data.events.length > 0) {
-                // The ESPN data structure is different, so we must parse it.
                 liveData.games = espnResponse.data.events.map(event => {
                     const competition = event.competitions[0];
                     const home = competition.competitors.find(c => c.homeAway === 'home');
                     const away = competition.competitors.find(c => c.homeAway === 'away');
+                    
+                    // ✅ FIX: Restore detailed parsing for live game status
+                    const status = event.status.type;
+                    const isLive = status.state === 'in';
+                    const clock = status.displayClock;
+                    const period = status.period;
+                    
                     return {
                         id: event.id,
-                        homeTeam: { name: { default: home.team.displayName } }, // Mimic NHL structure
-                        awayTeam: { name: { default: away.team.displayName } }, // Mimic NHL structure
+                        homeTeam: { name: { default: home.team.displayName }, score: home.score },
+                        awayTeam: { name: { default: away.team.displayName }, score: away.score },
                         startTimeUTC: event.date,
-                        gameState: event.status.type.state,
-                        espnData: event // Keep original ESPN data for reference
+                        gameState: status.state,
+                        // Add the live details for the UI
+                        liveDetails: {
+                            isLive,
+                            clock,
+                            period,
+                            shortDetail: status.shortDetail,
+                        },
+                        espnData: event
                     };
                 });
                 liveData.source = 'ESPN';
                 console.log(`✅ Successfully fetched ${liveData.games.length} games from the ESPN API Fallback.`);
-                return liveData; // Success! Exit the function.
+                return liveData;
             }
             throw new Error("ESPN API returned no games.");
         } catch (espnError) {
-            const status = espnError.response ? espnError.response.status : 'undefined';
-            console.error(`[ERROR] ESPN Fallback API also failed (Status: ${status}). No live game data is available.`);
-            liveData.errors.push(`ESPN Fallback failed: ${status}`);
+            console.error(`[ERROR] ESPN Fallback API also failed. No live game data is available.`);
         }
         
-        return liveData; // Return whatever we have, even if it's empty
+        return liveData;
     }, 600000); // Cache for 10 minutes
 }
 
@@ -1427,23 +1435,27 @@ app.post('/api/ai-analysis', async (req, res) => {
           "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
         };
 
-        const generatePromptForSeason = (season) => {
-            const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
-            const instruction = season === 2024
-                ? "Your primary analysis MUST use the current season's data, which is season 2024. Synthesize live stats with historical context."
-                : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
+     const generatePromptForSeason = (season) => {
+    const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
+    const instruction = season === 2024
+        ? "Your primary analysis MUST use the current season's data, which is season 2024. Synthesize live stats with historical context."
+        : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
 
-            return `
+    return `
 **STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
 - Initial Recommended Pick: ${prediction.winner}
 - Algorithm Confidence: ${prediction.strengthText}
 ${factorsList}
+
 **TASK:**
 Analyze all information. ${instruction} Complete the following JSON object with your strategic breakdown.
+
 **JSON TO COMPLETE:**
 ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
+
+**IMPORTANT: You MUST return ONLY the completed JSON object and nothing else. Do not include any extra text, explanations, or markdown formatting like \`\`\`json.**
 `;
-        };
+};
 
         const runAiChat = async (prompt) => {
             const result = await analysisModel.generateContent(prompt);
@@ -1542,6 +1554,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
