@@ -616,59 +616,38 @@ async function getOdds(sportKey) {
 // This single function now handles all live NHL data calls.
 // It is designed to be resilient and will not crash the app if the API fails.
 // =================================================================
+// =================================================================
+// ✅ NEW RESILIENT & SIMPLIFIED LIVE DATA FETCHER
+// This version prioritizes the essential scoreboard data to ensure
+// the game list is always fetched reliably.
+// =================================================================
 async function getNhlLiveStats() {
     const cacheKey = `nhl_live_stats_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
-        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
 
-        console.log(`📡 Fetching live NHL data for ${today}...`);
+        console.log(`📡 Fetching live NHL scoreboard for ${today}...`);
         const liveData = { games: [], teamStats: {}, errors: [] };
 
         try {
-            const results = await Promise.allSettled([
-                axios.get(scoreboardUrl),
-                axios.get(teamStatsUrl)
-            ]);
+            const scoreboardRes = await axios.get(scoreboardUrl);
 
-            const scoreboardRes = results[0];
-            const teamStatsRes = results[1];
-
-            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data && scoreboardRes.value.data.games) {
-                liveData.games = scoreboardRes.value.data.games;
+            if (scoreboardRes.data && scoreboardRes.data.games) {
+                liveData.games = scoreboardRes.data.games;
                 console.log(`✅ Successfully fetched ${liveData.games.length} live games.`);
             } else {
-                const status = scoreboardRes.reason?.response?.status || 'undefined';
-                liveData.errors.push(`Scoreboard API failed (Status: ${status})`);
+                liveData.errors.push(`Scoreboard API returned no games.`);
             }
-
-            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data && teamStatsRes.value.data.data) {
-                teamStatsRes.value.data.data.forEach(team => {
-                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                    if (canonicalName) {
-                        liveData.teamStats[canonicalName] = {
-                            goalsForPerGame: team.goalsForPerGame,
-                            goalsAgainstPerGame: team.goalsAgainstPerGame,
-                            powerPlayPct: team.powerPlayPct,
-                            penaltyKillPct: team.penaltyKillPct,
-                            faceoffWinPct: team.faceoffWinPct,
-                        };
-                    }
-                });
-                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
-            } else {
-                const status = teamStatsRes.reason?.response?.status || 'undefined';
-                liveData.errors.push(`Club Stats API failed (Status: ${status})`);
-            }
-
         } catch (error) {
-            liveData.errors.push(`An unexpected error occurred during live data fetch.`);
+            const status = error.response ? error.response.status : 'undefined';
+            const message = `Live NHL Scoreboard API failed (Status: ${status}).`;
+            console.warn(`[WARN] ${message}`);
+            liveData.errors.push(message);
         }
-        
-        if (liveData.errors.length > 0) {
-            console.warn(`[WARN] Live NHL data fetch issues: ${liveData.errors.join(', ')}. Engine will proceed with historical data.`);
-        }
+
+        // Note: The club-stats endpoint has been removed for stability.
+        // Live team stats can be added back later from a more reliable source if needed.
 
         return liveData;
     }, 600000); // Cache for 10 minutes
@@ -1542,6 +1521,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
