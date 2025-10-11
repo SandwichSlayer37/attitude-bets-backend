@@ -612,47 +612,69 @@ async function getOdds(sportKey) {
 }
 
 // =================================================================
-// ✅ NEW RESILIENT LIVE DATA FETCHER
-// This single function now handles all live NHL data calls.
-// It is designed to be resilient and will not crash the app if the API fails.
-// =================================================================
-// =================================================================
-// ✅ NEW RESILIENT & SIMPLIFIED LIVE DATA FETCHER
-// This version prioritizes the essential scoreboard data to ensure
-// the game list is always fetched reliably.
+// ✅ FINAL RESILIENT LIVE DATA FETCHER w/ ESPN FALLBACK
+// This function first tries the official NHL API. If it fails, it
+// automatically falls back to the more reliable ESPN API.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_fallback_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
-        const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const nhlScoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
-        console.log(`📡 Fetching live NHL scoreboard for ${today}...`);
-        const liveData = { games: [], teamStats: {}, errors: [] };
+        const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
+        // --- Step 1: Try the Official NHL API First ---
         try {
-            const scoreboardRes = await axios.get(scoreboardUrl);
-
-            if (scoreboardRes.data && scoreboardRes.data.games) {
-                liveData.games = scoreboardRes.data.games;
-                console.log(`✅ Successfully fetched ${liveData.games.length} live games.`);
-            } else {
-                liveData.errors.push(`Scoreboard API returned no games.`);
+            console.log(`📡 Attempting to fetch live games from NHL API...`);
+            const nhlResponse = await axios.get(nhlScoreboardUrl);
+            if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
+                liveData.games = nhlResponse.data.games;
+                liveData.source = 'NHL';
+                console.log(`✅ Successfully fetched ${liveData.games.length} games from the NHL API.`);
+                return liveData; // Success! Exit the function.
             }
-        } catch (error) {
-            const status = error.response ? error.response.status : 'undefined';
-            const message = `Live NHL Scoreboard API failed (Status: ${status}).`;
-            console.warn(`[WARN] ${message}`);
-            liveData.errors.push(message);
+            throw new Error("NHL API returned no games.");
+        } catch (nhlError) {
+            const status = nhlError.response ? nhlError.response.status : 'undefined';
+            console.warn(`[WARN] NHL API failed (Status: ${status}). Attempting ESPN fallback...`);
+            liveData.errors.push(`NHL API failed: ${status}`);
         }
 
-        // Note: The club-stats endpoint has been removed for stability.
-        // Live team stats can be added back later from a more reliable source if needed.
-
-        return liveData;
+        // --- Step 2: If NHL API Fails, Use ESPN Fallback ---
+        try {
+            console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
+            const espnResponse = await axios.get(espnScoreboardUrl);
+            if (espnResponse.data && espnResponse.data.events && espnResponse.data.events.length > 0) {
+                // The ESPN data structure is different, so we must parse it.
+                liveData.games = espnResponse.data.events.map(event => {
+                    const competition = event.competitions[0];
+                    const home = competition.competitors.find(c => c.homeAway === 'home');
+                    const away = competition.competitors.find(c => c.homeAway === 'away');
+                    return {
+                        id: event.id,
+                        homeTeam: { name: { default: home.team.displayName } }, // Mimic NHL structure
+                        awayTeam: { name: { default: away.team.displayName } }, // Mimic NHL structure
+                        startTimeUTC: event.date,
+                        gameState: event.status.type.state,
+                        espnData: event // Keep original ESPN data for reference
+                    };
+                });
+                liveData.source = 'ESPN';
+                console.log(`✅ Successfully fetched ${liveData.games.length} games from the ESPN API Fallback.`);
+                return liveData; // Success! Exit the function.
+            }
+            throw new Error("ESPN API returned no games.");
+        } catch (espnError) {
+            const status = espnError.response ? espnError.response.status : 'undefined';
+            console.error(`[ERROR] ESPN Fallback API also failed (Status: ${status}). No live game data is available.`);
+            liveData.errors.push(`ESPN Fallback failed: ${status}`);
+        }
+        
+        return liveData; // Return whatever we have, even if it's empty
     }, 600000); // Cache for 10 minutes
 }
-
 
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
@@ -1005,43 +1027,42 @@ async function getPredictionsForSport(sportKey) {
         return [];
     }
 
-    // Use the new resilient function to get live data
-    const { games: liveApiGames, teamStats: liveApiTeamStats } = await getNhlLiveStats();
+    const { games: liveApiGames, source } = await getNhlLiveStats();
 
     if (!liveApiGames || liveApiGames.length === 0) {
-        console.log("No live games available to generate predictions.");
+        console.log("No live games available from any source to generate predictions.");
         return [];
     }
-    
-    // The Odds API is still needed for betting odds
-    const oddsGames = await getOdds(sportKey);
 
+    console.log(`Generating predictions using data from: ${source}`);
+
+    // Your existing prediction logic can now proceed, as it will always have a list of games.
+    // The structure of liveApiGames is normalized to match what the rest of the app expects.
+    const oddsGames = await getOdds(sportKey);
     const predictions = [];
+
     for (const game of oddsGames) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
-        // Find the matching game from the live API to get ESPN data etc.
-        const liveGameData = liveApiGames.find(lg => 
-            (canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()] === homeCanonical) &&
-            (canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()] === awayCanonical)
-        );
+        const liveGameData = liveApiGames.find(lg => {
+            const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
+            const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
+            return liveHome === homeCanonical && liveAway === awayCanonical;
+        });
 
-        // Your original, powerful prediction logic
+        // The rest of your prediction engine logic continues here...
         const context = {
-            teamStats: liveApiTeamStats,
-            injuries: {}, // Placeholder for injury logic
-            h2h: { home: '0-0', away: '0-0' }, // Placeholder for H2H
-            allGames: oddsGames,
-            goalieStats: {}, // Placeholder, or can be added to getNhlLiveStats
-            probableStarters: {}
+            teamStats: {}, // Note: live team stats are not included in this simplified fetch
+            injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
+            goalieStats: {}, probableStarters: {}
         };
 
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
             predictions.push({
-                game: { ...game, sportKey: sportKey, espnData: liveGameData || null },
+                game: { ...game, sportKey, espnData: liveGameData },
                 prediction: predictionData
             });
         }
@@ -1521,6 +1542,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
