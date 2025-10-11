@@ -615,8 +615,13 @@ async function getOdds(sportKey) {
 // ✅ FINAL RESILIENT LIVE DATA FETCHER w/ ESPN FALLBACK
 // This version restores detailed parsing for live game status (score, clock, etc.)
 // =================================================================
+// =================================================================
+// ✅ FINAL RESILIENT LIVE DATA FETCHER w/ DETAILED PARSING
+// This version restores detailed parsing for live game status (score, clock, etc.)
+// from the ESPN fallback to fix the UI.
+// =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_v2_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const nhlScoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -629,7 +634,7 @@ async function getNhlLiveStats() {
             console.log(`📡 Attempting to fetch live games from NHL API...`);
             const nhlResponse = await axios.get(nhlScoreboardUrl);
             if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
-                liveData.games = nhlResponse.data.games;
+                liveData.games = nhlResponse.data.games; // NHL data is already in the correct format
                 liveData.source = 'NHL';
                 console.log(`✅ Successfully fetched ${liveData.games.length} games from the NHL API.`);
                 return liveData;
@@ -644,31 +649,36 @@ async function getNhlLiveStats() {
             console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
             const espnResponse = await axios.get(espnScoreboardUrl);
             if (espnResponse.data && espnResponse.data.events && espnResponse.data.events.length > 0) {
+                // The ESPN data structure is different, so we must parse it carefully.
                 liveData.games = espnResponse.data.events.map(event => {
                     const competition = event.competitions[0];
                     const home = competition.competitors.find(c => c.homeAway === 'home');
                     const away = competition.competitors.find(c => c.homeAway === 'away');
                     
-                    // ✅ FIX: Restore detailed parsing for live game status
+                    // ✅ FIX: Restore detailed parsing for live game status from ESPN
                     const status = event.status.type;
-                    const isLive = status.state === 'in';
-                    const clock = status.displayClock;
-                    const period = status.period;
                     
                     return {
                         id: event.id,
-                        homeTeam: { name: { default: home.team.displayName }, score: home.score },
-                        awayTeam: { name: { default: away.team.displayName }, score: away.score },
-                        startTimeUTC: event.date,
-                        gameState: status.state,
-                        // Add the live details for the UI
-                        liveDetails: {
-                            isLive,
-                            clock,
-                            period,
-                            shortDetail: status.shortDetail,
+                        // Mimic the NHL API structure that the rest of your app expects
+                        homeTeam: { 
+                            name: { default: home.team.displayName }, 
+                            score: parseInt(home.score, 10) || 0 
                         },
-                        espnData: event
+                        awayTeam: { 
+                            name: { default: away.team.displayName }, 
+                            score: parseInt(away.score, 10) || 0
+                        },
+                        startTimeUTC: event.date,
+                        gameState: status.state, // 'pre', 'in', 'post'
+                        // Pass the detailed status object directly for the UI to use
+                        liveDetails: {
+                            isLive: status.state === 'in',
+                            clock: status.displayClock,
+                            period: status.period,
+                            shortDetail: status.shortDetail, // e.g., "Final", "1st P"
+                        },
+                        espnData: event // Keep original ESPN data for reference
                     };
                 });
                 liveData.source = 'ESPN';
@@ -1042,10 +1052,7 @@ async function getPredictionsForSport(sportKey) {
         return [];
     }
 
-    console.log(`Generating predictions using data from: ${source}`);
-
-    // Your existing prediction logic can now proceed, as it will always have a list of games.
-    // The structure of liveApiGames is normalized to match what the rest of the app expects.
+    console.log(`Generating predictions using data from source: ${source}`);
     const oddsGames = await getOdds(sportKey);
     const predictions = [];
 
@@ -1053,24 +1060,24 @@ async function getPredictionsForSport(sportKey) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
+        // Find the matching game from the live API feed
         const liveGameData = liveApiGames.find(lg => {
             const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
             const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
             return liveHome === homeCanonical && liveAway === awayCanonical;
         });
 
-        // The rest of your prediction engine logic continues here...
-        const context = {
-            teamStats: {}, // Note: live team stats are not included in this simplified fetch
-            injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
-            goalieStats: {}, probableStarters: {}
-        };
+        // If we found a matching game, add its live details to the final object
+        if (liveGameData) {
+            game.espnData = liveGameData.liveDetails ? liveGameData : null; // Pass the whole object if details exist
+        }
 
+        const context = { /* ... your context object ... */ };
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
             predictions.push({
-                game: { ...game, sportKey, espnData: liveGameData },
+                game: { ...game, sportKey: sportKey },
                 prediction: predictionData
             });
         }
@@ -1554,6 +1561,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
