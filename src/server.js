@@ -152,13 +152,17 @@ const teamToSubredditMap = {
 // --- HELPER FUNCTIONS ---
 function cleanAndParseJson(text) {
     if (!text) return null;
+
     const firstBracket = text.indexOf('{');
     const lastBracket = text.lastIndexOf('}');
+
     if (firstBracket === -1 || lastBracket === -1 || lastBracket < firstBracket) {
         console.error("Could not find a valid JSON object within the text:", text);
         return null;
     }
+
     const jsonString = text.substring(firstBracket, lastBracket + 1);
+
     try {
         return JSON.parse(jsonString);
     } catch (e) {
@@ -524,7 +528,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_final_robust_FIXED_AGAIN`;
+    const cacheKey = `stats_api_${sportKey}_v_FINAL`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -1537,3 +1541,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
