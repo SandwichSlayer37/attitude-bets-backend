@@ -338,7 +338,6 @@ async function queryNhlStats(args) {
             pipeline.push({
                 $project: {
                     _id: 0, name: 1, team: 1,
-                    // FIX: Convert fields to numbers before performing subtraction
                     statValue: { $subtract: [ { $toDouble: "$xGoals" }, { $toDouble: "$goals" } ] }
                 }
             });
@@ -519,7 +518,7 @@ async function getOdds(sportKey) {
 }
 
 async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v3_final`;
+    const cacheKey = `nhl_goalie_stats_v_FINAL`;
     return fetchData(cacheKey, async () => {
         try {
             const url = `https://api-web.nhle.com/v1/goalie-stats/now`; // CORRECTED URL
@@ -543,7 +542,7 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_FINAL_5`;
+    const cacheKey = `stats_api_${sportKey}_v_FINAL_6`;
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
@@ -1556,6 +1555,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
