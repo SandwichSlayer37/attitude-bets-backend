@@ -586,21 +586,24 @@ async function getOdds(sportKey) {
 }
 
 async function getGoalieStats() {
-    const cacheKey = `nhl_goalie_stats_v_FINAL_2`; // Incremented cache key
+    const cacheKey = `nhl_goalie_stats_v_FINAL_3`; // Incremented cache key
     return fetchData(cacheKey, async () => {
         try {
-            // CORRECTED: Using the new, official NHL goalie stats endpoint
-            const url = `https://api-web.nhle.com/v1/goalie-stats/now`;
+            // ✅ CRITICAL FIX: The "/now" endpoint for goalies is also unreliable.
+            // We will fetch stats for the current season using its ID to ensure we get data.
+            const seasonId = getCurrentNhlSeason();
+            const url = `https://api-web.nhle.com/v1/goalie-stats/${seasonId}/now`; // Using seasonId
+            
+            console.log(`Fetching goalie stats from: ${url}`); // Added for debugging
             const { data } = await axios.get(url);
             const goalieStats = {};
 
-            // Parsing the new response structure
             if (data && data.data) {
                 data.data.forEach(goalie => {
-                    const goalieName = goalie.player.name.default; // Name is in a nested object
+                    const goalieName = goalie.player.name.default;
                     goalieStats[goalieName] = {
                         gaa: goalie.gaa,
-                        svPct: goalie.savePct, // Note the property name change from 'svPct' to 'savePct'
+                        svPct: goalie.savePct,
                         wins: goalie.wins
                     };
                 });
@@ -1641,6 +1644,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
