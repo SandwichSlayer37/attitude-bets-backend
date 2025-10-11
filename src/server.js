@@ -1060,24 +1060,35 @@ async function getPredictionsForSport(sportKey) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
-        // Find the matching game from the live API feed
         const liveGameData = liveApiGames.find(lg => {
             const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
             const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
             return liveHome === homeCanonical && liveAway === awayCanonical;
         });
+        
+        // ✅ FIX: The complete context object is restored here.
+        // This provides the prediction engine with the data it needs to run without crashing.
+        // Since live team stats are disabled for stability, we pass an empty object {}.
+        const context = {
+            teamStats: {}, 
+            injuries: {}, 
+            h2h: { home: '0-0', away: '0-0' }, 
+            allGames: oddsGames,
+            goalieStats: {}, 
+            probableStarters: {}
+        };
 
-        // If we found a matching game, add its live details to the final object
-        if (liveGameData) {
-            game.espnData = liveGameData.liveDetails ? liveGameData : null; // Pass the whole object if details exist
-        }
-
-        const context = { /* ... your context object ... */ };
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
+            // Pass the detailed live game data to the frontend
+            const gameDataForUi = { 
+                ...game, 
+                sportKey: sportKey, 
+                espnData: liveGameData || null 
+            };
             predictions.push({
-                game: { ...game, sportKey: sportKey },
+                game: gameDataForUi,
                 prediction: predictionData
             });
         }
@@ -1561,6 +1572,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
