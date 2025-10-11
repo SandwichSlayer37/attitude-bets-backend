@@ -167,6 +167,28 @@ function cleanAndParseJson(text) {
     }
 }
 
+/**
+ * Calculates the current NHL season ID in the YYYYYYYY format required by the API.
+ * This function determines the correct compound season ID based on the current date.
+ * For example, in October 2025, the season is 2025-2026, so this returns "20252026".
+ * In February 2026, the season is still 2025-2026, so it also returns "20252026".
+ * @returns {string} The current NHL season ID (e.g., "20252026").
+ */
+function getCurrentNhlSeason() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1; // getMonth() is 0-indexed (0=Jan, 1=Feb, etc.)
+
+    // The NHL season year rolls over after the Stanley Cup Final, typically before September.
+    // If the current month is September or later, the new season has started.
+    if (month >= 9) {
+        return `${year}${year + 1}`;
+    } else {
+        // If it's before September, we are still in the season that started the previous year.
+        return `${year - 1}${year}`;
+    }
+}
+
 async function getHistoricalTopLineMetrics(season) {
     const primarySeason = parseInt(String(season), 10);
     const fallbackSeason = primarySeason - 1;
@@ -595,11 +617,11 @@ async function getGoalieStats() {
 }
 
 async function getTeamStatsFromAPI(sportKey) {
-    const cacheKey = `stats_api_${sportKey}_v_FINAL_7`; // Incremented cache key
+    const cacheKey = `stats_api_${sportKey}_v_FINAL_9`; // Incremented cache key for fresh data
     return fetchData(cacheKey, async () => {
         const stats = {};
         if (sportKey === 'baseball_mlb') {
-            // ... your existing MLB logic remains unchanged ...
+            // Your existing MLB logic remains unchanged.
             const currentYear = new Date().getFullYear();
             try {
                 const standingsUrl = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${currentYear}`;
@@ -637,15 +659,19 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         } else if (sportKey === 'icehockey_nhl') {
             try {
-                // CORRECTED: Using the new, official NHL stats API endpoints
+                // ✅ CRITICAL FIX: Get the correctly formatted season ID.
+                const currentSeasonId = getCurrentNhlSeason();
+                console.log(`Fetching NHL data for season: ${currentSeasonId}`);
+
+                // The API for team stats does not require a season ID, it always returns "now".
                 const [standingsResponse, teamStatsResponse] = await Promise.all([
-                    axios.get('https://api-web.nhle.com/v1/standings/now'),
+                    // Use a specific date to be safe, as "now" can be unreliable.
+                    axios.get(`https://api-web.nhle.com/v1/standings/${new Date().toISOString().slice(0, 10)}`),
                     axios.get('https://api-web.nhle.com/v1/club-stats/now')
                 ]);
                 
                 if (standingsResponse.data && standingsResponse.data.standings) {
                     standingsResponse.data.standings.forEach(s => {
-                        // The new API provides the team name directly under `teamName.default`
                         const canonicalName = s.teamName?.default ? canonicalTeamNameMap[s.teamName.default.toLowerCase()] : null;
                         if (canonicalName) {
                             if (!stats[canonicalName]) stats[canonicalName] = {};
@@ -660,7 +686,6 @@ async function getTeamStatsFromAPI(sportKey) {
                         const canonicalName = team.teamFullName ? canonicalTeamNameMap[team.teamFullName.toLowerCase()] : null;
                          if (canonicalName) {
                             if (!stats[canonicalName]) stats[canonicalName] = {};
-                            // Mapping new stat names from the API response
                             stats[canonicalName].goalsForPerGame = team.goalsForPerGame;
                             stats[canonicalName].goalsAgainstPerGame = team.goalsAgainstPerGame;
                             stats[canonicalName].powerPlayPct = team.powerPlayPct;
@@ -673,7 +698,6 @@ async function getTeamStatsFromAPI(sportKey) {
 
             } catch (e) {
                 console.error(`Could not fetch stats from NHL API: ${e.message}`);
-                // It's important to check the error status for 404
                 if (e.response) {
                     console.error(`NHL API responded with status: ${e.response.status}`);
                 }
@@ -681,7 +705,7 @@ async function getTeamStatsFromAPI(sportKey) {
             }
         }
         return {};
-    }, 3600000);
+    }, 3600000); // Cache for 1 hour
 }
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
@@ -1617,6 +1641,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
