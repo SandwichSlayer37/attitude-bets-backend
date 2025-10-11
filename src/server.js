@@ -294,10 +294,10 @@ async function queryNhlStats(args) {
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
-        'powerPlayGoals': { newStat: 'goals', situation: '5on4'}, // Teach AI about powerPlayGoals
+        'powerPlayGoals': { newStat: 'goals', situation: '5on4'},
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
-        'GSAx': { customCalculation: 'GSAx' } // Teach AI about GSAx
+        'GSAx': { customCalculation: 'GSAx' }
     };
 
     let situationOverride = null;
@@ -338,6 +338,7 @@ async function queryNhlStats(args) {
             pipeline.push({
                 $project: {
                     _id: 0, name: 1, team: 1,
+                    // FIX: Convert fields to numbers before performing subtraction
                     statValue: { $subtract: [ { $toDouble: "$xGoals" }, { $toDouble: "$goals" } ] }
                 }
             });
@@ -1555,6 +1556,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
