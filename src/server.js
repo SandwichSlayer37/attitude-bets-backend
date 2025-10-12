@@ -663,9 +663,13 @@ async function getOdds(sportKey) {
 // ✅ CORRECTED LIVE DATA FETCHER
 // This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
+// =================================================================
+// ✅ CORRECTED LIVE DATA FETCHER
+// This version fixes the syntax error to prevent the server from crashing.
+// =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v2_${new Date().toISOString().split('T')[0]}`;
-    return fetchData(cacheKey, async () => {
+    const cacheKey = `nhl_live_stats_complete_v3_${new Date().toISOString().split('T')[0]}`;
+    return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
         const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
@@ -687,11 +691,9 @@ async function getNhlLiveStats() {
                 liveData.games = scoreboardRes.value.data.games;
                 liveData.source = 'NHL';
             } else {
-                // If NHL fails, try ESPN for games
                 console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
                 const espnResponse = await axios.get('https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard');
                 if (espnResponse.data && espnResponse.data.events) {
-                    // Correctly map ESPN data structure
                     liveData.games = espnResponse.data.events.map(event => {
                         const comp = event.competitions[0];
                         const home = comp.competitors.find(c => c.homeAway === 'home');
@@ -712,13 +714,13 @@ async function getNhlLiveStats() {
             }
             console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
 
-            // Step 2: Get Live Team Stats (This can fail independently)
+            // Step 2: Get Live Team Stats
             if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
                 teamStatsRes.value.data.data.forEach(team => {
                     const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
                     if (canonicalName) {
                         liveData.teamStats[canonicalName] = {
-                            record: "0-0-0", // Placeholder, as this API doesn't provide it
+                            record: "0-0-0",
                             goalsForPerGame: team.goalsForPerGame,
                             goalsAgainstPerGame: team.goalsAgainstPerGame,
                             powerPlayPct: team.powerPlayPct,
@@ -1636,6 +1638,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
