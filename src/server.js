@@ -655,8 +655,9 @@ async function getOdds(sportKey) {
 // This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v5_${new Date().toISOString().split('T')[0]}`;
-    // The 'fetcherFn' passed to fetchData must be async to use 'await' inside it.
+    const cacheKey = `nhl_live_stats_complete_v6_${new Date().toISOString().split('T')[0]}`;
+    // The arrow function passed to fetchData must be declared as 'async'
+    // because it uses the 'await' keyword inside it.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -1627,6 +1628,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
