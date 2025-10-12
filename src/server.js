@@ -659,8 +659,12 @@ async function getOdds(sportKey) {
 // This version restores detailed parsing for live game status (score, clock, etc.)
 // from the ESPN fallback to fix the UI.
 // =================================================================
+// =================================================================
+// ✅ CORRECTED LIVE DATA FETCHER
+// This version fixes the syntax error to prevent the server from crashing.
+// =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_complete_v2_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -679,7 +683,7 @@ async function getNhlLiveStats() {
             const teamStatsRes = results[1];
 
             // Step 1: Get Games from Scoreboard
-            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games) {
+            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games && scoreboardRes.value.data.games.length > 0) {
                 liveData.games = scoreboardRes.value.data.games;
                 liveData.source = 'NHL';
             } else {
@@ -687,11 +691,26 @@ async function getNhlLiveStats() {
                 console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
                 const espnResponse = await axios.get('https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard');
                 if (espnResponse.data && espnResponse.data.events) {
-                    liveData.games = espnResponse.data.events.map(event => { /* ... parsing logic from previous step ... */ });
+                    // Correctly map ESPN data structure
+                    liveData.games = espnResponse.data.events.map(event => {
+                        const comp = event.competitions[0];
+                        const home = comp.competitors.find(c => c.homeAway === 'home');
+                        const away = comp.competitors.find(c => c.homeAway === 'away');
+                        const status = event.status.type;
+                        return {
+                            id: event.id,
+                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                            startTimeUTC: event.date,
+                            gameState: status.state,
+                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                            espnData: event
+                        };
+                    });
                     liveData.source = 'ESPN';
                 }
             }
-             console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
+            console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
 
             // Step 2: Get Live Team Stats (This can fail independently)
             if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
@@ -715,7 +734,7 @@ async function getNhlLiveStats() {
         } catch (error) {
             console.error(`[ERROR] A critical failure occurred during live data fetch.`, error);
         }
-        
+
         return liveData;
     }, 600000);
 }
@@ -1617,6 +1636,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
