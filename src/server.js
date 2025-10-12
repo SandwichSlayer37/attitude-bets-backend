@@ -594,22 +594,22 @@ async function getProbablePitchersAndStats() {
 }
 // =================================================================
 // ✅ FINAL CORRECTED LIVE DATA FETCHER
-// This version fixes the syntax error to prevent the server crash.
+// This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v6_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_complete_v9_${new Date().toISOString().split('T')[0]}`;
     // The arrow function passed to fetchData must be declared as 'async'
-    // because it uses the 'await' keyword for the ESPN call.
+    // because it uses the 'await' keyword inside it for the ESPN call.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
         const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
         console.log(`📡 Fetching complete live NHL data...`);
         const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
         try {
-            // Attempt to fetch from the primary NHL source first
             const nhlResponse = await axios.get(scoreboardUrl);
             if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
                 liveData.games = nhlResponse.data.games;
@@ -618,8 +618,7 @@ async function getNhlLiveStats() {
                 throw new Error("NHL API returned no games.");
             }
         } catch (nhlError) {
-            // If NHL API fails, immediately try the ESPN fallback
-            console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback...`);
+            console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
             try {
                 const espnResponse = await axios.get(espnScoreboardUrl);
                 const espnEvents = espnResponse.data.events;
@@ -639,7 +638,7 @@ async function getNhlLiveStats() {
                             espnData: event
                         };
                     });
-                    liveData.teamStats = parseEspnTeamStats(espnEvents);
+                    liveData.teamStats = parseEspnTeamStats(espnEvents); // Assuming parseEspnTeamStats exists
                     liveData.source = 'ESPN';
                 }
             } catch (espnError) {
@@ -1603,6 +1602,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
