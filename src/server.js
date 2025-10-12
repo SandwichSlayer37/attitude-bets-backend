@@ -595,16 +595,22 @@ async function getProbablePitchersAndStats() {
 
 // =================================================================
 // ✅ CORRECTED CACHING FUNCTION
-// This version properly handles asynchronous operations to fix the crash.
+// This version properly handles asynchronous operations to fix the startup crash.
 // =================================================================
 async function fetchData(key, fetcherFn, ttl = 3600000) {
+    // Check if we have valid, non-expired data in the cache
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
     }
-    // ✅ FIX: We must 'await' the result of the async fetcher function
-    // before we can cache it. This resolves the startup crash.
+
+    // ✅ FIX: The 'fetcherFn' is an async function that makes API calls.
+    // We MUST 'await' its result here before we can cache it.
+    // This resolves the "await is only valid in async functions" error.
     const data = await fetcherFn();
+
+    // Store the newly fetched data and a timestamp in the cache
     dataCache.set(key, { data, timestamp: Date.now() });
+    
     return data;
 }
 
@@ -1611,6 +1617,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
