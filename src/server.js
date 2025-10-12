@@ -596,10 +596,14 @@ async function getProbablePitchersAndStats() {
 // ✅ FINAL CORRECTED LIVE DATA FETCHER
 // This version fixes the syntax error to prevent the server crash.
 // =================================================================
+// =================================================================
+// ✅ FINAL CORRECTED LIVE DATA FETCHER
+// This version fixes the syntax error to prevent the server from crashing.
+// =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v5_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_complete_v8_${new Date().toISOString().split('T')[0]}`;
     // The arrow function passed to fetchData must be declared as 'async'
-    // because it uses the 'await' keyword for the ESPN call.
+    // because it uses the 'await' keyword inside it for the ESPN call.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -610,22 +614,23 @@ async function getNhlLiveStats() {
         const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
         try {
-            // Attempt to fetch from the primary NHL source first
-            const nhlResponse = await axios.get(scoreboardUrl);
-            if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
-                liveData.games = nhlResponse.data.games;
+            const results = await Promise.allSettled([
+                axios.get(scoreboardUrl),
+                axios.get(teamStatsUrl)
+            ]);
+
+            const scoreboardRes = results[0];
+            const teamStatsRes = results[1];
+
+            // Step 1: Get Games from Scoreboard
+            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games && scoreboardRes.value.data.games.length > 0) {
+                liveData.games = scoreboardRes.value.data.games;
                 liveData.source = 'NHL';
             } else {
-                throw new Error("NHL API returned no games.");
-            }
-        } catch (nhlError) {
-            // If NHL API fails, immediately try the ESPN fallback
-            console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback...`);
-            try {
+                console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
                 const espnResponse = await axios.get(espnScoreboardUrl);
-                const espnEvents = espnResponse.data.events;
-                if (espnEvents && espnEvents.length > 0) {
-                    liveData.games = espnEvents.map(event => {
+                if (espnResponse.data && espnResponse.data.events) {
+                    liveData.games = espnResponse.data.events.map(event => {
                         const comp = event.competitions[0];
                         const home = comp.competitors.find(c => c.homeAway === 'home');
                         const away = comp.competitors.find(c => c.homeAway === 'away');
@@ -640,15 +645,34 @@ async function getNhlLiveStats() {
                             espnData: event
                         };
                     });
-                    liveData.teamStats = parseEspnTeamStats(espnEvents);
                     liveData.source = 'ESPN';
                 }
-            } catch (espnError) {
-                console.error(`[CRITICAL] Both NHL and ESPN fallback APIs failed. No live game data is available.`);
             }
+            console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
+
+            // Step 2: Get Live Team Stats
+            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
+                teamStatsRes.value.data.data.forEach(team => {
+                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                    if (canonicalName) {
+                        liveData.teamStats[canonicalName] = {
+                            record: "0-0-0",
+                            goalsForPerGame: team.goalsForPerGame,
+                            goalsAgainstPerGame: team.goalsAgainstPerGame,
+                            powerPlayPct: team.powerPlayPct,
+                            penaltyKillPct: team.penaltyKillPct,
+                            faceoffWinPct: team.faceoffWinPct,
+                        };
+                    }
+                });
+                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
+            } else {
+                 console.warn(`[WARN] Live NHL team stats are unavailable. Predictions will rely on historical data.`);
+            }
+        } catch (error) {
+            console.error(`[ERROR] A critical failure occurred during live data fetch.`, error);
         }
-        
-        console.log(`✅ Successfully fetched ${liveData.games.length} games and stats from source: ${liveData.source}.`);
+
         return liveData;
     }, 600000);
 }
@@ -1600,6 +1624,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
