@@ -651,24 +651,12 @@ async function getOdds(sportKey) {
 }
 
 // =================================================================
-// ✅ FINAL RESILIENT LIVE DATA FETCHER w/ ESPN FALLBACK
-// This version restores detailed parsing for live game status (score, clock, etc.)
-// =================================================================
-// =================================================================
-// ✅ FINAL RESILIENT LIVE DATA FETCHER w/ DETAILED PARSING
-// This version restores detailed parsing for live game status (score, clock, etc.)
-// from the ESPN fallback to fix the UI.
-// =================================================================
-// =================================================================
-// ✅ CORRECTED LIVE DATA FETCHER
-// This version fixes the syntax error to prevent the server from crashing.
-// =================================================================
-// =================================================================
 // ✅ CORRECTED LIVE DATA FETCHER
 // This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v3_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_complete_v4_${new Date().toISOString().split('T')[0]}`;
+    // The 'fetcherFn' passed to fetchData must be async to use 'await' inside it.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -1638,6 +1626,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
