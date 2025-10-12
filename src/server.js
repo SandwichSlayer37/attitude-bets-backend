@@ -592,62 +592,85 @@ async function getProbablePitchersAndStats() {
         }
     }, 14400000);
 }
-
 // =================================================================
-// ✅ CORRECTED CACHING FUNCTION
-// This version properly handles asynchronous operations to fix the startup crash.
+// ✅ CORRECTED LIVE DATA FETCHER
+// This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
-async function fetchData(key, fetcherFn, ttl = 3600000) {
-    // Check if we have valid, non-expired data in the cache
-    if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
-        return dataCache.get(key).data;
-    }
+async function getNhlLiveStats() {
+    const cacheKey = `nhl_live_stats_complete_v7_${new Date().toISOString().split('T')[0]}`;
+    // The arrow function passed to fetchData must be declared as 'async'
+    // because it uses the 'await' keyword inside it.
+    return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
+        const today = new Date().toISOString().split('T')[0];
+        const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
+        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
-    // ✅ FIX: The 'fetcherFn' is an async function that makes API calls.
-    // We MUST 'await' its result here before we can cache it.
-    // This resolves the "await is only valid in async functions" error.
-    const data = await fetcherFn();
+        console.log(`📡 Fetching complete live NHL data...`);
+        const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
-    // Store the newly fetched data and a timestamp in the cache
-    dataCache.set(key, { data, timestamp: Date.now() });
-    
-    return data;
-}
-
-async function getOdds(sportKey) {
-    const key = `odds_${sportKey}`;
-    return fetchData(key, async () => {
         try {
-            const allGames = [];
-            const gameIds = new Set();
-            const datesToFetch = [];
-            const today = new Date();
-            for (let i = -1; i < 3; i++) {
-                const targetDate = new Date(today);
-                targetDate.setUTCDate(today.getUTCDate() + i);
-                datesToFetch.push(targetDate.toISOString().split('T')[0]);
-            }
-            for (const date of datesToFetch) {
-                const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds/?regions=us&markets=h2h&oddsFormat=decimal&date=${date}&apiKey=${ODDS_API_KEY}`);
-                if (data) {
-                    for (const game of data) {
-                        if (!gameIds.has(game.id)) {
-                            allGames.push(game);
-                            gameIds.add(game.id);
-                        }
-                    }
+            const results = await Promise.allSettled([
+                axios.get(scoreboardUrl),
+                axios.get(teamStatsUrl)
+            ]);
+
+            const scoreboardRes = results[0];
+            const teamStatsRes = results[1];
+
+            // Step 1: Get Games from Scoreboard
+            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games && scoreboardRes.value.data.games.length > 0) {
+                liveData.games = scoreboardRes.value.data.games;
+                liveData.source = 'NHL';
+            } else {
+                console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
+                const espnResponse = await axios.get(espnScoreboardUrl);
+                if (espnResponse.data && espnResponse.data.events) {
+                    liveData.games = espnResponse.data.events.map(event => {
+                        const comp = event.competitions[0];
+                        const home = comp.competitors.find(c => c.homeAway === 'home');
+                        const away = comp.competitors.find(c => c.homeAway === 'away');
+                        const status = event.status.type;
+                        return {
+                            id: event.id,
+                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                            startTimeUTC: event.date,
+                            gameState: status.state,
+                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                            espnData: event
+                        };
+                    });
+                    liveData.source = 'ESPN';
                 }
             }
-            return allGames;
-        } catch (error) {
-            if (error.response && error.response.status === 429) {
-                 console.error("ERROR IN getOdds function: Rate limit hit (429). The API is busy. Please wait a minute.");
+            console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
+
+            // Step 2: Get Live Team Stats
+            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
+                teamStatsRes.value.data.data.forEach(team => {
+                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                    if (canonicalName) {
+                        liveData.teamStats[canonicalName] = {
+                            record: "0-0-0",
+                            goalsForPerGame: team.goalsForPerGame,
+                            goalsAgainstPerGame: team.goalsAgainstPerGame,
+                            powerPlayPct: team.powerPlayPct,
+                            penaltyKillPct: team.penaltyKillPct,
+                            faceoffWinPct: team.faceoffWinPct,
+                        };
+                    }
+                });
+                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
             } else {
-                 console.error("ERROR IN getOdds function:", error.message);
+                 console.warn(`[WARN] Live NHL team stats are unavailable. Predictions will rely on historical data.`);
             }
-            return [];
+        } catch (error) {
+            console.error(`[ERROR] A critical failure occurred during live data fetch.`, error);
         }
-    }, 900000);
+
+        return liveData;
+    }, 600000);
 }
 
 // =================================================================
@@ -1628,6 +1651,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
