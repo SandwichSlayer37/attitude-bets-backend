@@ -655,12 +655,13 @@ async function getOdds(sportKey) {
 // This version fixes the syntax error to prevent the server from crashing.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v4_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_complete_v5_${new Date().toISOString().split('T')[0]}`;
     // The 'fetcherFn' passed to fetchData must be async to use 'await' inside it.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
         const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
+        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
         console.log(`📡 Fetching complete live NHL data...`);
         const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
@@ -680,7 +681,7 @@ async function getNhlLiveStats() {
                 liveData.source = 'NHL';
             } else {
                 console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
-                const espnResponse = await axios.get('https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard');
+                const espnResponse = await axios.get(espnScoreboardUrl);
                 if (espnResponse.data && espnResponse.data.events) {
                     liveData.games = espnResponse.data.events.map(event => {
                         const comp = event.competitions[0];
@@ -1626,6 +1627,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
