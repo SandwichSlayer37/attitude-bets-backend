@@ -593,13 +593,13 @@ async function getProbablePitchersAndStats() {
     }, 14400000);
 }
 // =================================================================
-// ✅ CORRECTED LIVE DATA FETCHER
-// This version fixes the syntax error to prevent the server from crashing.
+// ✅ FINAL CORRECTED LIVE DATA FETCHER
+// This version fixes the syntax error to prevent the server crash.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v7_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_v5_${new Date().toISOString().split('T')[0]}`;
     // The arrow function passed to fetchData must be declared as 'async'
-    // because it uses the 'await' keyword inside it.
+    // because it uses the 'await' keyword for the ESPN call.
     return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
         const today = new Date().toISOString().split('T')[0];
         const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
@@ -610,23 +610,22 @@ async function getNhlLiveStats() {
         const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
         try {
-            const results = await Promise.allSettled([
-                axios.get(scoreboardUrl),
-                axios.get(teamStatsUrl)
-            ]);
-
-            const scoreboardRes = results[0];
-            const teamStatsRes = results[1];
-
-            // Step 1: Get Games from Scoreboard
-            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games && scoreboardRes.value.data.games.length > 0) {
-                liveData.games = scoreboardRes.value.data.games;
+            // Attempt to fetch from the primary NHL source first
+            const nhlResponse = await axios.get(scoreboardUrl);
+            if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
+                liveData.games = nhlResponse.data.games;
                 liveData.source = 'NHL';
             } else {
-                console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
+                throw new Error("NHL API returned no games.");
+            }
+        } catch (nhlError) {
+            // If NHL API fails, immediately try the ESPN fallback
+            console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback...`);
+            try {
                 const espnResponse = await axios.get(espnScoreboardUrl);
-                if (espnResponse.data && espnResponse.data.events) {
-                    liveData.games = espnResponse.data.events.map(event => {
+                const espnEvents = espnResponse.data.events;
+                if (espnEvents && espnEvents.length > 0) {
+                    liveData.games = espnEvents.map(event => {
                         const comp = event.competitions[0];
                         const home = comp.competitors.find(c => c.homeAway === 'home');
                         const away = comp.competitors.find(c => c.homeAway === 'away');
@@ -641,34 +640,15 @@ async function getNhlLiveStats() {
                             espnData: event
                         };
                     });
+                    liveData.teamStats = parseEspnTeamStats(espnEvents);
                     liveData.source = 'ESPN';
                 }
+            } catch (espnError) {
+                console.error(`[CRITICAL] Both NHL and ESPN fallback APIs failed. No live game data is available.`);
             }
-            console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
-
-            // Step 2: Get Live Team Stats
-            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
-                teamStatsRes.value.data.data.forEach(team => {
-                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                    if (canonicalName) {
-                        liveData.teamStats[canonicalName] = {
-                            record: "0-0-0",
-                            goalsForPerGame: team.goalsForPerGame,
-                            goalsAgainstPerGame: team.goalsAgainstPerGame,
-                            powerPlayPct: team.powerPlayPct,
-                            penaltyKillPct: team.penaltyKillPct,
-                            faceoffWinPct: team.faceoffWinPct,
-                        };
-                    }
-                });
-                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
-            } else {
-                 console.warn(`[WARN] Live NHL team stats are unavailable. Predictions will rely on historical data.`);
-            }
-        } catch (error) {
-            console.error(`[ERROR] A critical failure occurred during live data fetch.`, error);
         }
-
+        
+        console.log(`✅ Successfully fetched ${liveData.games.length} games and stats from source: ${liveData.source}.`);
         return liveData;
     }, 600000);
 }
@@ -1532,30 +1512,44 @@ const V3_ANALYSIS_SCHEMA = {
   "confidenceScore": "string (High, Medium, or Low)",
   "confidenceRationale": "string"
 };
+// =idential fallback logic and a stricter AI prompt.
+// =================================================================
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
-        const V3_ANALYSIS_SCHEMA = { /* ... your schema ... */ };
+        const V3_ANALYSIS_SCHEMA = {
+            "finalPick": "string", "isOverride": "boolean", "investmentThesis": "string", "dynamicResearch": [],
+            "gameNarrative": "string", "keyFactorWithData": { "factor": "string", "data": "string" }, "counterArgument": "string",
+            "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
+        };
 
         const generatePromptForSeason = (season) => {
             const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
-            const liveStatsInfo = game.espnData?.liveDetails ? JSON.stringify(game.espnData.liveDetails, null, 2) : 'No live game stats available.';
+            const liveStatsInfo = game.espnData?.liveDetails
+                ? `Current Score: ${game.espnData.awayTeam.name.default} ${game.espnData.awayTeam.score} - ${game.espnData.homeTeam.name.default} ${game.espnData.homeTeam.score}\nStatus: ${game.espnData.liveDetails.shortDetail}`
+                : 'No live game stats available (pre-game).';
+
+            const instruction = season === 2024
+                ? "Your primary analysis MUST use the current season's data (2024)."
+                : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
 
             return `
-**STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
-- Initial Recommended Pick: ${prediction.winner}
-- Key Factors:
-${factorsList}
-- Live Game Stats:
+**SYSTEM ANALYSIS REPORT**
+**Matchup:** ${game.away_team} @ ${game.home_team}
+
+**Live Game Status:**
 ${liveStatsInfo}
 
+**Prediction Model Factors:**
+${factorsList}
+
 **TASK:**
-Analyze all the data provided. Your primary analysis MUST use the current season's data. Complete the following JSON object with your strategic breakdown.
+You are an expert sports betting analyst. Synthesize all the provided data to complete the following JSON object. ${instruction}
 
 **JSON TO COMPLETE:**
 ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
-**IMPORTANT: You MUST return ONLY the completed JSON object and nothing else. Do not include any extra text, explanations, or markdown formatting.**
+**IMPORTANT: You MUST return ONLY the completed JSON object. Do not include any extra text, explanations, or markdown formatting.**
 `;
         };
 
@@ -1566,18 +1560,23 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
         let analysisData;
         try {
-            console.log("Attempting AI analysis with live and historical data...");
-            const userPrompt = generatePromptForSeason(2024); // Always try current first
-            const rawResponse = await runAiChat(userPrompt);
-            analysisData = cleanAndParseJson(rawResponse);
+            console.log("Attempting AI analysis with current season data (2024)...");
+            const userPrompt2024 = generatePromptForSeason(2024);
+            const rawResponse2024 = await runAiChat(userPrompt2024);
+            analysisData = cleanAndParseJson(rawResponse2024);
             if (!analysisData || !analysisData.finalPick) {
-                throw new Error("AI analysis returned incomplete or invalid JSON.");
+                throw new Error("AI analysis for 2024 returned incomplete or invalid JSON.");
             }
-            console.log("✅ Successfully generated AI analysis.");
-        } catch (error) {
-            console.error("Advanced AI Analysis Error:", error.message);
-            // You can add a fallback to season 2023 here if needed, but for now we will just error out
-            return res.status(500).json({ error: "Failed to generate AI analysis." });
+            console.log("✅ Successfully generated AI analysis using 2024 data.");
+        } catch (error2024) {
+            console.warn(`[WARN] AI analysis using 2024 data failed: ${error2024.message}. Falling back to last completed season (2023).`);
+            const userPrompt2023 = generatePromptForSeason(2023);
+            const rawResponse2023 = await runAiChat(userPrompt2023);
+            analysisData = cleanAndParseJson(rawResponse2023);
+            if (!analysisData) {
+                throw new Error("AI analysis fallback for 2023 also failed to produce valid JSON.");
+            }
+            console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
         }
 
         res.json({ analysisData });
@@ -1585,56 +1584,6 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
     } catch (error) {
         console.error("Global AI Analysis Endpoint Error:", error.message);
         res.status(500).json({ error: "A critical error occurred in the AI analysis endpoint." });
-    }
-});
-
-app.post('/api/parlay-ai-analysis', async (req, res) => {
-    try {
-        if (!process.env.GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set.");
-        const { parlay } = req.body;
-        const leg1 = parlay.legs[0];
-        const leg2 = parlay.legs[1];
-        const systemPrompt = `You are a data analyst. Your only task is to complete the JSON object provided by the user with accurate and insightful analysis based on the data.`;
-
-        const userPrompt = `Based on the following data, analyze the parlay and complete the JSON object below. Do not add any extra text, markdown, or explanations.
-**Data:**
-- Total Odds: ${parlay.totalOdds}
-- Leg 1: Pick ${leg1.prediction.winner} in the matchup ${leg1.game.away_team} @ ${leg1.game.home_team}.
-- Leg 2: Pick ${leg2.prediction.winner} in the matchup ${leg2.game.away_team} @ ${leg2.game.home_team}.
-**JSON to complete:**
-{
-  "overview": "",
-  "bullCase": "",
-  "bearCase": ""
-}`;
-        const result = await analysisModel.generateContent({
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-            systemInstruction: {
-                parts: [{ text: systemPrompt }],
-            },
-        });
-        const responseText = result.response.text();
-        const parlayData = cleanAndParseJson(responseText);
-
-        const analysisHtml = `
-            <div class="p-4 rounded-lg bg-slate-700/50 border border-purple-500 text-center mb-4">
-                 <h4 class="text-sm font-bold text-gray-400 uppercase">Parlay Overview</h4>
-                 <p class="text-lg text-white mt-1">${parlayData.overview}</p>
-            </div>
-            <div class="space-y-4">
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-green-400">Bull Case (Why It Hits)</h4>
-                    <p class="mt-2 text-gray-300">${parlayData.bullCase}</p>
-                </div>
-                <div class="p-4 rounded-lg bg-slate-700/50 border border-slate-600">
-                    <h4 class="text-lg font-bold text-red-400">Bear Case (Primary Risks)</h4>
-                    <p class="mt-2 text-gray-300">${parlayData.bearCase}</p>
-                </div>
-            </div>`;
-        res.json({ analysisHtml });
-    } catch (error) {
-        console.error("Parlay AI Analysis Error:", error);
-        res.status(500).json({ error: "Failed to generate Parlay AI analysis." });
     }
 });
 
@@ -1651,6 +1600,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
