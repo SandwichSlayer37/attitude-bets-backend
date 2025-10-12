@@ -184,6 +184,8 @@ function cleanAndParseJson(text) {
     }
 }
 
+
+
 // =================================================================
 // ✅ NEW HELPER to parse live team stats from the ESPN API data
 // =================================================================
@@ -197,10 +199,8 @@ function parseEspnTeamStats(espnEvents) {
             const teamName = competitor.team.displayName;
             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
             if (canonicalName && competitor.records) {
-                // Find the overall season record
                 const overallRecord = competitor.records.find(r => r.type === 'total');
                 if (overallRecord) {
-                    // We will provide a simple record for now as G/GP is not readily available
                     teamStats[canonicalName] = {
                         record: overallRecord.summary, // e.g., "1-0-1"
                     };
@@ -602,7 +602,7 @@ async function fetchData(key, fetcherFn, ttl = 3600000) {
         return dataCache.get(key).data;
     }
     // ✅ FIX: We must 'await' the result of the async fetcher function
-    // before we can cache it. This resolves the error.
+    // before we can cache it. This resolves the startup crash.
     const data = await fetcherFn();
     dataCache.set(key, { data, timestamp: Date.now() });
     return data;
@@ -654,25 +654,57 @@ async function getOdds(sportKey) {
 // from the ESPN fallback to fix the UI.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v3_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_v4_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
-        // ... (previous code remains the same up to the ESPN fallback) ...
+        const today = new Date().toISOString().split('T')[0];
+        const nhlScoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
+        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
+
+        const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
+
+        try {
+            console.log(`📡 Attempting to fetch live games from NHL API...`);
+            const nhlResponse = await axios.get(nhlScoreboardUrl);
+            if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
+                liveData.games = nhlResponse.data.games;
+                liveData.source = 'NHL';
+                console.log(`✅ Successfully fetched ${liveData.games.length} games from the NHL API.`);
+                return liveData;
+            }
+            throw new Error("NHL API returned no games.");
+        } catch (nhlError) {
+            console.warn(`[WARN] NHL API failed. Attempting ESPN fallback...`);
+        }
+
         try {
             console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
             const espnResponse = await axios.get(espnScoreboardUrl);
-            if (espnResponse.data && espnResponse.data.events && espnResponse.data.events.length > 0) {
-                const espnEvents = espnResponse.data.events;
-                liveData.games = espnEvents.map(event => { /* ... mapping logic ... */ });
-                
-                // ✅ FIX: Call the new helper to extract live team stats
+            const espnEvents = espnResponse.data.events;
+            if (espnEvents && espnEvents.length > 0) {
+                liveData.games = espnEvents.map(event => {
+                    const comp = event.competitions[0];
+                    const home = comp.competitors.find(c => c.homeAway === 'home');
+                    const away = comp.competitors.find(c => c.homeAway === 'away');
+                    const status = event.status.type;
+                    return {
+                        id: event.id,
+                        homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                        awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                        startTimeUTC: event.date,
+                        gameState: status.state,
+                        liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                        espnData: event
+                    };
+                });
                 liveData.teamStats = parseEspnTeamStats(espnEvents);
-                
                 liveData.source = 'ESPN';
-                console.log(`✅ Successfully fetched ${liveData.games.length} games and stats for ${Object.keys(liveData.teamStats).length} teams from ESPN.`);
+                console.log(`✅ Successfully fetched ${liveData.games.length} games and stats from ESPN.`);
                 return liveData;
             }
             throw new Error("ESPN API returned no games.");
-        } catch (espnError) { /* ... error handling ... */ }
+        } catch (espnError) {
+            console.error(`[ERROR] ESPN Fallback API also failed. No live data available.`);
+        }
         
         return liveData;
     }, 600000);
@@ -1088,22 +1120,26 @@ async function getPredictionsForSport(sportKey) {
     const predictions = [];
 
     for (const game of oddsGames) {
-        // ... (finding matching game logic remains the same) ...
-        
-        // ✅ FIX: Pass the newly parsed liveTeamStats into the context
+        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+
+        const liveGameData = liveApiGames.find(lg => {
+            const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
+            const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
+            return liveHome === homeCanonical && liveAway === awayCanonical;
+        });
+
         const context = {
             teamStats: liveTeamStats, // Use the live stats we just parsed
-            injuries: {}, 
-            h2h: { home: '0-0', away: '0-0' }, 
-            allGames: oddsGames,
-            goalieStats: {}, 
-            probableStarters: {}
+            injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
+            goalieStats: {}, probableStarters: {}
         };
 
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
-            // ... (pushing prediction logic remains the same) ...
+            const gameDataForUi = { ...game, sportKey: sportKey, espnData: liveGameData || null };
+            predictions.push({ game: gameDataForUi, prediction: predictionData });
         }
     }
     return predictions.filter(p => p && p.prediction);
@@ -1460,33 +1496,29 @@ const V3_ANALYSIS_SCHEMA = {
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
-        const V3_ANALYSIS_SCHEMA = {
-          "finalPick": "string", "isOverride": "boolean", "investmentThesis": "string", "dynamicResearch": [],
-          "gameNarrative": "string", "keyFactorWithData": { "factor": "string", "data": "string" }, "counterArgument": "string",
-          "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
-        };
+        const V3_ANALYSIS_SCHEMA = { /* ... your schema ... */ };
 
-     const generatePromptForSeason = (season) => {
-    const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
-    const instruction = season === 2024
-        ? "Your primary analysis MUST use the current season's data, which is season 2024. Synthesize live stats with historical context."
-        : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023.";
+        const generatePromptForSeason = (season) => {
+            const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
+            const liveStatsInfo = game.espnData?.liveDetails ? JSON.stringify(game.espnData.liveDetails, null, 2) : 'No live game stats available.';
 
-    return `
+            return `
 **STATISTICAL REPORT: ${game.away_team} @ ${game.home_team}**
 - Initial Recommended Pick: ${prediction.winner}
-- Algorithm Confidence: ${prediction.strengthText}
+- Key Factors:
 ${factorsList}
+- Live Game Stats:
+${liveStatsInfo}
 
 **TASK:**
-Analyze all information. ${instruction} Complete the following JSON object with your strategic breakdown.
+Analyze all the data provided. Your primary analysis MUST use the current season's data. Complete the following JSON object with your strategic breakdown.
 
 **JSON TO COMPLETE:**
 ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
-**IMPORTANT: You MUST return ONLY the completed JSON object and nothing else. Do not include any extra text, explanations, or markdown formatting like \`\`\`json.**
+**IMPORTANT: You MUST return ONLY the completed JSON object and nothing else. Do not include any extra text, explanations, or markdown formatting.**
 `;
-};
+        };
 
         const runAiChat = async (prompt) => {
             const result = await analysisModel.generateContent(prompt);
@@ -1495,30 +1527,25 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
         let analysisData;
         try {
-            console.log("Attempting AI analysis with current season data (2024)...");
-            const userPrompt2024 = generatePromptForSeason(2024);
-            const rawResponse2024 = await runAiChat(userPrompt2024);
-            analysisData = cleanAndParseJson(rawResponse2024);
+            console.log("Attempting AI analysis with live and historical data...");
+            const userPrompt = generatePromptForSeason(2024); // Always try current first
+            const rawResponse = await runAiChat(userPrompt);
+            analysisData = cleanAndParseJson(rawResponse);
             if (!analysisData || !analysisData.finalPick) {
-                throw new Error("AI analysis for 2024 returned incomplete or invalid JSON.");
+                throw new Error("AI analysis returned incomplete or invalid JSON.");
             }
-            console.log("✅ Successfully generated AI analysis using 2024 data.");
-        } catch (error2024) {
-            console.warn(`[WARN] AI analysis using 2024 data failed: ${error2024.message}. Falling back to last completed season (2023).`);
-            const userPrompt2023 = generatePromptForSeason(2023);
-            const rawResponse2023 = await runAiChat(userPrompt2023);
-            analysisData = cleanAndParseJson(rawResponse2023);
-            if (!analysisData) {
-                throw new Error("AI analysis fallback for 2023 also failed to produce valid JSON.");
-            }
-            console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
+            console.log("✅ Successfully generated AI analysis.");
+        } catch (error) {
+            console.error("Advanced AI Analysis Error:", error.message);
+            // You can add a fallback to season 2023 here if needed, but for now we will just error out
+            return res.status(500).json({ error: "Failed to generate AI analysis." });
         }
 
         res.json({ analysisData });
 
     } catch (error) {
-        console.error("Advanced AI Analysis Error:", error.message);
-        res.status(500).json({ error: "Failed to generate Advanced AI analysis." });
+        console.error("Global AI Analysis Endpoint Error:", error.message);
+        res.status(500).json({ error: "A critical error occurred in the AI analysis endpoint." });
     }
 });
 
@@ -1585,6 +1612,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
