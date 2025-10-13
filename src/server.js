@@ -786,6 +786,10 @@ async function getNhlLiveStats() {
     }, 600000);
 }
 
+// Wrapped legacy ESPN fallback block to prevent top-level await parse errors (kept for reference)
+async function __legacyEspnFallbackWrapper_do_not_use() {
+
+
         // --- Step 2: If NHL API Fails, Use ESPN Fallback ---
         try {
             console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
@@ -835,6 +839,8 @@ async function getNhlLiveStats() {
         return liveData;
     }, 600000); // Cache for 10 minutes
 }
+}
+
 
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
@@ -1616,6 +1622,31 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
             console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
         }
 
+
+        // Sanitize undefined/null text fields to user-safe strings
+        if (analysisData) {
+            const st = (v) => safeText(v);
+            analysisData = {
+                ...analysisData,
+                finalPick: st(analysisData.finalPick),
+                investmentThesis: st(analysisData.investmentThesis),
+                gameNarrative: st(analysisData.gameNarrative),
+                keyFactorWithData: {
+                    factor: st(analysisData.keyFactorWithData?.factor),
+                    data: st(analysisData.keyFactorWithData?.data),
+                },
+                counterArgument: st(analysisData.counterArgument),
+                rebuttal: st(analysisData.rebuttal),
+                xFactor: st(analysisData.xFactor),
+                confidenceScore: st(analysisData.confidenceScore),
+                confidenceRationale: st(analysisData.confidenceRationale),
+                dynamicResearch: Array.isArray(analysisData.dynamicResearch) ? analysisData.dynamicResearch.map(it => ({
+                    question: st(it?.question),
+                    finding: st(it?.finding),
+                })) : []
+            };
+        }
+
         res.json({ analysisData });
 
     } catch (error) {
@@ -1637,6 +1668,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
