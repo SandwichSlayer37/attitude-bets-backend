@@ -1,3 +1,9 @@
+// ===== Attitude Sports Bets Live AI Patch =====
+// Patched: 2025-10-12
+// Patch #: 1
+// Changes: Fixed ESPN fallback async closure + Render deploy syntax error
+// Author: ChatGPT (Jonathan’s dev assistant)
+
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
@@ -787,50 +793,6 @@ async function getNhlLiveStats() {
 }
 
 // Wrapped legacy ESPN fallback block to prevent top-level await parse errors (kept for reference)
-async function __legacyEspnFallbackWrapper_do_not_use() {
-
-
-        // --- Step 2: If NHL API Fails, Use ESPN Fallback ---
-        try {
-            console.log(`📡 Attempting to fetch live games from ESPN Fallback API...`);
-            const espnResponse = await axios.get(espnScoreboardUrl);
-            if (espnResponse.data && espnResponse.data.events && espnResponse.data.events.length > 0) {
-                // The ESPN data structure is different, so we must parse it carefully.
-                liveData.games = espnResponse.data.events.map(event => {
-                    const competition = event.competitions[0];
-                    const home = competition.competitors.find(c => c.homeAway === 'home');
-                    const away = competition.competitors.find(c => c.homeAway === 'away');
-                    
-                    // ✅ FIX: Restore detailed parsing for live game status from ESPN
-                    const status = event.status.type;
-                    
-                    return {
-                        id: event.id,
-                        // Mimic the NHL API structure that the rest of your app expects
-                        homeTeam: { 
-                            name: { default: home.team.displayName }, 
-                            score: parseInt(home.score, 10) || 0 
-                        },
-                        awayTeam: { 
-                            name: { default: away.team.displayName }, 
-                            score: parseInt(away.score, 10) || 0
-                        },
-                        startTimeUTC: event.date,
-                        gameState: status.state, // 'pre', 'in', 'post'
-                        // Pass the detailed status object directly for the UI to use
-                        liveDetails: {
-                            isLive: status.state === 'in',
-                            clock: status.displayClock,
-                            period: status.period,
-                            shortDetail: status.shortDetail, // e.g., "Final", "1st P"
-                        },
-                        espnData: event // Keep original ESPN data for reference
-                    };
-                });
-                liveData.source = 'ESPN';
-                console.log(`✅ Successfully fetched ${liveData.games.length} games from the ESPN API Fallback.`);
-                return liveData;
-            }
             throw new Error("ESPN API returned no games.");
         } catch (espnError) {
             console.error(`[ERROR] ESPN Fallback API also failed. No live game data is available.`);
