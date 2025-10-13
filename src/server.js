@@ -701,15 +701,14 @@ async function getNhlLiveStats() {
                     // ✅ FIX: Use the new helper to get live team stats from ESPN
                     liveData.teamStats = parseEspnTeamStats(espnEvents);
                     liveData.source = 'ESPN';
-                }
-            } catch (espnError) {
+                } catch (espnError) {
                 console.error(`[CRITICAL] ESPN Fallback also failed: ${espnError.message}`);
             }
         }
 
         console.log(`✅ Fetched data for ${liveData.games.length} games and ${Object.keys(liveData.teamStats).length} teams from source: ${liveData.source}`);
         return liveData;
-    }, 600000);
+    }, 3600000);
 }
 // =================================================================
 // ✅ CORRECTED LIVE DATA FETCHER
@@ -789,7 +788,7 @@ async function getNhlLiveStats() {
         }
 
         return liveData;
-    }, 600000);
+    }, 3600000);
 }
 
 // Wrapped legacy ESPN fallback block to prevent top-level await parse errors (kept for reference)
@@ -799,7 +798,7 @@ async function getNhlLiveStats() {
         }
         
         return liveData;
-    }, 600000); // Cache for 10 minutes
+    }, 3600000); // Cache for 10 minutes
 }
 }
 
