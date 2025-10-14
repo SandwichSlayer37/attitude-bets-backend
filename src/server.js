@@ -1338,47 +1338,46 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
-    // Fetch both live data from ESPN and betting odds
-    const { games: liveApiGames, teamStats: liveTeamStats, source } = await getNhlLiveStats();
-    const oddsGames = await getOdds(sportKey);
+    try {
+        // ✅ FIX: Use the new, robust "Fusion Patch" to get all live and historical data.
+        const snapshot = await buildCurrentSeasonSnapshot();
+        const oddsGames = await getOdds(sportKey);
 
-    if (!liveApiGames || liveApiGames.length === 0) {
-        console.log("No live games available to generate predictions.");
+        if (!snapshot.teamStats || Object.keys(snapshot.teamStats).length === 0) {
+            console.log("No live team stats available to generate predictions.");
+            return [];
+        }
+        console.log(`Generating predictions using data from source: ${snapshot.source}`);
+
+        const predictions = [];
+        for (const game of oddsGames) {
+            const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+            const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+
+            // The 'teamStats' from the snapshot now contains all the rich live data.
+            const context = {
+                teamStats: snapshot.teamStats,
+                injuries: {},
+                h2h: { home: '0-0', away: '0-0' },
+                allGames: oddsGames,
+                goalieStats: {},
+                probableStarters: {}
+            };
+
+            // Run your powerful prediction engine with the complete context.
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
+
+            if (predictionData && predictionData.winner) {
+                const gameDataForUi = { ...game, sportKey: sportKey, espnData: null }; // espnData can be removed later
+                predictions.push({ game: gameDataForUi, prediction: predictionData });
+            }
+        }
+        return predictions.filter(p => p && p.prediction);
+
+    } catch (error) {
+        console.error("Prediction generation failed:", error.message);
         return [];
     }
-    console.log(`Generating predictions using data from source: ${source}`);
-
-    const predictions = [];
-    for (const game of oddsGames) {
-        const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-
-        const liveGameData = liveApiGames.find(lg => {
-            const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
-            const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
-            return liveHome === homeCanonical && liveAway === awayCanonical;
-        });
-
-        // ✅ FIX: Pass the liveTeamStats object into the context.
-        // This provides the prediction engine with the live data it needs.
-        const context = {
-            teamStats: liveTeamStats,
-            injuries: {},
-            h2h: { home: '0-0', away: '0-0' },
-            allGames: oddsGames,
-            goalieStats: {},
-            probableStarters: {}
-        };
-
-        // Run your powerful prediction engine with the complete context
-        const predictionData = await runAdvancedNhlPredictionEngine(game, context);
-
-        if (predictionData && predictionData.winner) {
-            const gameDataForUi = { ...game, sportKey: sportKey, espnData: liveGameData || null };
-            predictions.push({ game: gameDataForUi, prediction: predictionData });
-        }
-    }
-    return predictions.filter(p => p && p.prediction);
 }
 
 app.get('/api/predictions', async (req, res) => {
@@ -1915,6 +1914,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
