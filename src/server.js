@@ -1,12 +1,6 @@
 const mongoose = require('mongoose');
 // ===== PATCH4: Fusion helpers (standings + club-stats + Mongo historical) =====
-const __FUSION_CACHE = new Map();
-function __cached(key, ttlMs, fetcher) {
-  const now = Date.now();
-  const hit = __FUSION_CACHE.get(key);
-  if (hit && (now - hit.t) < ttlMs) return hit.v;
-  return Promise.resolve(fetcher()).then(v => { __FUSION_CACHE.set(key, { t: now, v }); return v; });
-}
+
 async function fetchStandingsByDate(dateStr) {
   const date = dateStr || new Date(Date.now() - 24*3600*1000).toISOString().slice(0,10);
   const key = `standings:${date}`;
@@ -1921,6 +1915,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
