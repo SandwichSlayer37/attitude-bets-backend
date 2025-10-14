@@ -1325,7 +1325,7 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // Step 1: Get the complete, fused data snapshot for all teams.
+        // Step 1: Get the complete, live data snapshot using the robust Fusion system.
         const { date, teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
 
@@ -1337,53 +1337,26 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-            const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-            const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-            const homeAbbr = teamToAbbrMap[homeCanonical];
-            const awayAbbr = teamToAbbrMap[awayCanonical];
+            
+            // Step 2: Prepare the context object for the prediction engine.
+            const context = {
+                teamStats: fusedTeamData, // Pass the rich, fused data directly.
+                injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
+                goalieStats: {}, probableStarters: {}
+            };
 
-            const homeData = fusedTeamData[homeAbbr];
-            const awayData = fusedTeamData[awayAbbr];
+            // Step 3: Run your original, powerful prediction engine with the complete context.
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
-            if (!homeData || !awayData) {
-                // ✅ FIX: Correctly reference game.away_team and game.home_team
-                console.warn(`Missing fused data for matchup: ${game.away_team} @ ${game.home_team}`);
-                continue;
+            if (predictionData) {
+                const gameDataForUi = { ...game, sportKey: sportKey, espnData: null };
+                predictions.push({ game: gameDataForUi, prediction: predictionData });
             }
-
-            // Step 2: Run the prediction logic directly with the rich, fused data.
-            let homeScore = 50.0;
-            const factors = {};
-            const weights = getDynamicWeights('icehockey_nhl');
-
-            // Live Data Factors from the Fusion Snapshot
-            factors['Record'] = { value: safeNum(homeData.pointPctg) - safeNum(awayData.pointPctg), homeStat: safeText(homeData.record), awayStat: safeText(awayData.record) };
-            factors['Offensive Form (G/GP)'] = { value: safeNum(homeData.goalsForPerGame) - safeNum(awayData.goalsForPerGame), homeStat: safeNum(homeData.goalsForPerGame).toFixed(2), awayStat: safeNum(awayData.goalsForPerGame).toFixed(2) };
-            factors['Defensive Form (GA/GP)'] = { value: safeNum(awayData.goalsAgainstPerGame) - safeNum(homeData.goalsAgainstPerGame), homeStat: safeNum(homeData.goalsAgainstPerGame).toFixed(2), awayStat: safeNum(awayData.goalsAgainstPerGame).toFixed(2) };
-            factors['Special Teams Duel'] = { value: (safeNum(homeData.powerPlayPct) - safeNum(homeData.penaltyKillPct)) - (safeNum(awayData.powerPlayPct) - safeNum(awayData.penaltyKillPct)), homeStat: `${safeNum(homeData.powerPlayPct).toFixed(1)}% / ${safeNum(homeData.penaltyKillPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.powerPlayPct).toFixed(1)}% / ${safeNum(awayData.penaltyKillPct).toFixed(1)}%`};
-            factors['Faceoff Advantage'] = { value: safeNum(homeData.faceoffWinPct) - safeNum(awayData.faceoffWinPct), homeStat: `${safeNum(homeData.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.faceoffWinPct).toFixed(1)}%`};
-
-            Object.keys(factors).forEach(factorName => {
-                if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
-                    const factorKey = { 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 'Defensive Form (GA/GP)': 'defensiveForm', 'Special Teams Duel': 'specialTeamsDuel', 'Faceoff Advantage': 'faceoffAdvantage' }[factorName];
-                    if (factorKey && weights[factorKey]) {
-                        homeScore += factors[factorName].value * weights[factorKey];
-                    }
-                }
-            });
-
-            const winner = homeScore > 50 ? game.home_team : game.away_team;
-            const confidence = Math.abs(50 - homeScore);
-            let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
-
-            const predictionData = { winner, strengthText, confidence, factors };
-            const gameDataForUi = { ...game, sportKey: sportKey, espnData: null };
-            predictions.push({ game: gameDataForUi, prediction: predictionData });
         }
         return predictions.filter(p => p && p.prediction);
 
     } catch (error) {
-        console.error("Prediction generation failed with the new Fusion pipeline:", error.message);
+        console.error("Prediction generation failed:", error.message);
         return [];
     }
 }
@@ -1922,6 +1895,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
