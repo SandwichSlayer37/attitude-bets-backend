@@ -788,61 +788,44 @@ async function getProbablePitchersAndStats() {
 // This version is syntactically correct, uses the parser, and will not crash.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v10_${new Date().toISOString().split('T')[0]}`;
-    return fetchData(cacheKey, async () => { // ✅ FIX: 'async' keyword is correctly placed
-        const today = new Date().toISOString().split('T')[0];
-        const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
-        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
+    const cacheKey = `nhl_live_stats_final_v11_${new Date().toISOString().split('T')[0]}`;
+    return fetchData(cacheKey, async () => {
         const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
-
         const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
 
         try {
-            console.log("📡 Attempting to fetch live data from primary NHL API...");
-            const [scoreboardRes, teamStatsRes] = await Promise.allSettled([
-                axios.get(scoreboardUrl),
-                axios.get(teamStatsUrl)
-            ]);
+            console.log(`📡 Attempting to fetch live data from ESPN API...`);
+            const espnResponse = await axios.get(espnScoreboardUrl);
+            const espnEvents = espnResponse.data.events;
 
-            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games?.length > 0) {
-                liveData.games = scoreboardRes.value.data.games;
-                liveData.source = 'NHL';
-            } else {
-                throw new Error("NHL scoreboard is empty or failed, falling back to ESPN");
-            }
-
-            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data?.data) {
-                teamStatsRes.value.data.data.forEach(team => {
-                    const canonical = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                    if (canonical) {
-                        if (!liveData.teamStats[canonical]) liveData.teamStats[canonical] = {};
-                        Object.assign(liveData.teamStats[canonical], {
-                            goalsForPerGame: safeNum(team.goalsForPerGame),
-                            goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
-                            powerPlayPct: safeNum(team.powerPlayPct),
-                            penaltyKillPct: safeNum(team.penaltyKillPct),
-                            faceoffWinPct: safeNum(team.faceoffWinPct),
-                        });
-                    }
+            if (espnEvents?.length > 0) {
+                liveData.games = espnEvents.map(event => {
+                    const comp = event.competitions[0];
+                    const home = comp.competitors.find(c => c.homeAway === 'home');
+                    const away = comp.competitors.find(c => c.homeAway === 'away');
+                    const status = event.status.type;
+                    return {
+                        id: event.id,
+                        homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                        awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                        startTimeUTC: event.date,
+                        gameState: status.state,
+                        liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                        espnData: event
+                    };
                 });
-            } catch (nhlError) {
-            console.warn(`[WARN] Primary NHL API failed. Attempting ESPN fallback...`);
-            try {
-                const espnResponse = await axios.get(espnScoreboardUrl);
-                const espnEvents = espnResponse.data.events;
-                if (espnEvents?.length > 0) {
-                    liveData.games = espnEvents.map(event => { /* ... your detailed mapping logic here ... */ });
-                    // ✅ FIX: Use the new helper to get live team stats from ESPN
-                    liveData.teamStats = parseEspnTeamStats(espnEvents);
-                    liveData.source = 'ESPN';
-                } catch (espnError) {
-                console.error(`[CRITICAL] ESPN Fallback also failed: ${espnError.message}`);
+                liveData.teamStats = parseEspnTeamStats(espnEvents);
+                liveData.source = 'ESPN';
+                console.log(`✅ Fetched data for ${liveData.games.length} games and ${Object.keys(liveData.teamStats).length} teams from source: ${liveData.source}`);
+            } else {
+                throw new Error("ESPN API returned no games.");
             }
+        } catch (error) {
+            console.error(`[CRITICAL] Live data fetch failed: ${error.message}`);
+            liveData.errors.push(error.message);
         }
-
-        console.log(`✅ Fetched data for ${liveData.games.length} games and ${Object.keys(liveData.teamStats).length} teams from source: ${liveData.source}`);
         return liveData;
-    }, 3600000);
+    }, 600000);
 }
 // =================================================================
 // ✅ CORRECTED LIVE DATA FETCHER
@@ -1259,20 +1242,20 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
+    // Fetch both live data from ESPN and betting odds
     const { games: liveApiGames, teamStats: liveTeamStats, source } = await getNhlLiveStats();
+    const oddsGames = await getOdds(sportKey);
 
     if (!liveApiGames || liveApiGames.length === 0) {
         console.log("No live games available to generate predictions.");
         return [];
     }
-
     console.log(`Generating predictions using data from source: ${source}`);
-    const oddsGames = await getOdds(sportKey);
-    const predictions = [];
 
+    const predictions = [];
     for (const game of oddsGames) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+        const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || away_team;
 
         const liveGameData = liveApiGames.find(lg => {
             const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
@@ -1280,12 +1263,18 @@ async function getPredictionsForSport(sportKey) {
             return liveHome === homeCanonical && liveAway === awayCanonical;
         });
 
+        // ✅ FIX: Pass the liveTeamStats object into the context.
+        // This provides the prediction engine with the live data it needs.
         const context = {
-            teamStats: liveTeamStats, // Use the live stats we just parsed
-            injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
-            goalieStats: {}, probableStarters: {}
+            teamStats: liveTeamStats,
+            injuries: {},
+            h2h: { home: '0-0', away: '0-0' },
+            allGames: oddsGames,
+            goalieStats: {},
+            probableStarters: {}
         };
 
+        // Run your powerful prediction engine with the complete context
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
@@ -1831,3 +1820,4 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
