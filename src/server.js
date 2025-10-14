@@ -1466,9 +1466,10 @@ app.get('/api/reconcile-results', async (req, res) => {
                  try {
                     const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
                     const { data: espnData } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0...' }});
-                    if (espnData.events) {
+                    if (espnData && espnData.events) {
                         allRecentEvents.push(...espnData.events);
-                    } catch (apiError) {
+                    }
+                 } catch (apiError) {
                     console.error(`Could not fetch ESPN data for ${formattedDate}: ${apiError.message}`);
                  }
             }
