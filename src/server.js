@@ -348,7 +348,30 @@ async function getOdds(sportKey) {
         }
     }, 300000); // Cache for 5 minutes
 }
-
+// =================================================================
+// ✅ MISSING ODDS FUNCTION
+// This function was accidentally removed and is required for the app to run.
+// =================================================================
+async function getOdds(sportKey) {
+    const cacheKey = `odds_${sportKey}`;
+    // Odds change frequently, so use a shorter cache time (e.g., 5 minutes)
+    return fetchData(cacheKey, async () => {
+        try {
+            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`, {
+                params: {
+                    apiKey: ODDS_API_KEY,
+                    regions: 'us',
+                    markets: 'h2h',
+                    oddsFormat: 'decimal',
+                }
+            });
+            return data;
+        } catch (error) {
+            console.error(`Could not fetch odds for ${sportKey}:`, error.response ? error.response.data.message : error.message);
+            return []; // Return an empty array on failure so the app doesn't crash
+        }
+    }, 300000); // Cache for 5 minutes
+}
 // =================================================================
 // ✅ MISSING CACHING FUNCTION
 // This function was accidentally removed and is required for the app to run.
@@ -1766,6 +1789,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
 
 
 
