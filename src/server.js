@@ -823,10 +823,10 @@ async function getProbablePitchersAndStats() {
 // =================================================================
 // ✅ FINAL, CORRECTED LIVE DATA FETCHER
 // This version is syntactically correct, prioritizes the rich NHL API,
-// and uses ESPN as a fallback ONLY for the game list.
+// and uses ESPN as a fallback ONLY for the game list and basic record.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v16_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_v17_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const standingsUrl = `https://api-web.nhle.com/v1/standings/${today}`;
@@ -889,7 +889,21 @@ async function getNhlLiveStats() {
                 const espnResponse = await axios.get(espnScoreboardUrl);
                 const espnEvents = espnResponse.data.events;
                 if (espnEvents?.length > 0) {
-                    liveData.games = espnEvents.map(event => { /* ... your detailed ESPN mapping logic ... */ });
+                    liveData.games = espnEvents.map(event => {
+                        const comp = event.competitions[0];
+                        const home = comp.competitors.find(c => c.homeAway === 'home');
+                        const away = comp.competitors.find(c => c.homeAway === 'away');
+                        const status = event.status.type;
+                        return {
+                            id: event.id,
+                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                            startTimeUTC: event.date,
+                            gameState: status.state,
+                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                            espnData: event
+                        };
+                    });
                     // Use the helper to get the only available live stat: the W-L record
                     liveData.teamStats = parseEspnTeamStats(espnEvents);
                     liveData.source = 'ESPN';
@@ -1784,6 +1798,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
 
 
 
