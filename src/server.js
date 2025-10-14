@@ -1,4 +1,137 @@
 const mongoose = require('mongoose');
+// ===== PATCH4: Fusion helpers (standings + club-stats + Mongo historical) =====
+const __FUSION_CACHE = new Map();
+function __cached(key, ttlMs, fetcher) {
+  const now = Date.now();
+  const hit = __FUSION_CACHE.get(key);
+  if (hit && (now - hit.t) < ttlMs) return hit.v;
+  return Promise.resolve(fetcher()).then(v => { __FUSION_CACHE.set(key, { t: now, v }); return v; });
+}
+async function fetchStandingsByDate(dateStr) {
+  const date = dateStr || new Date(Date.now() - 24*3600*1000).toISOString().slice(0,10);
+  const key = `standings:${date}`;
+  return __cached(key, 30*60*1000, async () => {
+    const url = `https://api-web.nhle.com/v1/standings/${date}`;
+    const { data } = await axios.get(url, { timeout: 15000 });
+    const rows = Array.isArray(data?.standings) ? data.standings : [];
+    const out = {};
+    for (const r of rows) {
+      const abbrev = r?.teamAbbrev?.default || r?.teamAbbrev || r?.teamAbbrevTricode || r?.teamCommonName?.default;
+      if (!abbrev) continue;
+      const wins = Number(r?.wins || 0), losses = Number(r?.losses || 0), ot = Number(r?.otLosses || 0);
+      const gp = Number(r?.gamesPlayed || (wins + losses + ot));
+      out[abbrev] = {
+        record: `${wins}-${losses}-${ot}`,
+        points: Number(r?.points || 0),
+        pointPctg: Number(r?.pointPctg ?? 0),
+        goalsFor: Number(r?.goalFor ?? 0),
+        goalsAgainst: Number(r?.goalAgainst ?? 0),
+        goalDifferential: Number(r?.goalDifferential ?? 0),
+        gamesPlayed: gp,
+        l10Record: `${Number(r?.l10Wins||0)}-${Number(r?.l10Losses||0)}-${Number(r?.l10OtLosses||0)}`,
+        streak: (r?.streakCode ? `${r.streakCode}${r?.streakCount||""}` : null),
+        placeName: r?.placeName?.default || null,
+        teamName: r?.teamName?.default || null,
+        teamCommonName: r?.teamCommonName?.default || null,
+        logo: r?.teamLogo || null,
+        winPct: gp > 0 ? (wins/gp) : 0,
+      };
+    }
+    return { date, teams: out };
+  });
+}
+async function fetchClubStats(abbr) {
+  const key = `clubstats:${abbr}`;
+  return __cached(key, 5*60*1000, async () => {
+    const url = `https://api-web.nhle.com/v1/club-stats/${abbr}`;
+    try {
+      const { data } = await axios.get(url, { timeout: 12000 });
+      const s = data || {}; const sk = s.skaterStats || s;
+      return {
+        goalsForPerGame: Number(sk.goalsForPerGame ?? 0),
+        goalsAgainstPerGame: Number(sk.goalsAgainstPerGame ?? 0),
+        powerPlayPct: Number(sk.ppPctg ?? 0),
+        penaltyKillPct: Number(sk.pkPctg ?? 0),
+        faceoffWinPct: Number(sk.faceoffWinPctg ?? 0),
+      };
+    } catch {
+      return { goalsForPerGame:0, goalsAgainstPerGame:0, powerPlayPct:0, penaltyKillPct:0, faceoffWinPct:0 };
+    }
+  });
+}
+async function buildCurrentSeasonSnapshot(dateStr) {
+  const { date, teams } = await fetchStandingsByDate(dateStr);
+  const out = {};
+  const keys = Object.keys(teams);
+  await Promise.all(keys.map(async k => {
+    const cs = await fetchClubStats(k);
+    out[k] = { ...teams[k], ...cs };
+  }));
+  return { date, teamStats: out, source: "NHL" };
+}
+async function fetchHistoricalTeamContext(teamAbbrev) {
+  try {
+    const db = (mongoose && mongoose.connection && mongoose.connection.db) ? mongoose.connection.db : null;
+    if (!db) return {};
+    const TEAMS = db.collection('teams');
+    const ADV = db.collection('nhl_advanced_stats');
+    const result = { team: teamAbbrev };
+
+    // TEAMS aggregates
+    try {
+      const cursor = TEAMS.aggregate([
+        { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
+        { $group: { _id:"$team",
+          seasons: { $addToSet: "$season" },
+          totalWins: { $sum: { $ifNull:["$wins",0]} },
+          totalLosses: { $sum: { $ifNull:["$losses",0]} },
+          totalOtLosses: { $sum: { $ifNull:["$otLosses",0]} },
+          totalGF: { $sum: { $ifNull:["$goalsFor",0]} },
+          totalGA: { $sum: { $ifNull:["$goalsAgainst",0]} },
+          gamesPlayed: { $sum: { $ifNull:["$gamesPlayed",0]} },
+          avgWinPct: { $avg: { $ifNull:["$winPct",0]} },
+        } },
+        { $limit: 1 }
+      ]);
+      const doc = await cursor.next();
+      if (doc) {
+        const totalGames = (doc.totalWins + doc.totalLosses + doc.totalOtLosses);
+        result.avgWinPct = (typeof doc.avgWinPct === 'number' && !Number.isNaN(doc.avgWinPct)) ? doc.avgWinPct : (doc.totalWins / Math.max(totalGames,1));
+        result.avgGF = (doc.gamesPlayed > 0) ? (doc.totalGF / doc.gamesPlayed) : undefined;
+        result.avgGA = (doc.gamesPlayed > 0) ? (doc.totalGA / doc.gamesPlayed) : undefined;
+        result.sampleSeasons = (doc.seasons || []).length || undefined;
+      }
+    } catch {}
+
+    // fallback from ADV
+    if (result.avgGF == null || result.avgGA == null) {
+      try {
+        const adv = await ADV.aggregate([
+          { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
+          { $group: { _id:"$team", totalGF:{ $sum:{ $ifNull:["$goalsFor",0]} }, totalGA:{ $sum:{ $ifNull:["$goalsAgainst",0]} }, games:{ $sum:1 } } },
+          { $limit: 1 }
+        ]).toArray();
+        if (adv && adv[0] && adv[0].games > 0) {
+          if (result.avgGF == null) result.avgGF = adv[0].totalGF / adv[0].games;
+          if (result.avgGA == null) result.avgGA = adv[0].totalGA / adv[0].games;
+        }
+      } catch {}
+    }
+    return result;
+  } catch { return {}; }
+}
+function mergeHistoricalCurrent(historical, current) {
+  const wHist = 0.7, wCurr = 0.3;
+  const out = { ...current };
+  if (historical && Object.keys(historical).length) {
+    out.historical = historical;
+    if (historical.avgGF != null && current.goalsForPerGame != null) out.weightedGF = (historical.avgGF*wHist) + (current.goalsForPerGame*wCurr);
+    if (historical.avgGA != null && current.goalsAgainstPerGame != null) out.weightedGA = (historical.avgGA*wHist) + (current.goalsAgainstPerGame*wCurr);
+    if (historical.avgWinPct != null && current.winPct != null) out.weightedWinPct = (historical.avgWinPct*wHist) + (current.winPct*wCurr);
+  }
+  return out;
+}
+// ===== END PATCH4 helpers =====
 // ===== Attitude Sports Bets Live AI Patch =====
 // Patched: 2025-10-12
 // Patch #: 1
@@ -1754,7 +1887,41 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 } else {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
+// ===== PATCH4 routes =====
+if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
+  app.get('/api/standings', async (req, res) => {
+    try {
+      const { date, teams } = await fetchStandingsByDate(req.query.date);
+      res.json({ source: 'NHL', date, teams });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to fetch standings', message: e?.message || String(e) });
+    }
+  });
+
+  app.get('/api/fusion-preview', async (req, res) => {
+    try {
+      const snapshot = await buildCurrentSeasonSnapshot(req.query.date);
+      const allAbbrevs = Object.keys(snapshot.teamStats);
+      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const target = filter.length ? filter : allAbbrevs;
+      const fused = {};
+      for (const abbr of target) {
+        const curr = snapshot.teamStats[abbr];
+        if (!curr) continue;
+        const hist = await fetchHistoricalTeamContext(abbr);
+        fused[abbr] = mergeHistoricalCurrent(hist, curr);
+      }
+      res.json({ date: snapshot.date, count: Object.keys(fused).length, teams: fused });
+    } catch (e) {
+      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
+    }
+  });
+} else {
+  console.warn("[PATCH4] Express app not detected; routes not attached.");
+}
 // ===== END PATCH4 routes =====
+// ===== END PATCH4 routes =====
+
 
 
 
