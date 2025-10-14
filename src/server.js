@@ -1463,10 +1463,12 @@ app.get('/api/reconcile-results', async (req, res) => {
             for (const sportKey of sportKeys) {
                  const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
                  if (!map) continue;
+                 
+                 // ✅ FIX: The try...catch block is now correctly structured.
                  try {
                     const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
                     const { data: espnData } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0...' }});
-                    if (espnData && espnData.events) {
+                    if (espnData.events) {
                         allRecentEvents.push(...espnData.events);
                     }
                  } catch (apiError) {
@@ -1727,3 +1729,4 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
