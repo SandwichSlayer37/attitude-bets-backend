@@ -784,21 +784,12 @@ async function getProbablePitchersAndStats() {
     }, 14400000);
 }
 // =================================================================
-// ✅ FINAL, UNIFIED LIVE DATA FETCHER
-// This version is syntactically correct, uses the parser, and will not crash.
-// =================================================================
-// =================================================================
-// ✅ FINAL, UNIFIED LIVE DATA FETCHER
-// This version is syntactically correct, prioritizes the official NHL API,
-// and uses a fully-featured ESPN fallback. It will not crash.
-// =================================================================
-// =================================================================
 // ✅ FINAL, CORRECTED LIVE DATA FETCHER
 // This version fixes the syntax error to prevent the server from crashing.
 // It prioritizes the NHL API and has a fully functional ESPN fallback.
 // =================================================================
 async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v13_${new Date().toISOString().split('T')[0]}`;
+    const cacheKey = `nhl_live_stats_final_v14_${new Date().toISOString().split('T')[0]}`;
     return fetchData(cacheKey, async () => {
         const today = new Date().toISOString().split('T')[0];
         const standingsUrl = `https://api-web.nhle.com/v1/standings/${today}`;
@@ -860,7 +851,21 @@ async function getNhlLiveStats() {
                 const espnResponse = await axios.get(espnScoreboardUrl);
                 const espnEvents = espnResponse.data.events;
                 if (espnEvents?.length > 0) {
-                    liveData.games = espnEvents.map(event => { /* ... your detailed mapping logic here ... */ });
+                    liveData.games = espnEvents.map(event => {
+                        const comp = event.competitions[0];
+                        const home = comp.competitors.find(c => c.homeAway === 'home');
+                        const away = comp.competitors.find(c => c.homeAway === 'away');
+                        const status = event.status.type;
+                        return {
+                            id: event.id,
+                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
+                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
+                            startTimeUTC: event.date,
+                            gameState: status.state,
+                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
+                            espnData: event
+                        };
+                    });
                     liveData.teamStats = parseEspnTeamStats(espnEvents);
                     liveData.source = 'ESPN';
                     console.log(`✅ Successfully fetched live stats and ${liveData.games.length} games from ESPN fallback.`);
@@ -1877,6 +1882,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
 
 
 
