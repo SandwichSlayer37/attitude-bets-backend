@@ -1318,16 +1318,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 // END OF NHL ENGINE 2.0
 // =================================================================
 // =================================================================
-// ✅ FINAL, ROBUST PREDICTION FUNCTION
-// This version is upgraded to safely handle inconsistent data from
-// the ESPN API, preventing crashes.
-// =================================================================
-// =================================================================
 // ✅ NEW, UNIFIED PREDICTION SYSTEM (Replaces old functions)
-// This new pipeline uses the robust "Fusion Patch" as the single
-// source of truth for all live and historical data.
+// This version fixes the ReferenceError in the logging statement.
 // =================================================================
-
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1353,7 +1346,8 @@ async function getPredictionsForSport(sportKey) {
             const awayData = fusedTeamData[awayAbbr];
 
             if (!homeData || !awayData) {
-                console.warn(`Missing fused data for matchup: ${away_team} @ ${home_team}`);
+                // ✅ FIX: Correctly reference game.away_team and game.home_team
+                console.warn(`Missing fused data for matchup: ${game.away_team} @ ${game.home_team}`);
                 continue;
             }
 
@@ -1368,9 +1362,6 @@ async function getPredictionsForSport(sportKey) {
             factors['Defensive Form (GA/GP)'] = { value: safeNum(awayData.goalsAgainstPerGame) - safeNum(homeData.goalsAgainstPerGame), homeStat: safeNum(homeData.goalsAgainstPerGame).toFixed(2), awayStat: safeNum(awayData.goalsAgainstPerGame).toFixed(2) };
             factors['Special Teams Duel'] = { value: (safeNum(homeData.powerPlayPct) - safeNum(homeData.penaltyKillPct)) - (safeNum(awayData.powerPlayPct) - safeNum(awayData.penaltyKillPct)), homeStat: `${safeNum(homeData.powerPlayPct).toFixed(1)}% / ${safeNum(homeData.penaltyKillPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.powerPlayPct).toFixed(1)}% / ${safeNum(awayData.penaltyKillPct).toFixed(1)}%`};
             factors['Faceoff Advantage'] = { value: safeNum(homeData.faceoffWinPct) - safeNum(awayData.faceoffWinPct), homeStat: `${safeNum(homeData.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.faceoffWinPct).toFixed(1)}%`};
-
-            // This new system makes the old prediction engine redundant, so we integrate its logic here.
-            // You can add back other factors like Fatigue or H2H as needed.
 
             Object.keys(factors).forEach(factorName => {
                 if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
@@ -1931,6 +1922,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
