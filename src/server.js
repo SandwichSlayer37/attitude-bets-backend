@@ -326,6 +326,19 @@ function cleanAndParseJson(text) {
 }
 
 // =================================================================
+// ✅ MISSING CACHING FUNCTION
+// This function was accidentally removed and is required for the app to run.
+// =================================================================
+async function fetchData(key, fetcherFn, ttl = 3600000) {
+    if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
+        return dataCache.get(key).data;
+    }
+    // Await the result of the async fetcher function before caching it
+    const data = await fetcherFn();
+    dataCache.set(key, { data, timestamp: Date.now() });
+    return data;
+}
+// =================================================================
 // ✅ NEW HELPERS to prevent errors with undefined data
 // =================================================================
 
@@ -1729,4 +1742,5 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
 
