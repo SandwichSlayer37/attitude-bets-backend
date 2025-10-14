@@ -372,35 +372,6 @@ function parseEspnTeamStats(espnEvents) {
 // =================================================================
 // ✅ NEW HELPER to prevent math errors with undefined stats
 // =================================================================
-function safeNum(value) {
-    const num = parseFloat(value);
-    return (typeof num === 'number' && !isNaN(num)) ? num : 0;
-}
-
-// =================================================================
-// ✅ NEW HELPER to parse live team stats from the ESPN API data
-// =================================================================
-function parseEspnTeamStats(espnEvents) {
-    const teamStats = {};
-    if (!espnEvents) return teamStats;
-
-    espnEvents.forEach(event => {
-        const competition = event.competitions[0];
-        competition.competitors.forEach(competitor => {
-            const teamName = competitor.team.displayName;
-            const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
-            if (canonicalName && competitor.records) {
-                const overallRecord = competitor.records.find(r => r.type === 'total');
-                if (overallRecord) {
-                    teamStats[canonicalName] = {
-                        record: overallRecord.summary, // e.g., "1-0-1"
-                    };
-                }
-            }
-        });
-    });
-    return teamStats;
-}
 
 // This helper function runs the chat interaction with the AI and its tools.
 async function runAiChatWithTools(userPrompt) {
@@ -704,34 +675,40 @@ async function queryNhlStats(args) {
     }
 }
 
+const DYNAMIC_WEIGHTS = {
+    'baseball_mlb': {
+        record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12,
+        offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15
+    },
+    'icehockey_nhl': {
+        fiveOnFiveXg: 3.5,
+        highDangerBattle: 3.0,
+        specialTeamsDuel: 2.5,
+        topLinePower: 2.5,
+        historicalGoalie: 2.0,
+        finishingSkill: 1.5,
+        discipline: 1.0,
+        goalie: 2.5,
+        offensiveForm: 1.0,
+        defensiveForm: 1.0,
+        injury: 1.5,
+        fatigue: 1.0,
+        h2h: 1.0,
+        record: 0.5,
+        hotStreak: 0.8,
+        faceoffAdvantage: 0.5,
+        pdo: 1.0,
+        value: 0.5
+    },
+    'default': {
+        record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10,
+        injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5
+    }
+};
 
 function getDynamicWeights(sportKey) {
-    if (sportKey === 'baseball_mlb') {
-        return { record: 6, momentum: 5, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 12, defensiveForm: 12, h2h: 10, weather: 8, pitcher: 15 };
-    }
-    if (sportKey === 'icehockey_nhl') {
-        return {
-            fiveOnFiveXg: 3.5,
-            highDangerBattle: 3.0,
-            specialTeamsDuel: 2.5,
-            topLinePower: 2.5,
-            historicalGoalie: 2.0,
-            finishingSkill: 1.5,
-            discipline: 1.0,
-            goalie: 2.5,
-            offensiveForm: 1.0,
-            defensiveForm: 1.0,
-            injury: 1.5,
-            fatigue: 1.0,
-            h2h: 1.0,
-            record: 0.5,
-            hotStreak: 0.8,
-            faceoffAdvantage: 0.5,
-            pdo: 1.0,
-            value: 0.5
-        };
-    }
-    return { record: 8, fatigue: 7, momentum: 5, matchup: 10, value: 5, newsSentiment: 10, injuryImpact: 12, offensiveForm: 9, defensiveForm: 9, h2h: 11, weather: 5 };
+    // The NHL weights were incorrectly wrapped in a function. This is corrected.
+    return DYNAMIC_WEIGHTS[sportKey] || DYNAMIC_WEIGHTS['default'];
 }
 
 async function getProbablePitchersAndStats() {
@@ -879,97 +856,6 @@ async function getNhlLiveStats() {
         return liveData;
     }, 600000);
 }
-// =================================================================
-// ✅ CORRECTED LIVE DATA FETCHER
-// This version fixes the syntax error to prevent the server from crashing.
-// =================================================================
-async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_complete_v6_${new Date().toISOString().split('T')[0]}`;
-    // The arrow function passed to fetchData must be declared as 'async'
-    // because it uses the 'await' keyword inside it.
-    return fetchData(cacheKey, async () => { // ✅ FIX: Added the missing 'async' keyword here
-        const today = new Date().toISOString().split('T')[0];
-        const scoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
-        const teamStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
-
-        console.log(`📡 Fetching complete live NHL data...`);
-        const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
-
-        try {
-            const results = await Promise.allSettled([
-                axios.get(scoreboardUrl),
-                axios.get(teamStatsUrl)
-            ]);
-
-            const scoreboardRes = results[0];
-            const teamStatsRes = results[1];
-
-            // Step 1: Get Games from Scoreboard
-            if (scoreboardRes.status === 'fulfilled' && scoreboardRes.value.data.games && scoreboardRes.value.data.games.length > 0) {
-                liveData.games = scoreboardRes.value.data.games;
-                liveData.source = 'NHL';
-            } else {
-                console.warn(`[WARN] NHL Scoreboard failed. Attempting ESPN fallback for games...`);
-                const espnResponse = await axios.get(espnScoreboardUrl);
-                if (espnResponse.data && espnResponse.data.events) {
-                    liveData.games = espnResponse.data.events.map(event => {
-                        const comp = event.competitions[0];
-                        const home = comp.competitors.find(c => c.homeAway === 'home');
-                        const away = comp.competitors.find(c => c.homeAway === 'away');
-                        const status = event.status.type;
-                        return {
-                            id: event.id,
-                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
-                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
-                            startTimeUTC: event.date,
-                            gameState: status.state,
-                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
-                            espnData: event
-                        };
-                    });
-                    liveData.source = 'ESPN';
-                }
-            }
-            console.log(`✅ Successfully fetched ${liveData.games.length} games from source: ${liveData.source}.`);
-
-            // Step 2: Get Live Team Stats
-            if (teamStatsRes.status === 'fulfilled' && teamStatsRes.value.data.data) {
-                teamStatsRes.value.data.data.forEach(team => {
-                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                    if (canonicalName) {
-                        liveData.teamStats[canonicalName] = {
-                            record: "0-0-0",
-                            goalsForPerGame: team.goalsForPerGame,
-                            goalsAgainstPerGame: team.goalsAgainstPerGame,
-                            powerPlayPct: team.powerPlayPct,
-                            penaltyKillPct: team.penaltyKillPct,
-                            faceoffWinPct: team.faceoffWinPct,
-                        };
-                    }
-                });
-                console.log(`✅ Successfully fetched live stats for ${Object.keys(liveData.teamStats).length} teams.`);
-            } else {
-                 console.warn(`[WARN] Live NHL team stats are unavailable. Predictions will rely on historical data.`);
-            } catch (error) {
-            console.error(`[ERROR] A critical failure occurred during live data fetch.`, error);
-        }
-
-        return liveData;
-    }, 3600000);
-}
-
-// Wrapped legacy ESPN fallback block to prevent top-level await parse errors (kept for reference)
-            throw new Error("ESPN API returned no games.");
-        } catch (espnError) {
-            console.error(`[ERROR] ESPN Fallback API also failed. No live game data is available.`);
-        }
-        
-        return liveData;
-    }, 3600000); // Cache for 10 minutes
-}
-}
-
 
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
@@ -1166,11 +1052,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000);
 }
 
-// =================================================================
-// ✅ FINAL, ROBUST PREDICTION ENGINE
-// This is your complete original engine, upgraded with safeNum() and
-// safeText() to prevent crashes and 'undefined' output.
-// =================================================================
 // =================================================================
 // ✅ FINAL, ROBUST PREDICTION ENGINE
 // This is your complete original engine, upgraded with safeNum() and
@@ -1882,7 +1763,3 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
-
-
-
-
