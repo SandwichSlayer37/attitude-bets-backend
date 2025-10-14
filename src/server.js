@@ -1424,7 +1424,8 @@ app.post('/api/hockey-chat', async (req, res) => {
         } else {
             const directAnswer = response1.text();
             res.json({ answer: directAnswer });
-        } catch (error) {
+        }
+    } catch (error) {
         console.error("Hockey Chat Error:", error);
         res.status(500).json({ error: 'Failed to process chat message.' });
     }
@@ -1691,44 +1692,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // ===== PATCH4 routes =====
 if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
