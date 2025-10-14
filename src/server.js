@@ -1229,32 +1229,41 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 // =================================================================
 // END OF NHL ENGINE 2.0
 // =================================================================
+// =================================================================
+// ✅ FINAL, ROBUST PREDICTION FUNCTION
+// This version is upgraded to safely handle inconsistent data from
+// the ESPN API, preventing crashes.
+// =================================================================
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
-    // Fetch both live data from ESPN and betting odds
     const { games: liveApiGames, teamStats: liveTeamStats, source } = await getNhlLiveStats();
-    const oddsGames = await getOdds(sportKey);
 
     if (!liveApiGames || liveApiGames.length === 0) {
         console.log("No live games available to generate predictions.");
         return [];
     }
     console.log(`Generating predictions using data from source: ${source}`);
-
+    const oddsGames = await getOdds(sportKey);
     const predictions = [];
+
     for (const game of oddsGames) {
         const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
         const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
 
+        // Find the matching game from the live API feed
         const liveGameData = liveApiGames.find(lg => {
+            // ✅ FIX: Add a safety check to ensure the event is a valid game
+            // before trying to read its properties. This prevents the crash.
+            if (!lg || !lg.homeTeam || !lg.awayTeam || !lg.homeTeam.name || !lg.awayTeam.name) {
+                return false;
+            }
+            
             const liveHome = canonicalTeamNameMap[lg.homeTeam.name.default.toLowerCase()];
             const liveAway = canonicalTeamNameMap[lg.awayTeam.name.default.toLowerCase()];
             return liveHome === homeCanonical && liveAway === awayCanonical;
         });
 
-        // ✅ FIX: Pass the liveTeamStats object into the context.
-        // This provides the prediction engine with the live data it needs.
         const context = {
             teamStats: liveTeamStats,
             injuries: {},
@@ -1264,7 +1273,6 @@ async function getPredictionsForSport(sportKey) {
             probableStarters: {}
         };
 
-        // Run your powerful prediction engine with the complete context
         const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
         if (predictionData && predictionData.winner) {
@@ -1776,6 +1784,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
   console.warn("[PATCH4] Express app not detected; routes not attached.");
 }
 // ===== END PATCH4 routes =====
+
 
 
 
