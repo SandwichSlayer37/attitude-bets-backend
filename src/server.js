@@ -991,59 +991,7 @@ async function getProbablePitchersAndStats() {
 // This version is syntactically correct and properly parses all
 // necessary live game and team stat data from the ESPN fallback.
 // =================================================================
-async function getNhlLiveStats() {
-    const cacheKey = `nhl_live_stats_final_v18_${new Date().toISOString().split('T')[0]}`;
-    return fetchData(cacheKey, async () => {
-        const today = new Date().toISOString().split('T')[0];
-        const nhlScoreboardUrl = `https://api-web.nhle.com/v1/scoreboard/${today}`;
-        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
-        const liveData = { games: [], teamStats: {}, errors: [], source: 'None' };
-
-        try {
-            console.log("📡 Attempting to fetch live games from NHL API...");
-            const nhlResponse = await axios.get(nhlScoreboardUrl);
-            if (nhlResponse.data && nhlResponse.data.games && nhlResponse.data.games.length > 0) {
-                // In a future step, we would add the NHL club-stats call here.
-                liveData.games = nhlResponse.data.games;
-                liveData.source = 'NHL';
-                console.log(`✅ Successfully fetched ${liveData.games.length} games from the NHL API.`);
-                return liveData;
-            }
-            throw new Error("NHL API returned no games.");
-        } catch (nhlError) {
-            console.warn(`[WARN] Primary NHL API failed. Attempting ESPN fallback...`);
-            try {
-                const espnResponse = await axios.get(espnScoreboardUrl);
-                const espnEvents = espnResponse.data.events;
-                if (espnEvents?.length > 0) {
-                    liveData.games = espnEvents.map(event => {
-                        const comp = event.competitions[0];
-                        const home = comp.competitors.find(c => c.homeAway === 'home');
-                        const away = comp.competitors.find(c => c.homeAway === 'away');
-                        const status = event.status.type;
-                        return {
-                            id: event.id,
-                            homeTeam: { name: { default: home.team.displayName }, score: parseInt(home.score, 10) || 0 },
-                            awayTeam: { name: { default: away.team.displayName }, score: parseInt(away.score, 10) || 0 },
-                            startTimeUTC: event.date,
-                            gameState: status.state,
-                            liveDetails: { isLive: status.state === 'in', clock: status.displayClock, period: status.period, shortDetail: status.shortDetail },
-                            espnData: event
-                        };
-                    });
-                    liveData.teamStats = parseEspnTeamStats(espnEvents); // This gets the W-L records
-                    liveData.source = 'ESPN';
-                    console.log(`✅ Successfully fetched live stats and ${liveData.games.length} games from ESPN fallback.`);
-                }
-            } catch (espnError) {
-                console.error(`[CRITICAL] Both primary and fallback APIs failed: ${espnError.message}`);
-                liveData.errors.push(espnError.message);
-            }
-        }
-        return liveData;
-    }, 600000);
-}
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
     const oneDay = 1000 * 60 * 60 * 24;
@@ -1983,6 +1931,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
