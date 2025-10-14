@@ -428,6 +428,45 @@ const teamToSubredditMap = {
  * @param {string} text The raw text response from the AI.
  * @returns {object|null} The parsed JSON object, or null if no valid JSON is found.
  */
+// =================================================================
+// ✅ NEW HELPERS to prevent errors with undefined data
+// =================================================================
+
+/**
+ * Safely converts a value to a number, defaulting to 0 if invalid.
+ */
+function safeNum(value) {
+    const num = parseFloat(value);
+    return (typeof num === 'number' && !isNaN(num)) ? num : 0;
+}
+
+/**
+ * Safely converts a value to a string, defaulting to 'N/A' if null or undefined.
+ */
+function safeText(value) {
+    return (value && value !== 'undefined' && value !== 'null') ? String(value) : 'N/A';
+}
+
+/**
+ * Parses the complex ESPN API response to extract simple team records.
+ */
+function parseEspnTeamStats(espnEvents) {
+    const stats = {};
+    if (!espnEvents) return stats;
+    espnEvents.forEach(event => {
+        const comp = event.competitions?.[0];
+        if (!comp) return;
+        comp.competitors.forEach(team => {
+            const name = team.team.displayName;
+            const canonical = canonicalTeamNameMap[name.toLowerCase()] || name;
+            if (!stats[canonical]) stats[canonical] = {};
+            const overallRecord = team.records?.find(r => r.type === 'total');
+            stats[canonical].record = overallRecord?.summary || '0-0-0';
+        });
+    });
+    return stats;
+}
+
 function cleanAndParseJson(text) {
     if (!text || typeof text !== 'string') {
         console.error("cleanAndParseJson received invalid input:", text);
@@ -1335,47 +1374,77 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 // This version is upgraded to safely handle inconsistent data from
 // the ESPN API, preventing crashes.
 // =================================================================
+// =================================================================
+// ✅ NEW, UNIFIED PREDICTION SYSTEM (Replaces old functions)
+// This new pipeline uses the robust "Fusion Patch" as the single
+// source of truth for all live and historical data.
+// =================================================================
+
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // ✅ FIX: Use the new, robust "Fusion Patch" to get all live and historical data.
-        const snapshot = await buildCurrentSeasonSnapshot();
+        // Step 1: Get the complete, fused data snapshot for all teams.
+        const { date, teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
 
-        if (!snapshot.teamStats || Object.keys(snapshot.teamStats).length === 0) {
-            console.log("No live team stats available to generate predictions.");
+        if (!fusedTeamData || Object.keys(fusedTeamData).length === 0) {
+            console.warn("Fusion Snapshot returned no team data. Predictions cannot be generated.");
             return [];
         }
-        console.log(`Generating predictions using data from source: ${snapshot.source}`);
+        console.log(`Generating predictions using fused data from source: ${source}`);
 
         const predictions = [];
         for (const game of oddsGames) {
             const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
             const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+            const homeAbbr = teamToAbbrMap[homeCanonical];
+            const awayAbbr = teamToAbbrMap[awayCanonical];
 
-            // The 'teamStats' from the snapshot now contains all the rich live data.
-            const context = {
-                teamStats: snapshot.teamStats,
-                injuries: {},
-                h2h: { home: '0-0', away: '0-0' },
-                allGames: oddsGames,
-                goalieStats: {},
-                probableStarters: {}
-            };
+            const homeData = fusedTeamData[homeAbbr];
+            const awayData = fusedTeamData[awayAbbr];
 
-            // Run your powerful prediction engine with the complete context.
-            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
-
-            if (predictionData && predictionData.winner) {
-                const gameDataForUi = { ...game, sportKey: sportKey, espnData: null }; // espnData can be removed later
-                predictions.push({ game: gameDataForUi, prediction: predictionData });
+            if (!homeData || !awayData) {
+                console.warn(`Missing fused data for matchup: ${away_team} @ ${home_team}`);
+                continue;
             }
+
+            // Step 2: Run the prediction logic directly with the rich, fused data.
+            let homeScore = 50.0;
+            const factors = {};
+            const weights = getDynamicWeights('icehockey_nhl');
+
+            // Live Data Factors from the Fusion Snapshot
+            factors['Record'] = { value: safeNum(homeData.pointPctg) - safeNum(awayData.pointPctg), homeStat: safeText(homeData.record), awayStat: safeText(awayData.record) };
+            factors['Offensive Form (G/GP)'] = { value: safeNum(homeData.goalsForPerGame) - safeNum(awayData.goalsForPerGame), homeStat: safeNum(homeData.goalsForPerGame).toFixed(2), awayStat: safeNum(awayData.goalsForPerGame).toFixed(2) };
+            factors['Defensive Form (GA/GP)'] = { value: safeNum(awayData.goalsAgainstPerGame) - safeNum(homeData.goalsAgainstPerGame), homeStat: safeNum(homeData.goalsAgainstPerGame).toFixed(2), awayStat: safeNum(awayData.goalsAgainstPerGame).toFixed(2) };
+            factors['Special Teams Duel'] = { value: (safeNum(homeData.powerPlayPct) - safeNum(homeData.penaltyKillPct)) - (safeNum(awayData.powerPlayPct) - safeNum(awayData.penaltyKillPct)), homeStat: `${safeNum(homeData.powerPlayPct).toFixed(1)}% / ${safeNum(homeData.penaltyKillPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.powerPlayPct).toFixed(1)}% / ${safeNum(awayData.penaltyKillPct).toFixed(1)}%`};
+            factors['Faceoff Advantage'] = { value: safeNum(homeData.faceoffWinPct) - safeNum(awayData.faceoffWinPct), homeStat: `${safeNum(homeData.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayData.faceoffWinPct).toFixed(1)}%`};
+
+            // This new system makes the old prediction engine redundant, so we integrate its logic here.
+            // You can add back other factors like Fatigue or H2H as needed.
+
+            Object.keys(factors).forEach(factorName => {
+                if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
+                    const factorKey = { 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 'Defensive Form (GA/GP)': 'defensiveForm', 'Special Teams Duel': 'specialTeamsDuel', 'Faceoff Advantage': 'faceoffAdvantage' }[factorName];
+                    if (factorKey && weights[factorKey]) {
+                        homeScore += factors[factorName].value * weights[factorKey];
+                    }
+                }
+            });
+
+            const winner = homeScore > 50 ? game.home_team : game.away_team;
+            const confidence = Math.abs(50 - homeScore);
+            let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
+
+            const predictionData = { winner, strengthText, confidence, factors };
+            const gameDataForUi = { ...game, sportKey: sportKey, espnData: null };
+            predictions.push({ game: gameDataForUi, prediction: predictionData });
         }
         return predictions.filter(p => p && p.prediction);
 
     } catch (error) {
-        console.error("Prediction generation failed:", error.message);
+        console.error("Prediction generation failed with the new Fusion pipeline:", error.message);
         return [];
     }
 }
@@ -1914,6 +1983,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
