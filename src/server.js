@@ -397,8 +397,13 @@ async function getOdds(sportKey) {
     }, 300000); // Cache for 5 minutes
 }
 
+// =================================================================
+// ✅ FINAL, ROBUST AI INTERACTION FUNCTION
+// This version gracefully handles cases where the AI's tool finds no data,
+// preventing the final analysis from failing.
+// =================================================================
 async function runAiChatWithTools(userPrompt) {
-    const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. Use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome. You must always return your final analysis in the specified JSON format.`;
+    const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. Use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome. You must always return your final analysis in the specified JSON format. If your tool call returns an error or no data, you must indicate that in your final analysis.`;
     const chat = chatModel.startChat({
         systemInstruction: { parts: [{ text: systemPrompt }] },
     });
@@ -413,15 +418,24 @@ async function runAiChatWithTools(userPrompt) {
 
         if (call.name === 'queryNhlStats') {
             const apiResponse = await queryNhlStats(call.args);
-            if (apiResponse.error) {
-                console.error("Tool call to queryNhlStats resulted in an error:", apiResponse.error);
-                throw new Error(`Database query failed: ${apiResponse.error}`);
+            
+            // ✅ FIX: Check if the tool call returned an error or no results.
+            if (apiResponse.error || !apiResponse.results || apiResponse.results.length === 0) {
+                console.error("Tool call to queryNhlStats returned no data or an error:", apiResponse.error || "No results found.");
+                // Tell the AI that the tool failed, so it can respond intelligently.
+                const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: { error: "No data was found for the specified criteria." } } }]);
+                const responseText = result2.response.text();
+                return cleanAndParseJson(responseText);
             }
+
+            // If the tool call was successful, proceed as normal.
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: apiResponse } }]);
             const responseText = result2.response.text();
             return cleanAndParseJson(responseText);
         }
     }
+    
+    // This is the path for when the AI doesn't need to use a tool.
     const responseText = response1.text();
     return cleanAndParseJson(responseText);
 }
@@ -1580,6 +1594,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
