@@ -198,30 +198,43 @@ async function fetchClubStats(abbr) {
 // This new version uses a bulk API endpoint to get all club stats in a
 // single, reliable call, fixing the final data issue.
 // =================================================================
+// =================================================================
+// ✅ FINAL, ROBUST DATA FUSION SYSTEM
+// This new version is resilient to "no game" days at the start of the season.
+// =================================================================
 async function buildCurrentSeasonSnapshot(dateStr) {
-    const key = `fusion_snapshot:${dateStr || 'today'}`;
-    // Use a 15-minute cache for the fused data
+    const key = `fusion_snapshot:${dateStr || 'today_v2'}`;
     return __cached(key, 15 * 60 * 1000, async () => {
-        const today = new Date().toISOString().split('T')[0];
-        const standingsUrl = `https://api-web.nhle.com/v1/standings/${today}`;
-        // ✅ NEW: Use the bulk endpoint for all club stats
+        let standingsData;
+        let finalDate;
+
+        // ✅ FIX: Add a fallback for dates with no games.
+        try {
+            // First, try to get data for yesterday (the default)
+            finalDate = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
+            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
+            standingsData = standingsRes.data.standings;
+        } catch (e) {
+            // If that fails, try two days ago
+            console.warn(`[WARN] No standings found for the default date. Trying the previous day...`);
+            finalDate = new Date(Date.now() - 48 * 3600 * 1000).toISOString().slice(0, 10);
+            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
+            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
+            standingsData = standingsRes.data.standings;
+        }
+
         const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-
-        console.log("📡 Fetching unified live data from primary NHL APIs...");
-        const [standingsRes, clubStatsRes] = await Promise.all([
-            axios.get(standingsUrl, { timeout: 15000 }),
-            axios.get(allClubStatsUrl, { timeout: 15000 })
-        ]);
-
-        const standingsData = standingsRes.data.standings;
-        const clubStatsData = clubStatsRes.data.data; // This is now an array of all teams
+        const { data: clubStatsRes } = await axios.get(allClubStatsUrl, { timeout: 15000 });
+        
+        const clubStatsData = clubStatsRes.data;
         const fusedStats = {};
 
         if (!standingsData || standingsData.length === 0) {
             throw new Error("NHL Standings API returned no data. Cannot build snapshot.");
         }
 
-        // Step 1: Populate the fused object with data from the Standings API
+        // Step 1: Populate with standings data
         standingsData.forEach(team => {
             const abbr = team.teamAbbrev.default;
             if (abbr) {
@@ -236,6 +249,28 @@ async function buildCurrentSeasonSnapshot(dateStr) {
                 };
             }
         });
+
+        // Step 2: Merge in club stats data
+        if (clubStatsData && clubStatsData.length > 0) {
+            clubStatsData.forEach(team => {
+                const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                const abbr = teamToAbbrMap[canonicalName];
+                if (abbr && fusedStats[abbr]) {
+                    Object.assign(fusedStats[abbr], {
+                        goalsForPerGame: safeNum(team.goalsForPerGame),
+                        goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
+                        powerPlayPct: safeNum(team.powerPlayPct),
+                        penaltyKillPct: safeNum(team.penaltyKillPct),
+                        faceoffWinPct: safeNum(team.faceoffWinPct),
+                    });
+                }
+            });
+        }
+        
+        console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
+        return { date: finalDate, teamStats: fusedStats, source: "NHL" };
+    });
+}
 
         // Step 2: Merge in the rich data from the bulk Club Stats API
         if (clubStatsData && clubStatsData.length > 0) {
@@ -1942,6 +1977,7 @@ if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
 }
 // ===== END PATCH4 routes =====
 // ===== END PATCH4 routes =====
+
 
 
 
