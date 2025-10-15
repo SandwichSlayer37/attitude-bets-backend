@@ -23,76 +23,87 @@ function __cached(key, ttlMs, fetcher) {
 }
 
 // =================================================================
-// ✅ FINAL, RESILIENT DATA FUSION SYSTEM
-// This new version is resilient to "no game" days or empty API responses
-// by adding an automatic fallback to the previous day.
+// ✅ FINAL, RESILIENT DATA FUSION SYSTEM w/ ESPN FALLBACK
+// This new pipeline prioritizes the rich NHL API and automatically
+// falls back to the reliable ESPN API if the primary source fails.
 // =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_final_v3`;
+    const key = `fusion_snapshot_fallback_v1`;
     return __cached(key, 15 * 60 * 1000, async () => {
-        let standingsData;
-        let finalDate = 'now';
-
-        // ✅ FIX: Add a fallback for the standings API.
-        try {
-            // First, try to get data using the official '/now' endpoint.
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        } catch (e) {
-            // If that fails (often a 404 at the start of the season), try yesterday's date.
-            console.warn(`[WARN] Standings '/now' endpoint failed. Trying yesterday's date...`);
-            finalDate = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        }
-
+        const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
         const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-        const { data: clubStatsRes } = await axios.get(allClubStatsUrl, { timeout: 15000 });
-        
-        const clubStatsData = clubStatsRes.data;
-        const fusedStats = {};
+        const espnScoreboardUrl = 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard';
 
-        if (!standingsData || standingsData.length === 0) {
-            throw new Error("NHL Standings API returned no data from any source. Cannot build snapshot.");
-        }
+        const liveData = { teamStats: {}, source: 'None' };
 
-        // Step 1: Populate with standings data
-        standingsData.forEach(team => {
-            const abbr = team.teamAbbrev.default;
-            if (abbr) {
-                fusedStats[abbr] = {
-                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode + team.streakCount,
-                    points: safeNum(team.points),
-                    pointPctg: safeNum(team.pointPctg),
-                    gamesPlayed: safeNum(team.gamesPlayed),
-                    teamName: team.teamName.default,
-                    logo: team.teamLogo,
-                };
+        try {
+            // --- STEP 1: ATTEMPT TO FETCH FROM THE RICH NHL API ---
+            console.log("📡 Attempting to fetch rich data from primary NHL API...");
+            const [standingsRes, clubStatsRes] = await Promise.all([
+                axios.get(standingsUrl, { timeout: 10000 }),
+                axios.get(allClubStatsUrl, { timeout: 10000 })
+            ]);
+
+            const standingsData = standingsRes.data.standings;
+            const clubStatsData = clubStatsRes.data.data;
+
+            if (!standingsData || standingsData.length === 0) {
+                throw new Error("Primary NHL Standings API returned no data.");
             }
-        });
 
-        // Step 2: Merge in club stats data
-        if (clubStatsData && clubStatsData.length > 0) {
-            clubStatsData.forEach(team => {
-                const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                const abbr = teamToAbbrMap[canonicalName];
-                if (abbr && fusedStats[abbr]) {
-                    Object.assign(fusedStats[abbr], {
-                        goalsForPerGame: safeNum(team.goalsForPerGame),
-                        goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
-                        powerPlayPct: safeNum(team.powerPlayPct),
-                        penaltyKillPct: safeNum(team.penaltyKillPct),
-                        faceoffWinPct: safeNum(team.faceoffWinPct),
-                    });
+            // If successful, parse and merge all rich data from the NHL endpoints
+            standingsData.forEach(team => {
+                const abbr = team.teamAbbrev.default;
+                if (abbr) {
+                    liveData.teamStats[abbr] = {
+                        record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                        streak: team.streakCode + team.streakCount,
+                    };
                 }
             });
+
+            if (clubStatsData) {
+                clubStatsData.forEach(team => {
+                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
+                    const abbr = teamToAbbrMap[canonicalName];
+                    if (abbr && liveData.teamStats[abbr]) {
+                        Object.assign(liveData.teamStats[abbr], {
+                            goalsForPerGame: safeNum(team.goalsForPerGame),
+                            goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
+                            powerPlayPct: safeNum(team.powerPlayPct),
+                            penaltyKillPct: safeNum(team.penaltyKillPct),
+                            faceoffWinPct: safeNum(team.faceoffWinPct),
+                        });
+                    }
+                });
+            }
+            liveData.source = 'NHL';
+            console.log(`✅ Successfully fetched rich live stats from the NHL API.`);
+
+        } catch (nhlError) {
+            // --- STEP 2: IF NHL FAILS, USE THE LIMITED ESPN FALLBACK ---
+            console.warn(`[WARN] Primary NHL API failed. Attempting ESPN fallback...`);
+            try {
+                const espnResponse = await axios.get(espnScoreboardUrl);
+                const espnEvents = espnResponse.data.events;
+                if (espnEvents?.length > 0) {
+                    const espnStats = parseEspnTeamStats(espnEvents);
+                    // Convert ESPN stats to be keyed by abbreviation
+                    for (const teamName in espnStats) {
+                        const abbr = teamToAbbrMap[teamName];
+                        if (abbr) {
+                            liveData.teamStats[abbr] = espnStats[teamName];
+                        }
+                    }
+                    liveData.source = 'ESPN';
+                    console.log(`✅ Successfully fetched limited live stats from ESPN fallback.`);
+                }
+            } catch (espnError) {
+                console.error(`[CRITICAL] Both primary and fallback APIs failed: ${espnError.message}`);
+            }
         }
         
-        console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
-        return { date: finalDate, teamStats: fusedStats, source: "NHL" };
+        return liveData;
     });
 }
 
@@ -306,6 +317,26 @@ function safeText(value) {
     return (value && value !== 'undefined' && value !== 'null') ? String(value) : 'N/A';
 }
 
+function parseEspnTeamStats(espnEvents) {
+    const stats = {};
+    if (!espnEvents) return stats;
+    espnEvents.forEach(event => {
+        const comp = event.competitions?.[0];
+        if (!comp) return;
+        comp.competitors.forEach(team => {
+            const name = team.team.displayName;
+            const canonical = canonicalTeamNameMap[name.toLowerCase()] || name;
+            if (!stats[canonical]) stats[canonical] = {};
+            const overallRecord = team.records?.find(r => r.type === 'total');
+            stats[canonical].record = overallRecord?.summary || '0-0-0';
+        });
+    });
+    return stats;
+}
+
+/**
+ * Parses the complex ESPN API response to extract simple team records.
+ */
 function parseEspnTeamStats(espnEvents) {
     const stats = {};
     if (!espnEvents) return stats;
@@ -1568,6 +1599,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
