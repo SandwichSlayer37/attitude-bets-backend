@@ -386,6 +386,13 @@ async function runAiChatWithTools(userPrompt) {
 
     const result1 = await chat.sendMessage(userPrompt);
     const response1 = result1.response;
+
+    // LOGGING: See the raw response text from the AI
+    const responseText = response1.text();
+    console.log("----------- RAW AI RESPONSE -----------");
+    console.log(responseText);
+    console.log("---------------------------------------");
+
     const functionCalls = response1.functionCalls() || [];
 
     if (functionCalls && functionCalls.length > 0) {
@@ -395,21 +402,29 @@ async function runAiChatWithTools(userPrompt) {
         if (call.name === 'queryNhlStats') {
             const apiResponse = await queryNhlStats(call.args);
             
-            // ✅ FIX: Check if the tool call returned an error or no results.
             if (apiResponse.error || !apiResponse.results || apiResponse.results.length === 0) {
                 console.error("Tool call to queryNhlStats returned no data or an error:", apiResponse.error || "No results found.");
-                // Tell the AI that the tool failed, so it can respond intelligently.
                 const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: { error: "No data was found for the specified criteria." } } }]);
-                const responseText = result2.response.text();
-                return cleanAndParseJson(responseText);
+                
+                const responseText2 = result2.response.text();
+                console.log("----------- RAW AI RESPONSE (After Tool Error) -----------");
+                console.log(responseText2);
+                console.log("----------------------------------------------------------");
+                return cleanAndParseJson(responseText2);
             }
 
-            // If the tool call was successful, proceed as normal.
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: apiResponse } }]);
-            const responseText = result2.response.text();
-            return cleanAndParseJson(responseText);
+            const responseText2 = result2.response.text();
+            console.log("----------- RAW AI RESPONSE (After Tool Success) -----------");
+            console.log(responseText2);
+            console.log("------------------------------------------------------------");
+            return cleanAndParseJson(responseText2);
         }
     }
+    
+    // This path is for when the AI doesn't use a tool.
+    return cleanAndParseJson(responseText);
+}
     
     // This is the path for when the AI doesn't need to use a tool.
     const responseText = response1.text();
@@ -1454,24 +1469,28 @@ const V3_ANALYSIS_SCHEMA = {
   "confidenceRationale": "string"
 };
 
-// =================================================================
-// ✅ FINAL, ROBUST AI ANALYSIS ENDPOINT
-// This version uses the tool-aware 'runAiChatWithTools' function,
-// enabling the intelligent 2024 -> 2023 fallback to work correctly.
-// =================================================================
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
 
         const generatePromptForSeason = (season) => {
-            const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
+            // FIX: Filter out factors with 'N/A' to create a cleaner prompt.
+            const factorsList = Object.entries(prediction.factors)
+                .filter(([key, value]) => value && value.homeStat !== 'N/A' && value.awayStat !== 'N/A')
+                .map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`)
+                .join('\n');
+            
+            if (!factorsList) {
+                console.error("Could not generate factors list for AI prompt. Prediction data might be empty.");
+            }
+
             const liveStatsInfo = game.espnData?.liveDetails
                 ? `Current Score: ${game.espnData.awayTeam.name.default} ${game.espnData.awayTeam.score} - ${game.espnData.homeTeam.name.default} ${game.espnData.homeTeam.score}\nStatus: ${game.espnData.liveDetails.shortDetail}`
                 : 'No live game stats available (pre-game).';
 
-            const instruction = season === 2024
-                ? "Your primary analysis MUST use the current season's data (2024). Use your queryNhlStats tool to find supporting historical data."
-                : "CRITICAL FALLBACK: Analysis for the current 2024 season failed. Your historical analysis MUST use the most recent completed season's data, which is season 2023. Use your queryNhlStats tool to find supporting historical data.";
+            const instruction = new Date().getFullYear() === season
+                ? `Your primary analysis MUST use the current season's data (${season}). Use your queryNhlStats tool to find supporting historical data.`
+                : `CRITICAL FALLBACK: Analysis for the current season failed. Your historical analysis MUST use the most recent completed season's data, which is season ${season}. Use your queryNhlStats tool to find supporting historical data.`;
 
             return `
 **SYSTEM ANALYSIS REPORT**
@@ -1481,7 +1500,7 @@ app.post('/api/ai-analysis', async (req, res) => {
 ${liveStatsInfo}
 
 **Prediction Model Factors:**
-${factorsList}
+${factorsList || 'No valid factors available.'}
 
 **TASK:**
 You are an expert sports betting analyst. Synthesize all the provided data to complete the following JSON object. ${instruction}
@@ -1493,23 +1512,42 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 `;
         };
 
+        // --- Get current and previous season years dynamically ---
+        const currentSeasonYear = new Date().getFullYear();
+        const lastCompletedSeasonYear = currentSeasonYear - 1;
+
         let analysisData;
         try {
-            console.log("Attempting AI analysis with current season data (2024)...");
-            const userPrompt2024 = generatePromptForSeason(2024);
-            analysisData = await runAiChatWithTools(userPrompt2024);
+            console.log(`Attempting AI analysis with current season data (${currentSeasonYear})...`);
+            const userPromptCurrent = generatePromptForSeason(currentSeasonYear);
+            
+            // LOGGING: Print the exact prompt being sent to the AI
+            console.log("----------- PROMPT SENT TO GEMINI (Current Season) -----------");
+            console.log(userPromptCurrent);
+            console.log("-------------------------------------------------------------");
+
+            analysisData = await runAiChatWithTools(userPromptCurrent);
+
             if (!analysisData || !analysisData.finalPick) {
-                throw new Error("AI analysis for 2024 returned incomplete or invalid JSON.");
+                throw new Error(`AI analysis for ${currentSeasonYear} returned incomplete or invalid JSON.`);
             }
-            console.log("✅ Successfully generated AI analysis using 2024 data.");
-        } catch (error2024) {
-            console.warn(`[WARN] AI analysis using 2024 data failed: ${error2024.message}. Falling back to last completed season (2023).`);
-            const userPrompt2023 = generatePromptForSeason(2023);
-            analysisData = await runAiChatWithTools(userPrompt2023); 
-            if (!analysisData) {
-                throw new Error("AI analysis fallback for 2023 also failed to produce valid JSON.");
+            console.log(`✅ Successfully generated AI analysis using ${currentSeasonYear} data.`);
+
+        } catch (errorCurrent) {
+            console.warn(`[WARN] AI analysis using ${currentSeasonYear} data failed: ${errorCurrent.message}. Falling back to last completed season (${lastCompletedSeasonYear}).`);
+            
+            const userPromptFallback = generatePromptForSeason(lastCompletedSeasonYear);
+
+            // LOGGING: Print the exact fallback prompt
+            console.log(`----------- PROMPT SENT TO GEMINI (Fallback Season ${lastCompletedSeasonYear}) -----------`);
+            console.log(userPromptFallback);
+            console.log("----------------------------------------------------------------------");
+
+            analysisData = await runAiChatWithTools(userPromptFallback); 
+            if (!analysisData || !analysisData.finalPick) {
+                throw new Error(`AI analysis fallback for ${lastCompletedSeasonYear} also failed to produce valid JSON.`);
             }
-            console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
+            console.log(`✅ Successfully generated AI analysis using ${lastCompletedSeasonYear} fallback data.`);
         }
 
         res.json({ analysisData });
@@ -1552,4 +1590,5 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
