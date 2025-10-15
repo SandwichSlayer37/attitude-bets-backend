@@ -969,8 +969,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
     const homeCanonical = canonicalTeamNameMap[home_team.toLowerCase()] || home_team;
     const awayCanonical = canonicalTeamNameMap[away_team.toLowerCase()] || away_team;
-    const homeAbbr = teamToAbbrMap[homeCanonical] || homeCanonical;
-    const awayAbbr = teamToAbbrMap[awayCanonical] || awayCanonical;
+    const homeAbbr = teamToAbbrMap[homeCanonical];
+    const awayAbbr = teamToAbbrMap[awayCanonical];
+    
+    // ✅ FIX: Explicitly use the last completed season for all historical data.
+    // This will stop the "[WARN] No top line metrics found..." log spam.
     const previousSeasonId = new Date().getFullYear() - 1;
 
     const [historicalMetrics, [homeAdvStats, awayAdvStats], topLineMetrics] = await Promise.all([
@@ -993,6 +996,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeAbbr] || {};
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
+    // --- All Factor Calculations ---
     const homeGoalieData = homeHist.goalies?.find(g => g.name === probableStarters[homeCanonical]);
     const awayGoalieData = awayHist.goalies?.find(g => g.name === probableStarters[awayCanonical]);
     const homeGSAx = safeNum(homeGoalieData?.xGoals) - safeNum(homeGoalieData?.goals);
@@ -1009,7 +1013,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['High-Danger Battle'] = { value: safeNum(homeAdvStats.hdcfPercentage) - safeNum(awayAdvStats.hdcfPercentage), homeStat: `${safeNum(homeAdvStats.hdcfPercentage).toFixed(1)}%`, awayStat: `${safeNum(awayAdvStats.hdcfPercentage).toFixed(1)}%` };
     factors['Special Teams Duel'] = { value: safeNum(homeAdvStats.specialTeamsRating) - safeNum(awayAdvStats.specialTeamsRating), homeStat: `${safeNum(homeAdvStats.specialTeamsRating).toFixed(2)}`, awayStat: `${safeNum(awayAdvStats.specialTeamsRating).toFixed(2)}` };
     factors['PDO (Luck Factor)'] = { value: safeNum(homeAdvStats.pdo) - safeNum(awayAdvStats.pdo), homeStat: `${safeNum(homeAdvStats.pdo).toFixed(0)}`, awayStat: `${safeNum(awayAdvStats.pdo).toFixed(0)}` };
-
     factors['Faceoff Advantage'] = { value: safeNum(homeRealTimeStats.faceoffWinPct) - safeNum(awayRealTimeStats.faceoffWinPct), homeStat: `${safeNum(homeRealTimeStats.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayRealTimeStats.faceoffWinPct).toFixed(1)}%` };
     factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: safeText(homeRealTimeStats.record), awayStat: safeText(awayRealTimeStats.record) };
     factors['Offensive Form (G/GP)'] = { value: safeNum(homeRealTimeStats.goalsForPerGame) - safeNum(awayRealTimeStats.goalsForPerGame), homeStat: `${safeNum(homeRealTimeStats.goalsForPerGame).toFixed(2)}`, awayStat: `${safeNum(awayRealTimeStats.goalsForPerGame).toFixed(2)}` };
@@ -1024,17 +1027,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         goalieValue = (safeNum(awayGoalieStats.gaa) - safeNum(homeGoalieStats.gaa)) + ((safeNum(homeGoalieStats.svPct) - safeNum(awayGoalieStats.svPct)) * 100);
     }
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeGoalieStats ? `${safeNum(homeGoalieStats.svPct).toFixed(3)}` : 'N/A', awayStat: awayGoalieStats ? `${safeNum(awayGoalieStats.svPct).toFixed(3)}` : 'N/A' };
-    
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
-    factors['Fatigue'] = {
-        value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))),
-        homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`,
-        awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts`
-    };
-    const homeInjuryImpact = injuries[homeCanonical]?.length || 0;
-    const awayInjuryImpact = injuries[awayCanonical]?.length || 0;
-    factors['Injury Impact'] = { value: awayInjuryImpact - homeInjuryImpact, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
+    factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
+    const homeInjuryImpact = (injuries && injuries[homeCanonical]) ? injuries[homeCanonical].length : 0;
+    const awayInjuryImpact = (injuries && injuries[awayCanonical]) ? injuries[awayCanonical].length : 0;
+    factors['Injury Impact'] = { value: awayInjuryImpact - homeInjuryImpact, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`};
 
+    // Final Scoring
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
@@ -1581,6 +1580,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
