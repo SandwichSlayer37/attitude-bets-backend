@@ -1,139 +1,19 @@
 const mongoose = require('mongoose');
-// ===== PATCH4: Fusion helpers (standings + club-stats + Mongo historical) =====
+require('dotenv').config();
+const express = require('express');
+const path = require('path');
+const cors = require('cors');
+const axios = require('axios');
+const Snoowrap = require('snoowrap');
+const { MongoClient } = require('mongodb');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-async function fetchStandingsByDate(dateStr) {
-  const date = dateStr || new Date(Date.now() - 24*3600*1000).toISOString().slice(0,10);
-  const key = `standings:${date}`;
-  return __cached(key, 30*60*1000, async () => {
-    const url = `https://api-web.nhle.com/v1/standings/${date}`;
-    const { data } = await axios.get(url, { timeout: 15000 });
-    const rows = Array.isArray(data?.standings) ? data.standings : [];
-    const out = {};
-    for (const r of rows) {
-      const abbrev = r?.teamAbbrev?.default || r?.teamAbbrev || r?.teamAbbrevTricode || r?.teamCommonName?.default;
-      if (!abbrev) continue;
-      const wins = Number(r?.wins || 0), losses = Number(r?.losses || 0), ot = Number(r?.otLosses || 0);
-      const gp = Number(r?.gamesPlayed || (wins + losses + ot));
-      out[abbrev] = {
-        record: `${wins}-${losses}-${ot}`,
-        points: Number(r?.points || 0),
-        pointPctg: Number(r?.pointPctg ?? 0),
-        goalsFor: Number(r?.goalFor ?? 0),
-        goalsAgainst: Number(r?.goalAgainst ?? 0),
-        goalDifferential: Number(r?.goalDifferential ?? 0),
-        gamesPlayed: gp,
-        l10Record: `${Number(r?.l10Wins||0)}-${Number(r?.l10Losses||0)}-${Number(r?.l10OtLosses||0)}`,
-        streak: (r?.streakCode ? `${r.streakCode}${r?.streakCount||""}` : null),
-        placeName: r?.placeName?.default || null,
-        teamName: r?.teamName?.default || null,
-        teamCommonName: r?.teamCommonName?.default || null,
-        logo: r?.teamLogo || null,
-        winPct: gp > 0 ? (wins/gp) : 0,
-      };
-    }
-    return { date, teams: out };
-  });
-}
-async function fetchClubStats(abbr) {
-  const key = `clubstats:${abbr}`;
-  return __cached(key, 5*60*1000, async () => {
-    const url = `https://api-web.nhle.com/v1/club-stats/${abbr}`;
-    try {
-      const { data } = await axios.get(url, { timeout: 12000 });
-      const s = data || {}; const sk = s.skaterStats || s;
-      return {
-        goalsForPerGame: Number(sk.goalsForPerGame ?? 0),
-        goalsAgainstPerGame: Number(sk.goalsAgainstPerGame ?? 0),
-        powerPlayPct: Number(sk.ppPctg ?? 0),
-        penaltyKillPct: Number(sk.pkPctg ?? 0),
-        faceoffWinPct: Number(sk.faceoffWinPctg ?? 0),
-      };
-    } catch {
-      return { goalsForPerGame:0, goalsAgainstPerGame:0, powerPlayPct:0, penaltyKillPct:0, faceoffWinPct:0 };
-    }
-  });
-}
-async function buildCurrentSeasonSnapshot(dateStr) {
-  const { date, teams } = await fetchStandingsByDate(dateStr);
-  const out = {};
-  const keys = Object.keys(teams);
-  await Promise.all(keys.map(async k => {
-    const cs = await fetchClubStats(k);
-    out[k] = { ...teams[k], ...cs };
-  }));
-  return { date, teamStats: out, source: "NHL" };
-}
-async function fetchHistoricalTeamContext(teamAbbrev) {
-  try {
-    const db = (mongoose && mongoose.connection && mongoose.connection.db) ? mongoose.connection.db : null;
-    if (!db) return {};
-    const TEAMS = db.collection('teams');
-    const ADV = db.collection('nhl_advanced_stats');
-    const result = { team: teamAbbrev };
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '5mb' }));
+app.use(express.static(path.join(__dirname, '..', 'Public')));
 
-    // TEAMS aggregates
-    try {
-      const cursor = TEAMS.aggregate([
-        { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
-        { $group: { _id:"$team",
-          seasons: { $addToSet: "$season" },
-          totalWins: { $sum: { $ifNull:["$wins",0]} },
-          totalLosses: { $sum: { $ifNull:["$losses",0]} },
-          totalOtLosses: { $sum: { $ifNull:["$otLosses",0]} },
-          totalGF: { $sum: { $ifNull:["$goalsFor",0]} },
-          totalGA: { $sum: { $ifNull:["$goalsAgainst",0]} },
-          gamesPlayed: { $sum: { $ifNull:["$gamesPlayed",0]} },
-          avgWinPct: { $avg: { $ifNull:["$winPct",0]} },
-        } },
-        { $limit: 1 }
-      ]);
-      const doc = await cursor.next();
-      if (doc) {
-        const totalGames = (doc.totalWins + doc.totalLosses + doc.totalOtLosses);
-        result.avgWinPct = (typeof doc.avgWinPct === 'number' && !Number.isNaN(doc.avgWinPct)) ? doc.avgWinPct : (doc.totalWins / Math.max(totalGames,1));
-        result.avgGF = (doc.gamesPlayed > 0) ? (doc.totalGF / doc.gamesPlayed) : undefined;
-        result.avgGA = (doc.gamesPlayed > 0) ? (doc.totalGA / doc.gamesPlayed) : undefined;
-        result.sampleSeasons = (doc.seasons || []).length || undefined;
-      }
-    } catch {}
-
-    // fallback from ADV
-    if (result.avgGF == null || result.avgGA == null) {
-      try {
-        const adv = await ADV.aggregate([
-          { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
-          { $group: { _id:"$team", totalGF:{ $sum:{ $ifNull:["$goalsFor",0]} }, totalGA:{ $sum:{ $ifNull:["$goalsAgainst",0]} }, games:{ $sum:1 } } },
-          { $limit: 1 }
-        ]).toArray();
-        if (adv && adv[0] && adv[0].games > 0) {
-          if (result.avgGF == null) result.avgGF = adv[0].totalGF / adv[0].games;
-          if (result.avgGA == null) result.avgGA = adv[0].totalGA / adv[0].games;
-        }
-      } catch {}
-    }
-    return result;
-  } catch { return {}; }
-}
-function mergeHistoricalCurrent(historical, current) {
-  const wHist = 0.7, wCurr = 0.3;
-  const out = { ...current };
-  if (historical && Object.keys(historical).length) {
-    out.historical = historical;
-    if (historical.avgGF != null && current.goalsForPerGame != null) out.weightedGF = (historical.avgGF*wHist) + (current.goalsForPerGame*wCurr);
-    if (historical.avgGA != null && current.goalsAgainstPerGame != null) out.weightedGA = (historical.avgGA*wHist) + (current.goalsAgainstPerGame*wCurr);
-    if (historical.avgWinPct != null && current.winPct != null) out.weightedWinPct = (historical.avgWinPct*wHist) + (current.winPct*wCurr);
-  }
-  return out;
-}
-// ===== END PATCH4 helpers =====
-// ===== Attitude Sports Bets Live AI Patch =====
-// Patched: 2025-10-12
-// Patch #: 1
-// Changes: Fixed ESPN fallback async closure + Render deploy syntax error
-// Author: ChatGPT (Jonathan’s dev assistant)
-
-
-// ===== PATCH4: Fusion helpers (standings + club-stats + Mongo historical) =====
+// --- CACHING HELPER ---
 const __FUSION_CACHE = new Map();
 function __cached(key, ttlMs, fetcher) {
   const now = Date.now();
@@ -141,93 +21,29 @@ function __cached(key, ttlMs, fetcher) {
   if (hit && (now - hit.t) < ttlMs) return hit.v;
   return Promise.resolve(fetcher()).then(v => { __FUSION_CACHE.set(key, { t: now, v }); return v; });
 }
-async function fetchStandingsByDate(dateStr) {
-  const date = dateStr || new Date(Date.now() - 24*3600*1000).toISOString().slice(0,10);
-  const key = `standings:${date}`;
-  return __cached(key, 30*60*1000, async () => {
-    const url = `https://api-web.nhle.com/v1/standings/${date}`;
-    const { data } = await axios.get(url, { timeout: 15000 });
-    const rows = Array.isArray(data?.standings) ? data.standings : [];
-    const out = {};
-    for (const r of rows) {
-      const abbrev = r?.teamAbbrev?.default || r?.teamAbbrev || r?.teamAbbrevTricode || r?.teamCommonName?.default;
-      if (!abbrev) continue;
-      const wins = Number(r?.wins || 0), losses = Number(r?.losses || 0), ot = Number(r?.otLosses || 0);
-      const gp = Number(r?.gamesPlayed || (wins + losses + ot));
-      out[abbrev] = {
-        record: `${wins}-${losses}-${ot}`,
-        points: Number(r?.points || 0),
-        pointPctg: Number(r?.pointPctg ?? 0),
-        goalsFor: Number(r?.goalFor ?? 0),
-        goalsAgainst: Number(r?.goalAgainst ?? 0),
-        goalDifferential: Number(r?.goalDifferential ?? 0),
-        gamesPlayed: gp,
-        l10Record: `${Number(r?.l10Wins||0)}-${Number(r?.l10Losses||0)}-${Number(r?.l10OtLosses||0)}`,
-        streak: (r?.streakCode ? `${r.streakCode}${r?.streakCount||""}` : null),
-        placeName: r?.placeName?.default || null,
-        teamName: r?.teamName?.default || null,
-        teamCommonName: r?.teamCommonName?.default || null,
-        logo: r?.teamLogo || null,
-        winPct: gp > 0 ? (wins/gp) : 0,
-      };
-    }
-    return { date, teams: out };
-  });
-}
-async function fetchClubStats(abbr) {
-  const key = `clubstats:${abbr}`;
-  return __cached(key, 5*60*1000, async () => {
-    const url = `https://api-web.nhle.com/v1/club-stats/${abbr}`;
-    try {
-      const { data } = await axios.get(url, { timeout: 12000 });
-      const s = data || {}; const sk = s.skaterStats || s;
-      return {
-        goalsForPerGame: Number(sk.goalsForPerGame ?? 0),
-        goalsAgainstPerGame: Number(sk.goalsAgainstPerGame ?? 0),
-        powerPlayPct: Number(sk.ppPctg ?? 0),
-        penaltyKillPct: Number(sk.pkPctg ?? 0),
-        faceoffWinPct: Number(sk.faceoffWinPctg ?? 0),
-      };
-    } catch {
-      return { goalsForPerGame:0, goalsAgainstPerGame:0, powerPlayPct:0, penaltyKillPct:0, faceoffWinPct:0 };
-    }
-  });
-}
+
 // =================================================================
-// ✅ FINAL, ROBUST DATA FUSION SYSTEM
-// This new version uses a bulk API endpoint to get all club stats in a
-// single, reliable call, fixing the final data issue.
+// ✅ FINAL, SIMPLIFIED DATA FUSION SYSTEM
+// This version uses the official '/now' endpoint, which is the most
+// reliable way to get current data and avoids timezone bugs.
 // =================================================================
-// =================================================================
-// ✅ FINAL, ROBUST DATA FUSION SYSTEM
-// This new version is resilient to "no game" days at the start of the season.
-// =================================================================
-async function buildCurrentSeasonSnapshot(dateStr) {
-    const key = `fusion_snapshot:${dateStr || 'today_v2'}`;
+async function buildCurrentSeasonSnapshot() {
+    const key = `fusion_snapshot_now_v1`;
+    // Use a 15-minute cache for the fused data
     return __cached(key, 15 * 60 * 1000, async () => {
-        let standingsData;
-        let finalDate;
-
-        // ✅ FIX: Add a fallback for dates with no games.
-        try {
-            // First, try to get data for yesterday (the default)
-            finalDate = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        } catch (e) {
-            // If that fails, try two days ago
-            console.warn(`[WARN] No standings found for the default date. Trying the previous day...`);
-            finalDate = new Date(Date.now() - 48 * 3600 * 1000).toISOString().slice(0, 10);
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        }
-
+        // ✅ FIX: Use the '/now' endpoint for both standings and club stats.
+        // This is the most reliable method and avoids all date/timezone issues.
+        const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
         const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-        const { data: clubStatsRes } = await axios.get(allClubStatsUrl, { timeout: 15000 });
-        
-        const clubStatsData = clubStatsRes.data;
+
+        console.log("📡 Fetching unified live data from primary NHL '/now' APIs...");
+        const [standingsRes, clubStatsRes] = await Promise.all([
+            axios.get(standingsUrl, { timeout: 15000 }),
+            axios.get(allClubStatsUrl, { timeout: 15000 })
+        ]);
+
+        const standingsData = standingsRes.data.standings;
+        const clubStatsData = clubStatsRes.data.data;
         const fusedStats = {};
 
         if (!standingsData || standingsData.length === 0) {
@@ -268,31 +84,10 @@ async function buildCurrentSeasonSnapshot(dateStr) {
         }
         
         console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
-        return { date: finalDate, teamStats: fusedStats, source: "NHL" };
+        return { date: new Date().toISOString().slice(0,10), teamStats: fusedStats, source: "NHL" };
     });
 }
 
-        // Step 2: Merge in the rich data from the bulk Club Stats API
-        if (clubStatsData && clubStatsData.length > 0) {
-            clubStatsData.forEach(team => {
-                const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                const abbr = teamToAbbrMap[canonicalName];
-                if (abbr && fusedStats[abbr]) {
-                    Object.assign(fusedStats[abbr], {
-                        goalsForPerGame: safeNum(team.goalsForPerGame),
-                        goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
-                        powerPlayPct: safeNum(team.powerPlayPct),
-                        penaltyKillPct: safeNum(team.penaltyKillPct),
-                        faceoffWinPct: safeNum(team.faceoffWinPct),
-                    });
-                }
-            });
-        }
-        
-        console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
-        return { date: today, teamStats: fusedStats, source: "NHL" };
-    });
-}
 async function fetchHistoricalTeamContext(teamAbbrev) {
   try {
     const db = (mongoose && mongoose.connection && mongoose.connection.db) ? mongoose.connection.db : null;
@@ -355,20 +150,6 @@ function mergeHistoricalCurrent(historical, current) {
   }
   return out;
 }
-// ===== END PATCH4 helpers =====
-require('dotenv').config();
-const express = require('express');
-const path = require('path');
-const cors = require('cors');
-const axios = require('axios');
-const Snoowrap = require('snoowrap');
-const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -508,38 +289,15 @@ const teamToSubredditMap = {
 };
 
 // --- HELPER FUNCTIONS ---
-/**
-/**
- * A robust function to find and parse the final JSON analysis from a raw string.
- * This is critical because the Gemini API, when using tools, may return a
- * string containing preliminary text or tool responses before the final JSON object.
- * This function uses a regular expression to guarantee it only extracts the
- * valid JSON object containing the required "finalPick" key.
- * @param {string} text The raw text response from the AI.
- * @returns {object|null} The parsed JSON object, or null if no valid JSON is found.
- */
-// =================================================================
-// ✅ NEW HELPERS to prevent errors with undefined data
-// =================================================================
-
-/**
- * Safely converts a value to a number, defaulting to 0 if invalid.
- */
 function safeNum(value) {
     const num = parseFloat(value);
     return (typeof num === 'number' && !isNaN(num)) ? num : 0;
 }
 
-/**
- * Safely converts a value to a string, defaulting to 'N/A' if null or undefined.
- */
 function safeText(value) {
     return (value && value !== 'undefined' && value !== 'null') ? String(value) : 'N/A';
 }
 
-/**
- * Parses the complex ESPN API response to extract simple team records.
- */
 function parseEspnTeamStats(espnEvents) {
     const stats = {};
     if (!espnEvents) return stats;
@@ -576,120 +334,48 @@ function cleanAndParseJson(text) {
             return null;
         }
     } else {
-        console.error("Could not find a valid JSON object with the key 'finalPick' in the text:", text);
+        // Fallback for arbitration schema
+        const arbRegex = /{[^]*"finalVerdict"[^]*}/;
+        const arbMatch = text.match(arbRegex);
+        if (arbMatch && arbMatch[0]) {
+            const jsonString = arbMatch[0];
+            try {
+                return JSON.parse(jsonString);
+            } catch(e) { /* fall through */ }
+        }
+        console.error("Could not find a valid JSON object in the text:", text);
         return null;
     }
 }
-// =================================================================
-// ✅ MISSING ODDS FUNCTION
-// This function was accidentally removed and is required for the app to run.
-// =================================================================
-async function getOdds(sportKey) {
-    const cacheKey = `odds_${sportKey}`;
-    // Odds change frequently, so use a shorter cache time (e.g., 5 minutes)
-    return fetchData(cacheKey, async () => {
-        try {
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`, {
-                params: {
-                    apiKey: ODDS_API_KEY,
-                    regions: 'us',
-                    markets: 'h2h',
-                    oddsFormat: 'decimal',
-                }
-            });
-            return data;
-        } catch (error) {
-            console.error(`Could not fetch odds for ${sportKey}:`, error.response ? error.response.data.message : error.message);
-            return []; // Return an empty array on failure so the app doesn't crash
-        }
-    }, 300000); // Cache for 5 minutes
-}
-// =================================================================
-// ✅ MISSING ODDS FUNCTION
-// This function was accidentally removed and is required for the app to run.
-// =================================================================
-async function getOdds(sportKey) {
-    const cacheKey = `odds_${sportKey}`;
-    // Odds change frequently, so use a shorter cache time (e.g., 5 minutes)
-    return fetchData(cacheKey, async () => {
-        try {
-            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`, {
-                params: {
-                    apiKey: ODDS_API_KEY,
-                    regions: 'us',
-                    markets: 'h2h',
-                    oddsFormat: 'decimal',
-                }
-            });
-            return data;
-        } catch (error) {
-            console.error(`Could not fetch odds for ${sportKey}:`, error.response ? error.response.data.message : error.message);
-            return []; // Return an empty array on failure so the app doesn't crash
-        }
-    }, 300000); // Cache for 5 minutes
-}
-// =================================================================
-// ✅ MISSING CACHING FUNCTION
-// This function was accidentally removed and is required for the app to run.
-// =================================================================
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
     }
-    // Await the result of the async fetcher function before caching it
     const data = await fetcherFn();
     dataCache.set(key, { data, timestamp: Date.now() });
     return data;
 }
-// =================================================================
-// ✅ NEW HELPERS to prevent errors with undefined data
-// =================================================================
 
-/**
- * Safely converts a value to a number, defaulting to 0 if invalid.
- * This prevents NaN errors in calculations.
- */
-function safeNum(value) {
-    const num = parseFloat(value);
-    return (typeof num === 'number' && !isNaN(num)) ? num : 0;
+async function getOdds(sportKey) {
+    const cacheKey = `odds_${sportKey}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`, {
+                params: {
+                    apiKey: ODDS_API_KEY,
+                    regions: 'us',
+                    markets: 'h2h',
+                    oddsFormat: 'decimal',
+                }
+            });
+            return data;
+        } catch (error) {
+            console.error(`Could not fetch odds for ${sportKey}:`, error.response ? error.response.data.message : error.message);
+            return [];
+        }
+    }, 300000); // Cache for 5 minutes
 }
 
-/**
- * Safely converts a value to a string, defaulting to 'N/A' if null or undefined.
- * This prevents the word "undefined" from appearing in the UI or AI prompts.
- */
-function safeText(value) {
-    return (value && value !== 'undefined' && value !== 'null') ? String(value) : 'N/A';
-}
-
-/**
- * Parses the complex ESPN API response to extract simple team records.
- * This function was missing, causing live stats to fail.
- */
-function parseEspnTeamStats(espnEvents) {
-    const stats = {};
-    if (!espnEvents) return stats;
-    espnEvents.forEach(event => {
-        const comp = event.competitions?.[0];
-        if (!comp) return;
-        comp.competitors.forEach(team => {
-            const name = team.team.displayName;
-            const canonical = canonicalTeamNameMap[name.toLowerCase()] || name;
-            if (!stats[canonical]) stats[canonical] = {};
-            // Correctly finds the overall season record from the records array
-            const overallRecord = team.records?.find(r => r.type === 'total');
-            stats[canonical].record = overallRecord?.summary || '0-0-0';
-        });
-    });
-    return stats;
-}
-
-
-// =================================================================
-// ✅ NEW HELPER to prevent math errors with undefined stats
-// =================================================================
-
-// This helper function runs the chat interaction with the AI and its tools.
 async function runAiChatWithTools(userPrompt) {
     const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. Use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome. You must always return your final analysis in the specified JSON format.`;
     const chat = chatModel.startChat({
@@ -844,7 +530,6 @@ async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
 
-    // Translation map for conceptual stats requested by the AI
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
@@ -864,14 +549,13 @@ async function queryNhlStats(args) {
             customCalculation = translation.customCalculation;
         } else {
             if(translation.situation) situationOverride = translation.situation;
-            stat = translation.newStat; // Use the translated database field name
+            stat = translation.newStat; 
         }
     }
 
     if (!season || !dataType || (!stat && !customCalculation)) {
         return { error: "A season, dataType, and a stat are required." };
     }
-    // Ensure we don't query a non-existent stat unless it's a custom calculation
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
@@ -887,14 +571,12 @@ async function queryNhlStats(args) {
             pipeline.push({ $match: { team: teamAbbr } });
         }
         
-        // --- Custom Calculation Logic ---
         if (customCalculation === 'GSAx' && dataType === 'goalie') {
             pipeline.push({ $match: { position: 'G', situation: 'all' } });
             if (playerName) pipeline.push({ $match: { name: playerName } });
             pipeline.push({
                 $project: {
                     _id: 0, name: 1, team: 1,
-                    // CRITICAL FIX: Convert string fields to numbers before subtracting
                     statValue: { $subtract: [ { $toDouble: "$xGoals" }, { $toDouble: "$goals" } ] }
                 }
             });
@@ -903,8 +585,7 @@ async function queryNhlStats(args) {
         } else if (customCalculation === 'shootingPercentage' && dataType === 'team') {
             pipeline.push({ 
                 $group: { 
-                    _id: "$name", // Group by full team name
-                     // CRITICAL FIX: Convert to double during summation
+                    _id: "$name", 
                     totalGoalsFor: { $sum: { $toDouble: "$goalsFor" } }, 
                     totalShotsOnGoalFor: { $sum: { $toDouble: "$shotsOnGoalFor" } } 
                 } 
@@ -922,7 +603,6 @@ async function queryNhlStats(args) {
             pipeline.push({ 
                 $group: { 
                     _id: "$name", 
-                    // CRITICAL FIX: Convert to double during summation
                     totalGoalsAgainst: { $sum: { $toDouble: "$goalsAgainst" } }, 
                     totalShotsOnGoalAgainst: { $sum: { $toDouble: "$shotsOnGoalAgainst" } } 
                 } 
@@ -942,17 +622,14 @@ async function queryNhlStats(args) {
             pipeline.push({ 
                 $project: { 
                     _id: 0, name: 1, team: 1, 
-                    // CRITICAL FIX: Convert fields to numbers before division
                     statValue: { $cond: [ { $eq: [{ $toDouble: "$unblocked_shot_attempts" }, 0] }, 0, { $subtract: [1, { $divide: [{ $toDouble: "$goals" }, { $toDouble: "$unblocked_shot_attempts" }] }] } ] } 
                 } 
             });
             pipeline.push({ $sort: { statValue: -1 } });
             pipeline.push({ $limit: parseInt(limit, 10) });
         } 
-        // --- Standard Stat Query Logic ---
         else {
             if (situationOverride) pipeline.push({ $match: { situation: situationOverride } });
-            // For players/goalies, we almost always want 'all' situations unless specified
             else if (dataType !== 'team') pipeline.push({ $match: { situation: 'all' } });
 
             if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
@@ -964,8 +641,7 @@ async function queryNhlStats(args) {
             if (dataType === 'team') {
                 pipeline.push({ 
                     $group: { 
-                        _id: "$name", // Use the full team name for display
-                        // CRITICAL FIX: Convert the stat to a number before summing it up
+                        _id: "$name",
                         statValue: { $sum: { $toDouble: `$${stat}` } } 
                     } 
                 });
@@ -973,7 +649,6 @@ async function queryNhlStats(args) {
                 pipeline.push({ $limit: parseInt(limit, 10) });
                 pipeline.push({ $project: { _id: 0, team: "$_id", statValue: 1 } });
             } else { // Skater or Goalie
-                // CRITICAL FIX: Create a new numeric field from the string stat for sorting and returning
                 pipeline.push({ $set: { numericStat: { $toDouble: `$${stat}` } } });
                 pipeline.push({ $sort: { numericStat: -1 } });
                 pipeline.push({ $limit: parseInt(limit, 10) });
@@ -1023,7 +698,6 @@ const DYNAMIC_WEIGHTS = {
 };
 
 function getDynamicWeights(sportKey) {
-    // The NHL weights were incorrectly wrapped in a function. This is corrected.
     return DYNAMIC_WEIGHTS[sportKey] || DYNAMIC_WEIGHTS['default'];
 }
 
@@ -1076,12 +750,6 @@ async function getProbablePitchersAndStats() {
         }
     }, 14400000);
 }
-// =================================================================
-// ✅ FINAL, CORRECTED LIVE DATA FETCHER
-// This version is syntactically correct and properly parses all
-// necessary live game and team stat data from the ESPN fallback.
-// =================================================================
-
 
 function calculateFatigue(teamName, allGames, currentGameDate) {
     const oneDay = 1000 * 60 * 60 * 24;
@@ -1222,10 +890,6 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
 
-// =================================================================
-// NEW NHL ENGINE 2.0
-// =================================================================
-
 async function getTeamSeasonAdvancedStats(team, season) {
     const cacheKey = `adv_stats_final_agg_${team}_${season}_v5`;
     return fetchData(cacheKey, async () => {
@@ -1277,11 +941,6 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000);
 }
 
-// =================================================================
-// ✅ FINAL, ROBUST PREDICTION ENGINE
-// This is your complete original engine, upgraded with safeNum() and
-// safeText() to prevent crashes and 'undefined' output.
-// =================================================================
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
     const { home_team, away_team } = game;
@@ -1310,14 +969,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let homeScore = 50.0;
     const factors = {};
 
-    // ✅ FIX: Look up live stats using the team ABBREVIATION (homeAbbr)
-    // instead of the full name (homeCanonical). This connects the live data.
     const homeRealTimeStats = teamStats[homeAbbr] || {};
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
-    // --- Factor Calculations (Now correctly using live data) ---
-
-    // Historical Factors
     const homeGoalieData = homeHist.goalies?.find(g => g.name === probableStarters[homeCanonical]);
     const awayGoalieData = awayHist.goalies?.find(g => g.name === probableStarters[awayCanonical]);
     const homeGSAx = safeNum(homeGoalieData?.xGoals) - safeNum(homeGoalieData?.goals);
@@ -1335,7 +989,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Special Teams Duel'] = { value: safeNum(homeAdvStats.specialTeamsRating) - safeNum(awayAdvStats.specialTeamsRating), homeStat: `${safeNum(homeAdvStats.specialTeamsRating).toFixed(2)}`, awayStat: `${safeNum(awayAdvStats.specialTeamsRating).toFixed(2)}` };
     factors['PDO (Luck Factor)'] = { value: safeNum(homeAdvStats.pdo) - safeNum(awayAdvStats.pdo), homeStat: `${safeNum(homeAdvStats.pdo).toFixed(0)}`, awayStat: `${safeNum(awayAdvStats.pdo).toFixed(0)}` };
 
-    // Live Stat Factors
     factors['Faceoff Advantage'] = { value: safeNum(homeRealTimeStats.faceoffWinPct) - safeNum(awayRealTimeStats.faceoffWinPct), homeStat: `${safeNum(homeRealTimeStats.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayRealTimeStats.faceoffWinPct).toFixed(1)}%` };
     factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: safeText(homeRealTimeStats.record), awayStat: safeText(awayRealTimeStats.record) };
     factors['Offensive Form (G/GP)'] = { value: safeNum(homeRealTimeStats.goalsForPerGame) - safeNum(awayRealTimeStats.goalsForPerGame), homeStat: `${safeNum(homeRealTimeStats.goalsForPerGame).toFixed(2)}`, awayStat: `${safeNum(awayRealTimeStats.goalsForPerGame).toFixed(2)}` };
@@ -1351,7 +1004,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     }
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeGoalieStats ? `${safeNum(homeGoalieStats.svPct).toFixed(3)}` : 'N/A', awayStat: awayGoalieStats ? `${safeNum(awayGoalieStats.svPct).toFixed(3)}` : 'N/A' };
     
-    // Contextual Factors
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
     factors['Fatigue'] = {
         value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))),
@@ -1362,7 +1014,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayInjuryImpact = injuries[awayCanonical]?.length || 0;
     factors['Injury Impact'] = { value: awayInjuryImpact - homeInjuryImpact, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`, injuries: { home: injuries[homeCanonical] || [], away: injuries[awayCanonical] || [] } };
 
-    // Final Scoring
     Object.keys(factors).forEach(factorName => {
         if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) {
             const factorKey = {
@@ -1396,18 +1047,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
-// =================================================================
-// END OF NHL ENGINE 2.0
-// =================================================================
-// =================================================================
-// ✅ NEW, UNIFIED PREDICTION SYSTEM (Replaces old functions)
-// This version fixes the ReferenceError in the logging statement.
-// =================================================================
+
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // Step 1: Get the complete, live data snapshot using the robust Fusion system.
         const { date, teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
 
@@ -1420,14 +1064,12 @@ async function getPredictionsForSport(sportKey) {
         const predictions = [];
         for (const game of oddsGames) {
             
-            // Step 2: Prepare the context object for the prediction engine.
             const context = {
-                teamStats: fusedTeamData, // Pass the rich, fused data directly.
+                teamStats: fusedTeamData,
                 injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
                 goalieStats: {}, probableStarters: {}
             };
 
-            // Step 3: Run your original, powerful prediction engine with the complete context.
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
             if (predictionData) {
@@ -1546,7 +1188,7 @@ const ARBITER_SCHEMA = {
 
 app.post('/api/arbitrate-picks', async (req, res) => {
     try {
-        const { candidates } = req.body; // Expect an array of top picks
+        const { candidates } = req.body;
         if (!candidates || candidates.length < 2) {
             return res.status(400).json({ error: "Not enough candidates for arbitration." });
         }
@@ -1679,7 +1321,6 @@ app.get('/api/reconcile-results', async (req, res) => {
                  const map = { 'baseball_mlb': { sport: 'baseball', league: 'mlb' }, 'icehockey_nhl': { sport: 'hockey', league: 'nhl' }, 'americanfootball_nfl': { sport: 'football', league: 'nfl' } }[sportKey];
                  if (!map) continue;
                  
-                 // ✅ FIX: The try...catch block is now correctly structured.
                  try {
                     const url = `https://site.api.espn.com/apis/site/v2/sports/${map.sport}/${map.league}/scoreboard?dates=${formattedDate}`;
                     const { data: espnData } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0...' }});
@@ -1792,22 +1433,11 @@ const V3_ANALYSIS_SCHEMA = {
   "confidenceScore": "string (High, Medium, or Low)",
   "confidenceRationale": "string"
 };
-// =idential fallback logic and a stricter AI prompt.
-// =================================================================
-// =================================================================
-// ✅ FINAL UPGRADED AI ANALYSIS ENDPOINT
-// This version injects live stats directly into the prompt and
-// preserves the critical 2023 fallback logic.
-// =================================================================
+
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
-        const V3_ANALYSIS_SCHEMA = {
-            "finalPick": "string", "isOverride": "boolean", "investmentThesis": "string", "dynamicResearch": [],
-            "gameNarrative": "string", "keyFactorWithData": { "factor": "string", "data": "string" }, "counterArgument": "string",
-            "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
-        };
-
+        
         const generatePromptForSeason = (season) => {
             const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
             const liveStatsInfo = game.espnData?.liveDetails
@@ -1864,8 +1494,6 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
             console.log("✅ Successfully generated AI analysis using 2023 fallback data.");
         }
 
-
-        // Sanitize undefined/null text fields to user-safe strings
         if (analysisData) {
             const st = (v) => safeText(v);
             analysisData = {
@@ -1897,6 +1525,25 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
     }
 });
 
+app.get('/api/fusion-preview', async (req, res) => {
+    try {
+      const snapshot = await buildCurrentSeasonSnapshot();
+      const allAbbrevs = Object.keys(snapshot.teamStats);
+      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const target = filter.length ? filter : allAbbrevs;
+      const fused = {};
+      for (const abbr of target) {
+        const curr = snapshot.teamStats[abbr];
+        if (!curr) continue;
+        const hist = await fetchHistoricalTeamContext(abbr);
+        fused[abbr] = mergeHistoricalCurrent(hist, curr);
+      }
+      res.json({ date: snapshot.date, count: Object.keys(fused).length, teams: fused });
+    } catch (e) {
+      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
+    }
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1910,90 +1557,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-// ===== PATCH4 routes =====
-if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
-  app.get('/api/standings', async (req, res) => {
-    try {
-      const { date, teams } = await fetchStandingsByDate(req.query.date);
-      res.json({ source: 'NHL', date, teams });
-    } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch standings', message: e?.message || String(e) });
-    }
-  });
-
-  app.get('/api/fusion-preview', async (req, res) => {
-    try {
-      const snapshot = await buildCurrentSeasonSnapshot(req.query.date);
-      const allAbbrevs = Object.keys(snapshot.teamStats);
-      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-      const target = filter.length ? filter : allAbbrevs;
-      const fused = {};
-      for (const abbr of target) {
-        const curr = snapshot.teamStats[abbr];
-        if (!curr) continue;
-        const hist = await fetchHistoricalTeamContext(abbr);
-        fused[abbr] = mergeHistoricalCurrent(hist, curr);
-      }
-      res.json({ date: snapshot.date, count: Object.keys(fused).length, teams: fused });
-    } catch (e) {
-      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
-    }
-  });
-} else {
-  console.warn("[PATCH4] Express app not detected; routes not attached.");
-}
-// ===== PATCH4 routes =====
-if (typeof app !== 'undefined' && app && typeof app.get === 'function') {
-  app.get('/api/standings', async (req, res) => {
-    try {
-      const { date, teams } = await fetchStandingsByDate(req.query.date);
-      res.json({ source: 'NHL', date, teams });
-    } catch (e) {
-      res.status(500).json({ error: 'Failed to fetch standings', message: e?.message || String(e) });
-    }
-  });
-
-  app.get('/api/fusion-preview', async (req, res) => {
-    try {
-      const snapshot = await buildCurrentSeasonSnapshot(req.query.date);
-      const allAbbrevs = Object.keys(snapshot.teamStats);
-      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-      const target = filter.length ? filter : allAbbrevs;
-      const fused = {};
-      for (const abbr of target) {
-        const curr = snapshot.teamStats[abbr];
-        if (!curr) continue;
-        const hist = await fetchHistoricalTeamContext(abbr);
-        fused[abbr] = mergeHistoricalCurrent(hist, curr);
-      }
-      res.json({ date: snapshot.date, count: Object.keys(fused).length, teams: fused });
-    } catch (e) {
-      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
-    }
-  });
-} else {
-  console.warn("[PATCH4] Express app not detected; routes not attached.");
-}
-// ===== END PATCH4 routes =====
-// ===== END PATCH4 routes =====
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
