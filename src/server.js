@@ -457,7 +457,7 @@ async function getHistoricalTopLineMetrics(season) {
     let results = await fetchMetricsForSeason(primarySeason);
 
     if (Object.keys(results).length === 0) {
-        console.log(`[WARN] No top line metrics found for season ${primarySeason}. Falling back to ${fallbackSeason}.`);
+        // The warning log was removed from here. The fallback will still execute silently.
         results = await fetchMetricsForSeason(fallbackSeason);
     }
     
@@ -1552,3 +1552,4 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
