@@ -40,38 +40,31 @@ function __cached(key, ttlMs, fetcher) {
 // ✅ FINAL, ROBUST DATA FUSION SYSTEM
 // This new version is resilient to "no game" days at the start of the season.
 // =================================================================
+// =================================================================
+// ✅ FINAL, SIMPLIFIED DATA FUSION SYSTEM
+// This version uses the official '/now' endpoint, which is the most
+// reliable way to get current data and avoids timezone bugs.
+// =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_final_v3`;
+    const key = `fusion_snapshot_now_vFinal`;
     return __cached(key, 15 * 60 * 1000, async () => {
-        let standingsData;
-        let finalDate = 'now';
-
-        // ✅ FIX: Add a fallback for the standings API.
-        try {
-            // First, try to get data using the reliable '/now' endpoint.
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        } catch (e) {
-            // If that fails (often a 404 at the start of the season), try yesterday's date.
-            console.warn(`[WARN] Standings '/now' endpoint failed. Trying yesterday's date...`);
-            finalDate = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
-            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
-            standingsData = standingsRes.data.standings;
-        }
-
+        const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
         const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-        const { data: clubStatsRes } = await axios.get(allClubStatsUrl, { timeout: 15000 });
-        
-        const clubStatsData = clubStatsRes.data;
+
+        console.log("📡 Fetching unified live data from primary NHL '/now' APIs...");
+        const [standingsRes, clubStatsRes] = await Promise.all([
+            axios.get(standingsUrl, { timeout: 15000 }),
+            axios.get(allClubStatsUrl, { timeout: 15000 })
+        ]);
+
+        const standingsData = standingsRes.data.standings;
+        const clubStatsData = clubStatsRes.data.data;
         const fusedStats = {};
 
         if (!standingsData || standingsData.length === 0) {
-            throw new Error("NHL Standings API returned no data from any source. Cannot build snapshot.");
+            throw new Error("NHL Standings API returned no data. Cannot build snapshot.");
         }
 
-        // Step 1: Populate with standings data
         standingsData.forEach(team => {
             const abbr = team.teamAbbrev.default;
             if (abbr) {
@@ -87,7 +80,6 @@ async function buildCurrentSeasonSnapshot() {
             }
         });
 
-        // Step 2: Merge in club stats data
         if (clubStatsData && clubStatsData.length > 0) {
             clubStatsData.forEach(team => {
                 const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
@@ -105,7 +97,7 @@ async function buildCurrentSeasonSnapshot() {
         }
         
         console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
-        return { date: finalDate, teamStats: fusedStats, source: "NHL" };
+        return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL" };
     });
 }
 
@@ -1076,7 +1068,9 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        const { date, teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
+        // ✅ FIX: Wrap the data fetching in a try...catch block.
+        // This prevents any API error from crashing the application.
+        const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
 
         if (!fusedTeamData || Object.keys(fusedTeamData).length === 0) {
@@ -1087,24 +1081,25 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-            
             const context = {
                 teamStats: fusedTeamData,
-                injuries: {}, h2h: { home: '0-0', away: '0-0' }, allGames: oddsGames,
-                goalieStats: {}, probableStarters: {}
+                allGames: oddsGames,
+                injuries: {},
+                h2h: { home: '0-0', away: '0-0' },
+                goalieStats: {},
+                probableStarters: {}
             };
-
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
             if (predictionData) {
-                const gameDataForUi = { ...game, sportKey: sportKey, espnData: null };
-                predictions.push({ game: gameDataForUi, prediction: predictionData });
+                predictions.push({ game, prediction: predictionData });
             }
         }
         return predictions.filter(p => p && p.prediction);
 
     } catch (error) {
-        console.error("Prediction generation failed:", error.message, error.stack);
+        // This will catch the '404' or any other error from buildCurrentSeasonSnapshot
+        console.error("Prediction generation failed:", error.message);
         return [];
     }
 }
@@ -1581,6 +1576,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
