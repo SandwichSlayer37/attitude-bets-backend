@@ -36,29 +36,42 @@ function __cached(key, ttlMs, fetcher) {
 // ✅ FINAL, CORRECTED DATA FUSION SYSTEM
 // This version uses the correct, live NHL API domain to prevent crashes.
 // =================================================================
+// =================================================================
+// ✅ FINAL, ROBUST DATA FUSION SYSTEM
+// This new version is resilient to "no game" days at the start of the season.
+// =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_now_vFinal`;
+    const key = `fusion_snapshot_final_v3`;
     return __cached(key, 15 * 60 * 1000, async () => {
-        // ✅ FIX: Corrected the API domain from the old "statsapi.web.nhl.com"
-        // to the new, working "api-web.nhle.com".
-        const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
+        let standingsData;
+        let finalDate = 'now';
+
+        // ✅ FIX: Add a fallback for the standings API.
+        try {
+            // First, try to get data using the reliable '/now' endpoint.
+            const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
+            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
+            standingsData = standingsRes.data.standings;
+        } catch (e) {
+            // If that fails (often a 404 at the start of the season), try yesterday's date.
+            console.warn(`[WARN] Standings '/now' endpoint failed. Trying yesterday's date...`);
+            finalDate = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+            const standingsUrl = `https://api-web.nhle.com/v1/standings/${finalDate}`;
+            const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
+            standingsData = standingsRes.data.standings;
+        }
+
         const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
-
-        console.log("📡 Fetching unified live data from stable NHL APIs...");
-        const [standingsRes, clubStatsRes] = await Promise.all([
-            axios.get(standingsUrl, { timeout: 15000 }),
-            axios.get(allClubStatsUrl, { timeout: 15000 })
-        ]);
-
-        const standingsData = standingsRes.data.standings;
-        const clubStatsData = clubStatsRes.data.data;
+        const { data: clubStatsRes } = await axios.get(allClubStatsUrl, { timeout: 15000 });
+        
+        const clubStatsData = clubStatsRes.data;
         const fusedStats = {};
 
         if (!standingsData || standingsData.length === 0) {
-            throw new Error("NHL Standings API returned no data. Cannot build snapshot.");
+            throw new Error("NHL Standings API returned no data from any source. Cannot build snapshot.");
         }
 
-        // Step 1: Populate with standings data (Record, Streak, etc.)
+        // Step 1: Populate with standings data
         standingsData.forEach(team => {
             const abbr = team.teamAbbrev.default;
             if (abbr) {
@@ -74,7 +87,7 @@ async function buildCurrentSeasonSnapshot() {
             }
         });
 
-        // Step 2: Merge in club stats data (G/GP, PP%, etc.)
+        // Step 2: Merge in club stats data
         if (clubStatsData && clubStatsData.length > 0) {
             clubStatsData.forEach(team => {
                 const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
@@ -92,7 +105,7 @@ async function buildCurrentSeasonSnapshot() {
         }
         
         console.log(`✅ Successfully fused live stats for ${Object.keys(fusedStats).length} teams from the NHL API.`);
-        return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL" };
+        return { date: finalDate, teamStats: fusedStats, source: "NHL" };
     });
 }
 
@@ -1568,6 +1581,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
