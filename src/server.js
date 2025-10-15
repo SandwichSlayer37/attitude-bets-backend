@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
-app.post('/api/ai-analysis', async
+
 // --- CACHING HELPER ---
 const __FUSION_CACHE = new Map();
 function __cached(key, ttlMs, fetcher) {
@@ -62,27 +62,30 @@ async function buildCurrentSeasonSnapshot() {
         try {
             console.log("📡 Fetching live club stats from NHL API...");
             const clubStatsRes = await axios.get(allClubStatsUrl, { timeout: 15000 });
-            const clubStatsData = clubStatsRes.data.data;
+            // NOTE: The club-stats endpoint nests the data differently. It should be clubStatsRes.data, not clubStatsRes.data.data
+            const clubStatsData = clubStatsRes.data; 
 
             if (clubStatsData && clubStatsData.length > 0) {
                 clubStatsData.forEach(team => {
-                    const canonicalName = canonicalTeamNameMap[team.teamFullName.toLowerCase()];
-                    const abbr = teamToAbbrMap[canonicalName];
+                    // NOTE: This API uses `teamAbbrev` directly, simplifying the lookup.
+                    const abbr = team.abbreviation;
                     if (abbr && fusedStats[abbr]) {
                         Object.assign(fusedStats[abbr], {
                             goalsForPerGame: safeNum(team.goalsForPerGame),
                             goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
-                            powerPlayPct: safeNum(team.powerPlayPct),
-                            penaltyKillPct: safeNum(team.penaltyKillPct),
+                            powerPlayPct: safeNum(team.powerPlayPctg), // API uses 'powerPlayPctg'
+                            penaltyKillPct: safeNum(team.penaltyKillPctg), // API uses 'penaltyKillPctg'
                             faceoffWinPct: safeNum(team.faceoffWinPct),
                         });
                     }
                 });
                 console.log(`✅ Successfully fused detailed club stats.`);
+            } else {
+                 console.warn("[WARN] Live club stats API returned no data or an empty array.");
             }
         } catch (error) {
             // If this API fails, just log a warning and continue with the data we have.
-            console.warn(`[WARN] Live club stats API failed (Status: ${error.response?.status}). Proceeding with standings data only.`);
+            console.warn(`[WARN] Live club stats API failed (Status: ${error.response?.status}). Proceeding with standings data only. This may result in 'N/A' for some stats like G/GP.`);
         }
         
         return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL" };
@@ -245,7 +248,7 @@ const teamToAbbrMap = {
     'Ottawa Senators': 'OTT', 'Philadelphia Flyers': 'PHI', 'Pittsburgh Penguins': 'PIT', 'San Jose Sharks': 'SJS', 
     'Seattle Kraken': 'SEA', 'St. Louis Blues': 'STL', 'Tampa Bay Lightning': 'TBL', 'Toronto Maple Leafs': 'TOR', 
     'Vancouver Canucks': 'VAN', 'Vegas Golden Knights': 'VGK', 'Washington Capitals': 'WSH', 'Winnipeg Jets': 'WPG',
-    'Utah Mammoth': 'UTA'
+    'Utah Hockey Club': 'UTA' // Updated name for Utah
 };
 
 const SPORTS_DB = [ 
@@ -257,12 +260,12 @@ const teamLocationMap = {
     'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667 }, 'Atlanta Braves': { lat: 33.8907, lon: -84.4677 }, 'Baltimore Orioles': { lat: 39.2838, lon: -76.6217 }, 'Boston Red Sox': { lat: 42.3467, lon: -71.0972 }, 'Chicago Cubs': { lat: 41.9484, lon: -87.6553 }, 'Chicago White Sox': { lat: 41.8300, lon: -87.6337 }, 'Cincinnati Reds': { lat: 39.0975, lon: -84.5069 }, 'Cleveland Guardians': { lat: 41.4962, lon: -81.6852 }, 'Colorado Rockies': { lat: 39.7562, lon: -104.9942 }, 'Detroit Tigers': { lat: 42.3390, lon: -83.0552 }, 'Houston Astros': { lat: 29.7570, lon: -95.3555 }, 'Kansas City Royals': { lat: 39.0517, lon: -94.4803 }, 'Los Angeles Angels': { lat: 33.8003, lon: -117.8827 }, 'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2398 }, 'Miami Marlins': { lat: 25.7781, lon: -80.2196 }, 'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712 }, 'Minnesota Twins': { lat: 44.9817, lon: -93.2775 }, 'New York Mets': { lat: 40.7571, lon: -73.8458 }, 'New York Yankees': { lat: 40.8296, lon: -73.9262 }, 'Oakland Athletics': { lat: 37.7516, lon: -122.2005 }, 'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665 }, 'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057 }, 'San Diego Padres': { lat: 32.7073, lon: -117.1570 }, 'San Francisco Giants': { lat: 37.7786, lon: -122.3893 }, 'Seattle Mariners': { lat: 47.5914, lon: -122.3325 }, 'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928 }, 'Tampa Bay Rays': { lat: 27.7682, lon: -82.6534 }, 'Texas Rangers': { lat: 32.7513, lon: -97.0829 }, 'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894 }, 'Washington Nationals': { lat: 38.8729, lon: -77.0074 },
     'Arizona Cardinals': { lat: 33.5276, lon: -112.2625 }, 'Atlanta Falcons': { lat: 33.7554, lon: -84.4009 }, 'Baltimore Ravens': { lat: 39.2780, lon: -76.6227 }, 'Buffalo Bills': { lat: 42.7738, lon: -78.7870 }, 'Carolina Panthers': { lat: 35.2259, lon: -80.8529 }, 'Chicago Bears': { lat: 41.8623, lon: -87.6167 }, 'Cincinnati Bengals': { lat: 39.0954, lon: -84.5160 }, 'Cleveland Browns': { lat: 41.5061, lon: -81.6995 }, 'Dallas Cowboys': { lat: 32.7478, lon: -97.0929 }, 'Denver Broncos': { lat: 39.7439, lon: -105.0201 }, 'Detroit Lions': { lat: 42.3400, lon: -83.0456 }, 'Green Bay Packers': { lat: 44.5013, lon: -88.0622 }, 'Houston Texans': { lat: 29.6847, lon: -95.4109 }, 'Indianapolis Colts': { lat: 39.7601, lon: -86.1639 }, 'Jacksonville Jaguars': { lat: 30.3239, lon: -81.6375 }, 'Kansas City Chiefs': { lat: 39.0489, lon: -94.4839 }, 'Las Vegas Raiders': { lat: 36.0907, lon: -115.1838 }, 'Los Angeles Chargers': { lat: 33.9535, lon: -118.3392 }, 'Los Angeles Rams': { lat: 33.9535, lon: -118.3392 }, 'Miami Dolphins': { lat: 25.9580, lon: -80.2389 }, 'Minnesota Vikings': { lat: 44.9736, lon: -93.2579 }, 'New England Patriots': { lat: 42.0909, lon: -71.2643 }, 'New Orleans Saints': { lat: 29.9509, lon: -90.0821 }, 'New York Giants': { lat: 40.8136, lon: -74.0744 }, 'New York Jets': { lat: 40.8136, lon: -74.0744 }, 'Philadelphia Eagles': { lat: 39.9008, lon: -75.1675 }, 'Pittsburgh Steelers': { lat: 40.4467, lon: -80.0158 }, 'San Francisco 49ers': { lat: 37.4031, lon: -121.9697 }, 'Seattle Seahawks': { lat: 47.5952, lon: -122.3316 }, 'Tampa Bay Buccaneers': { lat: 27.9759, lon: -82.5033 }, 'Tennessee Titans': { lat: 36.1665, lon: -86.7713 }, 'Washington Commanders': { lat: 38.9077, lon: -76.8645 },
     'Anaheim Ducks': { lat: 33.8078, lon: -117.8766 }, 'Arizona Coyotes': { lat: 33.5319, lon: -112.2611 }, 'Boston Bruins': { lat: 42.3662, lon: -71.0621 }, 'Buffalo Sabres': { lat: 42.8751, lon: -78.8765 }, 'Calgary Flames': { lat: 51.0375, lon: -114.0519 }, 'Carolina Hurricanes': { lat: 35.8033, lon: -78.7219 }, 'Chicago Blackhawks': { lat: 41.8807, lon: -87.6742 }, 'Colorado Avalanche': { lat: 39.7486, lon: -105.0076 }, 'Columbus Blue Jackets': { lat: 39.9695, lon: -83.0060 }, 'Dallas Stars': { lat: 32.7905, lon: -96.8103 }, 'Detroit Red Wings': { lat: 42.3411, lon: -83.0553 }, 'Edmonton Oilers': { lat: 53.5469, lon: -113.4973 }, 'Florida Panthers': { lat: 26.1585, lon: -80.3255 }, 'Los Angeles Kings': { lat: 34.0430, lon: -118.2673 }, 'Minnesota Wild': { lat: 44.9447, lon: -93.1008 }, 'Montreal Canadiens': { lat: 45.4965, lon: -73.5694 }, 'Nashville Predators': { lat: 36.1593, lon: -86.7785 }, 'New Jersey Devils': { lat: 40.7336, lon: -74.1711 }, 'New York Islanders': { lat: 40.7230, lon: -73.5925 }, 'New York Rangers': { lat: 40.7505, lon: -73.9934 }, 'Ottawa Senators': { lat: 45.2969, lon: -75.9281 }, 'Philadelphia Flyers': { lat: 39.9012, lon: -75.1720 }, 'Pittsburgh Penguins': { lat: 40.4395, lon: -79.9896 }, 'San Jose Sharks': { lat: 37.3328, lon: -121.9012 }, 'Seattle Kraken': { lat: 47.6221, lon: -122.3539 }, 'St. Louis Blues': { lat: 38.6268, lon: -90.2027 }, 'Tampa Bay Lightning': { lat: 27.9427, lon: -82.4518 }, 'Toronto Maple Leafs': { lat: 43.6435, lon: -79.3791 }, 'Vancouver Canucks': { lat: 49.2778, lon: -123.1089 }, 'Vegas Golden Knights': { lat: 36.0967, lon: -115.1783 }, 'Washington Capitals': { lat: 38.8982, lon: -77.0209 }, 'Winnipeg Jets': { lat: 49.8927, lon: -97.1435 },
-    'Utah Mammoth': { lat: 40.7608, lon: -111.8910 }
+    'Utah Hockey Club': { lat: 40.7608, lon: -111.8910 }
 };
 const teamAliasMap = {
     'Arizona Diamondbacks': ['D-backs', 'Diamondbacks'], 'Atlanta Braves': ['Braves'], 'Baltimore Orioles': ['Orioles'], 'Boston Red Sox': ['Red Sox'], 'Chicago Cubs': ['Cubs'], 'Chicago White Sox': ['White Sox', 'ChiSox'], 'Cincinnati Reds': ['Reds'], 'Cleveland Guardians': ['Guardians'], 'Colorado Rockies': ['Rockies'], 'Detroit Tigers': ['Tigers'], 'Houston Astros': ['Astros'], 'Kansas City Royals': ['Royals'], 'Los Angeles Angels': ['Angels'], 'Los Angeles Dodgers': ['Dodgers'], 'Miami Marlins': ['Marlins'], 'Milwaukee Brewers': ['Brewers'], 'Minnesota Twins': ['Twins'], 'New York Mets': ['Mets'], 'New York Yankees': ['Yankees'], 'Oakland Athletics': ["A's", 'Athletics', "Oakland A's"], 'Philadelphia Phillies': ['Phillies'], 'Pittsburgh Pirates': ['Pirates'], 'San Diego Padres': ['Padres', 'Friars'], 'San Francisco Giants': ['Giants'], 'Seattle Mariners': ['Mariners', "M's"], 'St. Louis Cardinals': ['Cardinals', 'Cards', 'St Louis Cardinals'], 'Tampa Bay Rays': ['Rays'], 'Texas Rangers': ['Rangers'], 'Toronto Blue Jays': ['Blue Jays', 'Jays'], 'Washington Nationals': ['Nationals'],
     'Arizona Cardinals': ['Cardinals'], 'Atlanta Falcons': ['Falcons'], 'Baltimore Ravens': ['Ravens'], 'Buffalo Bills': ['Bills'], 'Carolina Panthers': ['Panthers'], 'Chicago Bears': ['Bears'], 'Cincinnati Bengals': ['Bengals'], 'Cleveland Browns': ['Browns'], 'Dallas Cowboys': ['Cowboys'], 'Denver Broncos': ['Broncos'], 'Detroit Lions': ['Lions'], 'Green Bay Packers': ['Packers'], 'Houston Texans': ['Texans'], 'Indianapolis Colts': ['Colts'], 'Jacksonville Jaguars': ['Jaguars'], 'Kansas City Chiefs': ['Chiefs'], 'Las Vegas Raiders': ['Raiders'], 'Los Angeles Chargers': ['Chargers'], 'Los Angeles Rams': ['Rams'], 'Miami Dolphins': ['Dolphins'], 'Minnesota Vikings': ['Vikings'], 'New England Patriots': ['Patriots'], 'New Orleans Saints': ['Saints'], 'New York Giants': ['Giants'], 'New York Jets': ['Jets'], 'Philadelphia Eagles': ['Eagles'], 'Pittsburgh Steelers': ['Steelers'], 'San Francisco 49ers': ['49ers'], 'Seattle Seahawks': ['Seahawks'], 'Tampa Bay Buccaneers': ['Buccaneers'], 'Tennessee Titans': ['Titans'], 'Washington Commanders': ['Commanders', 'Football Team'],
-    'Anaheim Ducks': ['Ducks', 'Anaheim'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins', 'Boston'], 'Buffalo Sabres': ['Sabres', 'Buffalo'], 'Calgary Flames': ['Flames', 'Calgary'], 'Carolina Hurricanes': ['Hurricanes', 'Canes', 'Carolina'], 'Chicago Blackhawks': ['hawks', 'Blackhawks', 'Chicago'], 'Colorado Avalanche': ['ColoradoAvalanche', 'Avalanche', 'Avs', 'Colorado'], 'Columbus Blue Jackets': ['BlueJackets', 'Blue Jackets', 'CBJ', 'Columbus'], 'Dallas Stars': ['DallasStars', 'Stars', 'Dallas'], 'Detroit Red Wings': ['DetroitRedWings', 'Red Wings', 'Detroit'], 'Edmonton Oilers': ['EdmontonOilers', 'Oilers', 'Edmonton'], 'Florida Panthers': ['FloridaPanthers', 'Panthers', 'Florida'], 'Los Angeles Kings': ['losangeleskings', 'Kings', 'Los Angeles'], 'Minnesota Wild': ['wildhockey', 'Wild', 'Minnesota'], 'Montreal Canadiens': ['Habs', 'Canadiens', 'Montréal'], 'Nashville Predators': ['Predators', 'Nashville'], 'New Jersey Devils': ['devils', 'New Jersey'], 'New York Islanders': ['NewYorkIslanders', 'Islanders', 'Isles', 'NY Islanders'], 'New York Rangers': ['rangers', 'NYR', 'NY Rangers'], 'Ottawa Senators': ['OttawaSenators', 'Senators', 'Sens', 'Ottawa'], 'Philadelphia Flyers': ['Flyers', 'Philadelphia'], 'Pittsburgh Penguins': ['penguins', 'Pittsburgh'], 'San Jose Sharks': ['SanJoseSharks', 'Sharks', 'San Jose'], 'Seattle Kraken': ['SeattleKraken', 'Kraken', 'Seattle'], 'St. Louis Blues': ['stlouisblues', 'Blues', 'St Louis Blues', 'St. Louis'], 'Tampa Bay Lightning': ['TampaBayLightning', 'Lightning', 'Bolts', 'Tampa Bay'], 'Toronto Maple Leafs': ['leafs', 'Maple Leafs', 'TOR', 'Toronto'], 'Vancouver Canucks': ['canucks', 'Vancouver'], 'Vegas Golden Knights': ['goldenknights', 'Golden Knights', 'Knights', 'Vegas'], 'Washington Capitals': ['caps', 'Capitals', 'Washington'], 'Winnipeg Jets': ['winnipegjets', 'Jets', 'Winnipeg'], 'Utah Mammoth': ['Mammoth', 'Utah']
+    'Anaheim Ducks': ['Ducks', 'Anaheim'], 'Arizona Coyotes': ['Coyotes'], 'Boston Bruins': ['Bruins', 'Boston'], 'Buffalo Sabres': ['Sabres', 'Buffalo'], 'Calgary Flames': ['Flames', 'Calgary'], 'Carolina Hurricanes': ['Hurricanes', 'Canes', 'Carolina'], 'Chicago Blackhawks': ['hawks', 'Blackhawks', 'Chicago'], 'Colorado Avalanche': ['ColoradoAvalanche', 'Avalanche', 'Avs', 'Colorado'], 'Columbus Blue Jackets': ['BlueJackets', 'Blue Jackets', 'CBJ', 'Columbus'], 'Dallas Stars': ['DallasStars', 'Stars', 'Dallas'], 'Detroit Red Wings': ['DetroitRedWings', 'Red Wings', 'Detroit'], 'Edmonton Oilers': ['EdmontonOilers', 'Oilers', 'Edmonton'], 'Florida Panthers': ['FloridaPanthers', 'Panthers', 'Florida'], 'Los Angeles Kings': ['losangeleskings', 'Kings', 'Los Angeles'], 'Minnesota Wild': ['wildhockey', 'Wild', 'Minnesota'], 'Montreal Canadiens': ['Habs', 'Canadiens', 'Montréal'], 'Nashville Predators': ['Predators', 'Nashville'], 'New Jersey Devils': ['devils', 'New Jersey'], 'New York Islanders': ['NewYorkIslanders', 'Islanders', 'Isles', 'NY Islanders'], 'New York Rangers': ['rangers', 'NYR', 'NY Rangers'], 'Ottawa Senators': ['OttawaSenators', 'Senators', 'Sens', 'Ottawa'], 'Philadelphia Flyers': ['Flyers', 'Philadelphia'], 'Pittsburgh Penguins': ['penguins', 'Pittsburgh'], 'San Jose Sharks': ['SanJoseSharks', 'Sharks', 'San Jose'], 'Seattle Kraken': ['SeattleKraken', 'Kraken', 'Seattle'], 'St. Louis Blues': ['stlouisblues', 'Blues', 'St Louis Blues', 'St. Louis'], 'Tampa Bay Lightning': ['TampaBayLightning', 'Lightning', 'Bolts', 'Tampa Bay'], 'Toronto Maple Leafs': ['leafs', 'Maple Leafs', 'TOR', 'Toronto'], 'Vancouver Canucks': ['canucks', 'Vancouver'], 'Vegas Golden Knights': ['goldenknights', 'Golden Knights', 'Knights', 'Vegas'], 'Washington Capitals': ['caps', 'Capitals', 'Washington'], 'Winnipeg Jets': ['winnipegjets', 'Jets', 'Winnipeg'], 'Utah Hockey Club': ['Utah']
 };
 const canonicalTeamNameMap = {};
 Object.keys(teamAliasMap).forEach(canonicalName => {
@@ -285,7 +288,7 @@ const FUTURES_PICKS_DB = {
 const dataCache = new Map();
 
 const teamToSubredditMap = {
-    'Anaheim Ducks': 'ducks', 'Arizona Coyotes': 'Coyotes', 'Boston Bruins': 'BostonBruins', 'Buffalo Sabres': 'sabres', 'Calgary Flames': 'CalgaryFlames', 'Carolina Hurricanes': 'canes', 'Chicago Blackhawks': 'hawks', 'Colorado Avalanche': 'ColoradoAvalanche', 'Columbus Blue Jackets': 'BlueJackets', 'Dallas Stars': 'DallasStars', 'Detroit Red Wings': 'DetroitRedWings', 'Edmonton Oilers': 'EdmontonOilers', 'Florida Panthers': 'FloridaPanthers', 'Los Angeles Kings': 'losangeleskings', 'Minnesota Wild': 'wildhockey', 'Montreal Canadiens': 'Habs', 'Nashville Predators': 'Predators', 'New Jersey Devils': 'devils', 'New York Islanders': 'NewYorkIslanders', 'New York Rangers': 'rangers', 'Ottawa Senators': 'OttawaSenators', 'Philadelphia Flyers': 'Flyers', 'Pittsburgh Penguins': 'penguins', 'San Jose Sharks': 'SanJoseSharks', 'Seattle Kraken': 'SeattleKraken', 'St. Louis Blues': 'stlouisblues', 'Tampa Bay Lightning': 'TampaBayLightning', 'Toronto Maple Leafs': 'leafs', 'Vancouver Canucks': 'canucks', 'Vegas Golden Knights': 'goldenknights', 'Washington Capitals': 'caps', 'Winnipeg Jets': 'winnipegjets', 'Utah Mammoth': 'UtahMammoth',
+    'Anaheim Ducks': 'ducks', 'Arizona Coyotes': 'Coyotes', 'Boston Bruins': 'BostonBruins', 'Buffalo Sabres': 'sabres', 'Calgary Flames': 'CalgaryFlames', 'Carolina Hurricanes': 'canes', 'Chicago Blackhawks': 'hawks', 'Colorado Avalanche': 'ColoradoAvalanche', 'Columbus Blue Jackets': 'BlueJackets', 'Dallas Stars': 'DallasStars', 'Detroit Red Wings': 'DetroitRedWings', 'Edmonton Oilers': 'EdmontonOilers', 'Florida Panthers': 'FloridaPanthers', 'Los Angeles Kings': 'losangeleskings', 'Minnesota Wild': 'wildhockey', 'Montreal Canadiens': 'Habs', 'Nashville Predators': 'Predators', 'New Jersey Devils': 'devils', 'New York Islanders': 'NewYorkIslanders', 'New York Rangers': 'rangers', 'Ottawa Senators': 'OttawaSenators', 'Philadelphia Flyers': 'Flyers', 'Pittsburgh Penguins': 'penguins', 'San Jose Sharks': 'SanJoseSharks', 'Seattle Kraken': 'SeattleKraken', 'St. Louis Blues': 'stlouisblues', 'Tampa Bay Lightning': 'TampaBayLightning', 'Toronto Maple Leafs': 'leafs', 'Vancouver Canucks': 'canucks', 'Vegas Golden Knights': 'goldenknights', 'Washington Capitals': 'caps', 'Winnipeg Jets': 'winnipegjets', 'Utah Hockey Club': 'UtahHockey',
     'Arizona Diamondbacks': 'azdiamondbacks', 'Atlanta Braves': 'Braves', 'Baltimore Orioles': 'orioles', 'Boston Red Sox': 'redsox', 'Chicago Cubs': 'CHICubs', 'Chicago White Sox': 'whitesox', 'Cincinnati Reds': 'reds', 'Cleveland Guardians': 'ClevelandGuardians', 'Colorado Rockies': 'ColoradoRockies', 'Detroit Tigers': 'motorcitykitties', 'Houston Astros': 'Astros', 'Kansas City Royals': 'KCRoyals', 'Los Angeles Angels': 'angelsbaseball', 'Los Angeles Dodgers': 'Dodgers', 'Miami Marlins': 'miamimarlins', 'Milwaukee Brewers': 'Brewers', 'Minnesota Twins': 'minnesotatwins', 'New York Mets': 'NewYorkMets', 'New York Yankees': 'NYYankees', 'Oakland Athletics': 'oaklandathletics', 'Philadelphia Phillies': 'phillies', 'Pittsburgh Pirates': 'buccos', 'San Diego Padres': 'Padres', 'San Francisco Giants': 'SFGiants', 'Seattle Mariners': 'Mariners', 'St. Louis Cardinals': 'Cardinals', 'Tampa Bay Rays': 'tampabayrays', 'Texas Rangers': 'TexasRangers', 'Toronto Blue Jays': 'TorontoBlueJays', 'Washington Nationals': 'Nationals',
 };
 
@@ -316,37 +319,18 @@ function parseEspnTeamStats(espnEvents) {
     return stats;
 }
 
-/**
- * Parses the complex ESPN API response to extract simple team records.
- */
-function parseEspnTeamStats(espnEvents) {
-    const stats = {};
-    if (!espnEvents) return stats;
-    espnEvents.forEach(event => {
-        const comp = event.competitions?.[0];
-        if (!comp) return;
-        comp.competitors.forEach(team => {
-            const name = team.team.displayName;
-            const canonical = canonicalTeamNameMap[name.toLowerCase()] || name;
-            if (!stats[canonical]) stats[canonical] = {};
-            const overallRecord = team.records?.find(r => r.type === 'total');
-            stats[canonical].record = overallRecord?.summary || '0-0-0';
-        });
-    });
-    return stats;
-}
-
 function cleanAndParseJson(text) {
     if (!text || typeof text !== 'string') {
         console.error("cleanAndParseJson received invalid input:", text);
         return null;
     }
-
-    const jsonRegex = /{[^]*"finalPick"[^]*}/;
+    // A more robust regex to find the outermost JSON object
+    const jsonRegex = /```json\s*({[\s\S]*?})\s*```|({[\s\S]*})/;
     const match = text.match(jsonRegex);
 
-    if (match && match[0]) {
-        const jsonString = match[0];
+    if (match) {
+        // Prefer the content of a markdown block if it exists (group 1), otherwise use the raw object (group 2)
+        const jsonString = match[1] || match[2];
         try {
             return JSON.parse(jsonString);
         } catch (e) {
@@ -355,19 +339,11 @@ function cleanAndParseJson(text) {
             return null;
         }
     } else {
-        // Fallback for arbitration schema
-        const arbRegex = /{[^]*"finalVerdict"[^]*}/;
-        const arbMatch = text.match(arbRegex);
-        if (arbMatch && arbMatch[0]) {
-            const jsonString = arbMatch[0];
-            try {
-                return JSON.parse(jsonString);
-            } catch(e) { /* fall through */ }
-        }
         console.error("Could not find a valid JSON object in the text:", text);
         return null;
     }
 }
+
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -987,8 +963,12 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayAbbr = teamToAbbrMap[awayCanonical];
     
     // ✅ FIX: Explicitly use the last completed season for all historical data.
-    // This will stop the "[WARN] No top line metrics found..." log spam.
-    const previousSeasonId = new Date().getFullYear() - 1;
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth(); // 0-indexed (January is 0)
+    // If it's before August (pre-season start), use the season that ended in the current year.
+    // Otherwise, use the season that ended last year.
+    const previousSeasonId = currentMonth < 7 ? currentYear - 1 : new Date().getFullYear() - 1;
+
 
     const [historicalMetrics, [homeAdvStats, awayAdvStats], topLineMetrics] = await Promise.all([
         getHistoricalTeamAndGoalieMetrics(previousSeasonId),
@@ -1083,11 +1063,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 }
 
 async function getPredictionsForSport(sportKey) {
+    // This function is currently scoped to NHL, but can be expanded.
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // ✅ FIX: Wrap the data fetching in a try...catch block.
-        // This prevents any API error from crashing the application.
+        // This is the critical connection point. buildCurrentSeasonSnapshot fetches live data.
         const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
 
@@ -1099,13 +1079,16 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
+            // The live data (`fusedTeamData`) is passed into the prediction engine via this context object.
+            // If `fusedTeamData` is incomplete (e.g., the club-stats API failed), the engine will receive
+            // partial data, leading to "N/A" for some factors, which is the intended fallback behavior.
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
-                injuries: {},
-                h2h: { home: '0-0', away: '0-0' },
-                goalieStats: {},
-                probableStarters: {}
+                injuries: {}, // Placeholder, can be populated from another source
+                h2h: { home: '0-0', away: '0-0' }, // Placeholder
+                goalieStats: {}, // Placeholder
+                probableStarters: {} // Placeholder
             };
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
@@ -1116,8 +1099,8 @@ async function getPredictionsForSport(sportKey) {
         return predictions.filter(p => p && p.prediction);
 
     } catch (error) {
-        // This will catch the '404' or any other error from buildCurrentSeasonSnapshot
-        console.error("Prediction generation failed:", error.message);
+        // This will catch any critical error from `buildCurrentSeasonSnapshot` (like the standings API failing)
+        console.error("Critical error during prediction generation:", error.message);
         return [];
     }
 }
@@ -1479,11 +1462,6 @@ const V3_ANALYSIS_SCHEMA = {
 app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
-        const V3_ANALYSIS_SCHEMA = {
-            "finalPick": "string", "isOverride": "boolean", "investmentThesis": "string", "dynamicResearch": [],
-            "gameNarrative": "string", "keyFactorWithData": { "factor": "string", "data": "string" }, "counterArgument": "string",
-            "rebuttal": "string", "xFactor": "string", "confidenceScore": "string (High, Medium, or Low)", "confidenceRationale": "string"
-        };
 
         const generatePromptForSeason = (season) => {
             const factorsList = Object.entries(prediction.factors).map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`).join('\n');
@@ -1519,7 +1497,6 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
         try {
             console.log("Attempting AI analysis with current season data (2024)...");
             const userPrompt2024 = generatePromptForSeason(2024);
-            // ✅ FIX: Use the powerful, tool-aware function here.
             analysisData = await runAiChatWithTools(userPrompt2024);
             if (!analysisData || !analysisData.finalPick) {
                 throw new Error("AI analysis for 2024 returned incomplete or invalid JSON.");
@@ -1528,7 +1505,7 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
         } catch (error2024) {
             console.warn(`[WARN] AI analysis using 2024 data failed: ${error2024.message}. Falling back to last completed season (2023).`);
             const userPrompt2023 = generatePromptForSeason(2023);
-            analysisData = await runAiChatWithTools(userPrompt2023); // Also use it for the fallback
+            analysisData = await runAiChatWithTools(userPrompt2023); 
             if (!analysisData) {
                 throw new Error("AI analysis fallback for 2023 also failed to produce valid JSON.");
             }
@@ -1575,16 +1552,3 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
-
-
-
-
-
-
-
-
-
-
-
-
-
