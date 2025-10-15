@@ -23,22 +23,19 @@ function __cached(key, ttlMs, fetcher) {
 }
 
 // =================================================================
-// ✅ FINAL, SIMPLIFIED DATA FUSION SYSTEM (Patched for new API)
-// This version is resilient to "no game" days by adding a fallback.
-// =================================================================
-// =================================================================
-// ✅ FINAL, SIMPLIFIED DATA FUSION SYSTEM (Patched for new API)
-// This version is resilient to "no game" days by adding a fallback.
+// ✅ FINAL, RESILIENT DATA FUSION SYSTEM
+// This new version is resilient to "no game" days or empty API responses
+// by adding an automatic fallback to the previous day.
 // =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_final_v2`;
+    const key = `fusion_snapshot_final_v3`;
     return __cached(key, 15 * 60 * 1000, async () => {
         let standingsData;
         let finalDate = 'now';
 
         // ✅ FIX: Add a fallback for the standings API.
         try {
-            // First, try to get data using the reliable '/now' endpoint.
+            // First, try to get data using the official '/now' endpoint.
             const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
             const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
             standingsData = standingsRes.data.standings;
@@ -1571,6 +1568,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
