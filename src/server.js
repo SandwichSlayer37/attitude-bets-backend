@@ -425,11 +425,6 @@ async function runAiChatWithTools(userPrompt) {
     // This path is for when the AI doesn't use a tool.
     return cleanAndParseJson(responseText);
 }
-    
-    // This is the path for when the AI doesn't need to use a tool.
-    const responseText = response1.text();
-    return cleanAndParseJson(responseText);
-}
 
 
 async function getHistoricalTopLineMetrics(season) {
@@ -1590,5 +1585,6 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
