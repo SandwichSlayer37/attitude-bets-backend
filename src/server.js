@@ -29,21 +29,19 @@ function __cached(key, ttlMs, fetcher) {
 
 // =================================================================
 // ✅ FINAL, RESILIENT DATA FUSION SYSTEM
-// This version fetches Standings and Club Stats separately to prevent
-// a single API failure from crashing the entire process.
+// This version uses a single, reliable API endpoint to prevent failures.
 // =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_final_v4`;
+    const key = `fusion_snapshot_final_v5`; // Incremented version key
     return __cached(key, 15 * 60 * 1000, async () => {
         const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
-        const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now/All`;
         const fusedStats = {};
 
-        // --- Step 1: Fetch Standings (Record, Streak) ---
-        // This is our most reliable source, so we require it to succeed.
-        console.log("📡 Fetching live standings from NHL API...");
+        // --- Fetch All Live Data from the Standings Endpoint ---
+        console.log("📡 Fetching live standings and stats from NHL API...");
         const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
         const standingsData = standingsRes.data.standings;
+
         if (!standingsData || standingsData.length === 0) {
             throw new Error("NHL Standings API returned no data. Cannot build snapshot.");
         }
@@ -51,16 +49,30 @@ async function buildCurrentSeasonSnapshot() {
         standingsData.forEach(team => {
             const abbr = team.teamAbbrev.default;
             if (abbr) {
+                const gamesPlayed = safeNum(team.gamesPlayed);
+                
+                // All required stats are available in this single response object
                 fusedStats[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
                     streak: team.streakCode + team.streakCount,
                     points: safeNum(team.points),
                     pointPctg: safeNum(team.pointPctg),
-                    gamesPlayed: safeNum(team.gamesPlayed),
+                    gamesPlayed: gamesPlayed,
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    powerPlayPct: safeNum(team.ppPctg),
+                    penaltyKillPct: safeNum(team.pkPctg),
+                    // Note: Faceoff Win % is not in this endpoint, but our prediction engine
+                    // gracefully handles this by treating it as 0.
                 };
             }
         });
-        console.log(`✅ Successfully fetched records for ${Object.keys(fusedStats).length} teams.`);
+        
+        console.log(`✅ Successfully fetched and fused live stats for ${Object.keys(fusedStats).length} teams.`);
+        
+        return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL-Standings" };
+    });
+}
 
         // --- Step 2: Fetch Club Stats (G/GP, PP%, etc.) ---
         // This is a separate block, so it can fail without crashing the app.
@@ -1613,6 +1625,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
