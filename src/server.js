@@ -402,10 +402,7 @@ async function runAiChatWithTools(userPrompt) {
 
     // LOGGING: See the raw response text from the AI
     const responseText = response1.text();
-    console.log("----------- RAW AI RESPONSE -----------");
-    console.log(responseText);
-    console.log("---------------------------------------");
-
+    
     const functionCalls = response1.functionCalls() || [];
 
     if (functionCalls && functionCalls.length > 0) {
@@ -420,18 +417,12 @@ async function runAiChatWithTools(userPrompt) {
                 const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: { error: "No data was found for the specified criteria." } } }]);
                 
                 const responseText2 = result2.response.text();
-                console.log("----------- RAW AI RESPONSE (After Tool Error) -----------");
-                console.log(responseText2);
-                console.log("----------------------------------------------------------");
                 return cleanAndParseJson(responseText2);
             }
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: apiResponse } }]);
             const responseText2 = result2.response.text();
-            console.log("----------- RAW AI RESPONSE (After Tool Success) -----------");
-            console.log(responseText2);
-            console.log("------------------------------------------------------------");
-            return cleanAndParseJson(responseText2);
+                     return cleanAndParseJson(responseText2);
         }
     }
     
@@ -1537,10 +1528,6 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
         const analysisPrompt = generatePromptForSeason(new Date().getFullYear());
 
-        console.log("----------- PROMPT SENT TO GEMINI -----------");
-        console.log(analysisPrompt);
-        console.log("---------------------------------------------");
-
         const analysisData = await runAiChatWithTools(analysisPrompt);
 
         if (!analysisData || !analysisData.finalPick) {
@@ -1592,6 +1579,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
