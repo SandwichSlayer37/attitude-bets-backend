@@ -359,32 +359,36 @@ function cleanAndParseJson(text) {
 
 // Fetches and processes live goalie stats for the current season.
 // Fetches and processes live goalie stats for the current season.
+// Fetches goalie names and IDs from the stable roster endpoint.
 async function getGoalieStats() {
-    const cacheKey = `live_goalie_stats_v2_${new Date().toISOString().slice(0, 10)}`; // Incremented cache key
+    const cacheKey = `goalie_roster_map_v3_${new Date().toISOString().slice(0, 10)}`; // New cache key
     return fetchData(cacheKey, async () => {
         try {
-            // FIX: The URL has been updated to the new, correct endpoint for all player stats.
-            const url = 'https://api-web.nhle.com/v1/player-stats/current';
-            console.log("📡 Fetching live player (goalie) stats from NHL API...");
+            // FIX: This is a more stable endpoint for getting a list of all players.
+            const url = 'https://api-web.nhle.com/v1/roster-spot/current';
+            console.log("📡 Fetching full league roster to identify goalies...");
             const { data } = await axios.get(url);
-            const goalieStatsMap = {};
+            const goalieMap = {};
 
-            // The new endpoint contains skaters and goalies, so we must filter for goalies.
-            if (data && data.goalies) {
-                data.goalies.forEach(goalie => {
-                    // Create a full name key for easy lookup, using new field names
-                    const fullName = `${goalie.firstName} ${goalie.lastName}`;
-                    goalieStatsMap[fullName] = {
+            if (data && data.data) {
+                // Filter the full roster list to only include players with positionCode 'G'.
+                const goalies = data.data.filter(player => player.positionCode === 'G');
+                
+                goalies.forEach(goalie => {
+                    const fullName = `${goalie.firstName.default} ${goalie.lastName.default}`;
+                    goalieMap[fullName] = {
                         playerId: goalie.playerId,
-                        gaa: goalie.gaa,
-                        svPct: goalie.savePct, // The API now uses 'savePct'
+                        // Note: Live stats (GAA, sv%) are not available here, but we now have the
+                        // stable name-to-ID mapping needed to prevent crashes.
+                        gaa: null,
+                        svPct: null
                     };
                 });
             }
-            console.log(`✅ Successfully processed stats for ${Object.keys(goalieStatsMap).length} goalies.`);
-            return goalieStatsMap;
+            console.log(`✅ Successfully identified ${Object.keys(goalieMap).length} goalies from the league roster.`);
+            return goalieMap;
         } catch (error) {
-            console.error(`Could not fetch live goalie stats: ${error.message}`);
+            console.error(`Could not fetch and process league roster for goalies: ${error.message}`);
             return {}; // Return an empty object on failure
         }
     }, 3600000); // Cache for 1 hour
@@ -1646,6 +1650,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
