@@ -1149,6 +1149,11 @@ async function getPredictionsForSport(sportKey) {
     }
 }
 
+// Health check route for Render to confirm the service is running
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ status: 'ok', message: 'Service is healthy' });
+});
+
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
@@ -1596,14 +1601,19 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-connectToDb()
-    .then(() => {
-        app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-    })
-    .catch(error => {
-        console.error("Failed to start server:", error);
-        process.exit(1);
+
+// Start the server immediately
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    
+    // Connect to the database in the background after the server has started
+    connectToDb().catch(error => {
+        console.error("Background database connection failed:", error);
+        // We don't exit the process here, so the server keeps running
+        // Your routes will handle the case where the DB is not available
     });
+});
+
 
 
 
