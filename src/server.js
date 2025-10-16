@@ -1123,7 +1123,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 }
 
 async function getPredictionsForSport(sportKey) {
-    // This function is currently scoped to NHL, but can be expanded.
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
@@ -1137,7 +1136,6 @@ async function getPredictionsForSport(sportKey) {
 
         const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
         
-        // FIX: Add a guard clause to prevent crashes if the schedule API fails or returns an empty structure.
         if (!nhlScheduleData || !nhlScheduleData.gameWeek) {
             throw new Error("NHL schedule data is missing or in an unexpected format.");
         }
@@ -1151,9 +1149,10 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
+            // FIX: Added optional chaining (?.) to prevent crashes if 'name' or 'default' is missing.
             const matchingNhlGame = nhlGames.find(nhlGame => 
-                (canonicalTeamNameMap[game.home_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.homeTeam.name.default.toLowerCase()]) &&
-                (canonicalTeamNameMap[game.away_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.awayTeam.name.default.toLowerCase()])
+                (canonicalTeamNameMap[game.home_team.toLowerCase()] === canonicalTeamNameMap[nhlGame?.homeTeam?.name?.default?.toLowerCase()]) &&
+                (canonicalTeamNameMap[game.away_team.toLowerCase()] === canonicalTeamNameMap[nhlGame?.awayTeam?.name?.default?.toLowerCase()])
             );
 
             const probableStarters = {};
@@ -1186,7 +1185,7 @@ async function getPredictionsForSport(sportKey) {
 
     } catch (error) {
         console.error("Critical error during prediction generation:", error.message);
-        return []; // Ensure we always return an empty array on error
+        return []; 
     }
 }
 
@@ -1650,6 +1649,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
