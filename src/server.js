@@ -358,22 +358,26 @@ function cleanAndParseJson(text) {
 }
 
 // Fetches and processes live goalie stats for the current season.
+// Fetches and processes live goalie stats for the current season.
 async function getGoalieStats() {
-    const cacheKey = `live_goalie_stats_${new Date().toISOString().slice(0, 10)}`;
+    const cacheKey = `live_goalie_stats_v2_${new Date().toISOString().slice(0, 10)}`; // Incremented cache key
     return fetchData(cacheKey, async () => {
         try {
-            const url = 'https://api-web.nhle.com/v1/goalie-stats/now';
-            console.log("📡 Fetching live goalie stats from NHL API...");
+            // FIX: The URL has been updated to the new, correct endpoint for all player stats.
+            const url = 'https://api-web.nhle.com/v1/player-stats/current';
+            console.log("📡 Fetching live player (goalie) stats from NHL API...");
             const { data } = await axios.get(url);
             const goalieStatsMap = {};
-            if (data && data.data) {
-                data.data.forEach(goalie => {
-                    // Create a full name key for easy lookup
-                    const fullName = `${goalie.firstName.default} ${goalie.lastName.default}`;
+
+            // The new endpoint contains skaters and goalies, so we must filter for goalies.
+            if (data && data.goalies) {
+                data.goalies.forEach(goalie => {
+                    // Create a full name key for easy lookup, using new field names
+                    const fullName = `${goalie.firstName} ${goalie.lastName}`;
                     goalieStatsMap[fullName] = {
                         playerId: goalie.playerId,
                         gaa: goalie.gaa,
-                        svPct: goalie.savePctg, // The API uses 'savePctg'
+                        svPct: goalie.savePct, // The API now uses 'savePct'
                     };
                 });
             }
@@ -381,7 +385,7 @@ async function getGoalieStats() {
             return goalieStatsMap;
         } catch (error) {
             console.error(`Could not fetch live goalie stats: ${error.message}`);
-            return {};
+            return {}; // Return an empty object on failure
         }
     }, 3600000); // Cache for 1 hour
 }
@@ -1119,20 +1123,21 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // This is the critical connection point. buildCurrentSeasonSnapshot fetches live data.
         const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
         
-        // --- NEW: Fetch Goalie Stats and NHL Schedule Data ---
         const goalieStats = await getGoalieStats();
-        const goalieIdToNameMap = Object.values(goalieStats).reduce((acc, goalie) => {
-            acc[goalie.playerId] = Object.keys(goalieStats).find(name => goalieStats[name].playerId === goalie.playerId);
-            return acc;
-        }, {});
+        const goalieIdToNameMap = Object.fromEntries(
+            Object.entries(goalieStats).map(([name, stats]) => [stats.playerId, name])
+        );
 
         const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
+        
+        // FIX: Add a guard clause to prevent crashes if the schedule API fails or returns an empty structure.
+        if (!nhlScheduleData || !nhlScheduleData.gameWeek) {
+            throw new Error("NHL schedule data is missing or in an unexpected format.");
+        }
         const nhlGames = nhlScheduleData.gameWeek.flatMap(day => day.games);
-        // --- END NEW SECTION ---
 
         if (!fusedTeamData || Object.keys(fusedTeamData).length === 0) {
             console.warn("Fusion Snapshot returned no team data. Predictions cannot be generated.");
@@ -1142,8 +1147,6 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-
-            // --- NEW: Find matching NHL game to get probable starters ---
             const matchingNhlGame = nhlGames.find(nhlGame => 
                 (canonicalTeamNameMap[game.home_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.homeTeam.name.default.toLowerCase()]) &&
                 (canonicalTeamNameMap[game.away_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.awayTeam.name.default.toLowerCase()])
@@ -1160,14 +1163,12 @@ async function getPredictionsForSport(sportKey) {
                     probableStarters[canonicalTeamNameMap[game.away_team.toLowerCase()]] = goalieIdToNameMap[awayStarterId];
                 }
             }
-            // --- END NEW SECTION ---
 
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
                 injuries: {}, 
                 h2h: { home: '0-0', away: '0-0' }, 
-                // --- NEW: Pass goalie data to the engine ---
                 goalieStats: goalieStats,
                 probableStarters: probableStarters
             };
@@ -1180,9 +1181,8 @@ async function getPredictionsForSport(sportKey) {
         return predictions.filter(p => p && p.prediction);
 
     } catch (error) {
-        // This will catch any critical error from `buildCurrentSeasonSnapshot` (like the standings API failing)
         console.error("Critical error during prediction generation:", error.message);
-        return [];
+        return []; // Ensure we always return an empty array on error
     }
 }
 
@@ -1646,6 +1646,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
