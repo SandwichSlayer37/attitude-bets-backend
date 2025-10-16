@@ -36,7 +36,7 @@ async function buildCurrentSeasonSnapshot() {
     const key = `fusion_snapshot_final_v4`;
     return __cached(key, 15 * 60 * 1000, async () => {
         const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
-        const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now`;
+        const allClubStatsUrl = `https://api-web.nhle.com/v1/club-stats/now/All`;
         const fusedStats = {};
 
         // --- Step 1: Fetch Standings (Record, Streak) ---
@@ -1613,6 +1613,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
