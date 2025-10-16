@@ -1129,10 +1129,6 @@ async function getPredictionsForSport(sportKey) {
         const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
         
-        // Goalie stats are now an empty object for stability.
-        const goalieStats = await getGoalieStats();
-        const goalieIdToNameMap = {}; // Will be populated if data becomes available again.
-
         const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
         
         if (!nhlScheduleData || !nhlScheduleData.gameWeek) {
@@ -1148,23 +1144,45 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-            // FIX: Added optional chaining (?.) to prevent crashes if 'name' or 'default' is missing.
             const matchingNhlGame = nhlGames.find(nhlGame => 
                 (canonicalTeamNameMap[game.home_team.toLowerCase()] === canonicalTeamNameMap[nhlGame?.homeTeam?.name?.default?.toLowerCase()]) &&
                 (canonicalTeamNameMap[game.away_team.toLowerCase()] === canonicalTeamNameMap[nhlGame?.awayTeam?.name?.default?.toLowerCase()])
             );
 
-            // The probableStarters logic remains, but it won't find matches in the empty goalie map.
-            // This is the intended graceful failure.
             const probableStarters = {};
-            if (matchingNhlGame) {
-                const homeStarterId = matchingNhlGame.homeTeam.probableStarterId;
-                const awayStarterId = matchingNhlGame.awayTeam.probableStarterId;
-                if (homeStarterId && goalieIdToNameMap[homeStarterId]) {
-                    probableStarters[canonicalTeamNameMap[game.home_team.toLowerCase()]] = goalieIdToNameMap[homeStarterId];
+            const goalieStats = {};
+
+            // Helper to fetch stats for a single goalie by ID
+            const fetchGoalieData = async (goalieId) => {
+                if (!goalieId) return null;
+                try {
+                    const { data: landingData } = await axios.get(`https://api-web.nhle.com/v1/player/${goalieId}/landing`);
+                    const fullName = `${landingData.firstName.default} ${landingData.lastName.default}`;
+                    const seasonStats = landingData.featuredStats?.season;
+                    return {
+                        name: fullName,
+                        stats: {
+                            gaa: seasonStats?.gaa,
+                            svPct: seasonStats?.savePctg
+                        }
+                    };
+                } catch (e) {
+                    console.error(`[WARN] Failed to fetch data for goalie ID ${goalieId}.`);
+                    return null;
                 }
-                if (awayStarterId && goalieIdToNameMap[awayStarterId]) {
-                    probableStarters[canonicalTeamNameMap[game.away_team.toLowerCase()]] = goalieIdToNameMap[awayStarterId];
+            };
+
+            if (matchingNhlGame) {
+                const homeGoalie = await fetchGoalieData(matchingNhlGame.homeTeam.probableStarterId);
+                if (homeGoalie) {
+                    probableStarters[canonicalTeamNameMap[game.home_team.toLowerCase()]] = homeGoalie.name;
+                    goalieStats[homeGoalie.name] = homeGoalie.stats;
+                }
+
+                const awayGoalie = await fetchGoalieData(matchingNhlGame.awayTeam.probableStarterId);
+                if (awayGoalie) {
+                    probableStarters[canonicalTeamNameMap[game.away_team.toLowerCase()]] = awayGoalie.name;
+                    goalieStats[awayGoalie.name] = awayGoalie.stats;
                 }
             }
 
@@ -1644,6 +1662,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
