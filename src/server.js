@@ -358,13 +358,40 @@ function cleanAndParseJson(text) {
 }
 
 // Fetches and processes live goalie stats for the current season.
-// Fetches and processes live goalie stats for the current season.
-// Fetches goalie names and IDs from the stable roster endpoint.
-// This function is now simplified to prevent crashes from unstable NHL APIs.
-// Goalie identification will be handled directly in the prediction logic.
 async function getGoalieStats() {
-    console.log("✅ Bypassing goalie stats API to ensure stability. Goalie data will be sourced from schedule.");
-    return Promise.resolve({}); // Immediately return an empty object
+    // Using a new cache key for the updated endpoint
+    const cacheKey = `live_goalie_stats_v4_${new Date().toISOString().slice(0, 10)}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            // This is a different, more stable API endpoint for player summaries
+            const url = 'https://api.nhle.com/stats/rest/en/goalie/summary';
+            console.log("📡 Fetching live goalie stats from new summary API...");
+            const { data } = await axios.get(url);
+            const goalieStatsMap = {};
+
+            if (data && data.data) {
+                data.data.forEach(goalie => {
+                    // This API uses a different name format
+                    const fullName = `${goalie.firstName} ${goalie.lastName}`;
+                    goalieStatsMap[fullName] = {
+                        playerId: goalie.playerId,
+                        gaa: goalie.gaa,
+
+                        svPct: goalie.savePct,
+                    };
+                });
+                console.log(`✅ Successfully processed stats for ${Object.keys(goalieStatsMap).length} goalies.`);
+                return goalieStatsMap;
+            }
+            // If the data is not in the expected format, return empty
+            return {};
+        } catch (error) {
+            // CRITICAL: If the API call fails, log the error but return an empty object
+            // This prevents the entire application from crashing.
+            console.error(`[WARN] Could not fetch live goalie stats: ${error.message}. Proceeding without them.`);
+            return {};
+        }
+    }, 3600000); // Cache for 1 hour
 }
 
 async function fetchData(key, fetcherFn, ttl = 3600000) {
@@ -1617,6 +1644,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
