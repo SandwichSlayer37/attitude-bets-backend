@@ -7,6 +7,11 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const QUERYABLE_TEAM_STATS = [
+    'xGoalsFor', 'goalsFor', 'shotsOnGoalFor', 'shotAttemptsFor', 'missedShotsFor',
+    'xGoalsAgainst', 'goalsAgainst', 'shotsOnGoalAgainst', 'shotAttemptsAgainst',
+    'powerPlayPercentage', 'penaltyKillPercentage', 'GSAx', 'shootingPercentage', 'savePercentage'
+];
 
 const app = express();
 app.use(cors());
@@ -317,6 +322,35 @@ function parseEspnTeamStats(espnEvents) {
         });
     });
     return stats;
+}
+
+// New helper function to get key historical data before calling the AI
+async function getAiContextualData(teamName, season) {
+    try {
+        const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
+        const teamAbbr = canonicalName ? teamToAbbrMap[canonicalName] : teamName.toUpperCase();
+        if (!teamAbbr || !nhlStatsCollection) return null;
+
+        const pipeline = [
+            { $match: { team: teamAbbr, season: season } },
+            {
+                $group: {
+                    _id: "$team",
+                    goalsFor: { $sum: "$goalsFor" },
+                    xGoalsFor: { $sum: "$xGoalsFor" },
+                    goalsAgainst: { $sum: "$goalsAgainst" },
+                    xGoalsAgainst: { $sum: "$xGoalsAgainst" },
+                    shotsOnGoalFor: { $sum: "$shotsOnGoalFor" },
+                    shotsOnGoalAgainst: { $sum: "$shotsOnGoalAgainst" }
+                }
+            }
+        ];
+        const result = await nhlStatsCollection.aggregate(pipeline).toArray();
+        return result[0] || { _id: teamAbbr, goalsFor: 'N/A' }; // Return found data or a default
+    } catch (error) {
+        console.error(`Error fetching AI contextual data for ${teamName}:`, error);
+        return null;
+    }
 }
 
 function cleanAndParseJson(text) {
@@ -1468,37 +1502,47 @@ app.post('/api/ai-analysis', async (req, res) => {
     try {
         const { game, prediction } = req.body;
 
+        // PRE-FETCH KEY HISTORICAL DATA before calling the AI
+        const lastCompletedSeasonYear = new Date().getFullYear() - 1;
+        const [homeHistData, awayHistData] = await Promise.all([
+            getAiContextualData(game.home_team, lastCompletedSeasonYear),
+            getAiContextualData(game.away_team, lastCompletedSeasonYear)
+        ]);
+
         const generatePromptForSeason = (season) => {
-            // FIX: Filter out factors with 'N/A' to create a cleaner prompt.
             const factorsList = Object.entries(prediction.factors)
-                .filter(([key, value]) => value && value.homeStat !== 'N/A' && value.awayStat !== 'N/A')
+                .filter(([key, value]) => value && value.homeStat !== 'N/A' && value.awayStat !== 'N/A' && value.homeStat !== '0.00' && value.awayStat !== '0.00')
                 .map(([key, value]) => `- ${key}: Home (${value.homeStat}), Away (${value.awayStat})`)
                 .join('\n');
-            
-            if (!factorsList) {
-                console.error("Could not generate factors list for AI prompt. Prediction data might be empty.");
-            }
 
-            const liveStatsInfo = game.espnData?.liveDetails
-                ? `Current Score: ${game.espnData.awayTeam.name.default} ${game.espnData.awayTeam.score} - ${game.espnData.homeTeam.name.default} ${game.espnData.homeTeam.score}\nStatus: ${game.espnData.liveDetails.shortDetail}`
-                : 'No live game stats available (pre-game).';
+            // Add the pre-fetched data to the prompt
+            const preFetchedDataSummary = `
+**Pre-Fetched Historical Data (${lastCompletedSeasonYear} Season):**
+- ${game.home_team}: 
+  - Goals For: ${homeHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${homeHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
+  - Goals Against: ${homeHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${homeHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
+- ${game.away_team}:
+  - Goals For: ${awayHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${awayHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
+  - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
+`;
 
-            const instruction = new Date().getFullYear() === season
-                ? `Your primary analysis MUST use the current season's data (${season}). Use your queryNhlStats tool to find supporting historical data.`
-                : `CRITICAL FALLBACK: Analysis for the current season failed. Your historical analysis MUST use the most recent completed season's data, which is season ${season}. Use your queryNhlStats tool to find supporting historical data.`;
+            const instruction = `
+You are an expert sports betting analyst. Your task is to synthesize the **Prediction Model Factors** and the **Pre-Fetched Historical Data** to complete the following JSON object. 
+Only use your \`queryNhlStats\` tool if you believe a critical piece of information is missing from the data provided. When using the tool for \`dataType: 'team'\`, you MUST use a \`stat\` from this list: ${QUERYABLE_TEAM_STATS.join(', ')}.
+After any tool use, you MUST generate the final JSON. Do not get stuck.
+`;
 
             return `
 **SYSTEM ANALYSIS REPORT**
 **Matchup:** ${game.away_team} @ ${game.home_team}
 
-**Live Game Status:**
-${liveStatsInfo}
+${preFetchedDataSummary}
 
-**Prediction Model Factors:**
-${factorsList || 'No valid factors available.'}
+**Prediction Model Factors (Current Season):**
+${factorsList || 'No valid live factors available.'}
 
 **TASK:**
-You are an expert sports betting analyst. Synthesize all the provided data to complete the following JSON object. ${instruction}
+${instruction}
 
 **JSON TO COMPLETE:**
 ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
@@ -1507,44 +1551,19 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 `;
         };
 
-        // --- Get current and previous season years dynamically ---
-        const currentSeasonYear = new Date().getFullYear();
-        const lastCompletedSeasonYear = currentSeasonYear - 1;
+        const analysisPrompt = generatePromptForSeason(new Date().getFullYear());
 
-        let analysisData;
-        try {
-            console.log(`Attempting AI analysis with current season data (${currentSeasonYear})...`);
-            const userPromptCurrent = generatePromptForSeason(currentSeasonYear);
-            
-            // LOGGING: Print the exact prompt being sent to the AI
-            console.log("----------- PROMPT SENT TO GEMINI (Current Season) -----------");
-            console.log(userPromptCurrent);
-            console.log("-------------------------------------------------------------");
+        console.log("----------- PROMPT SENT TO GEMINI -----------");
+        console.log(analysisPrompt);
+        console.log("---------------------------------------------");
 
-            analysisData = await runAiChatWithTools(userPromptCurrent);
+        const analysisData = await runAiChatWithTools(analysisPrompt);
 
-            if (!analysisData || !analysisData.finalPick) {
-                throw new Error(`AI analysis for ${currentSeasonYear} returned incomplete or invalid JSON.`);
-            }
-            console.log(`✅ Successfully generated AI analysis using ${currentSeasonYear} data.`);
-
-        } catch (errorCurrent) {
-            console.warn(`[WARN] AI analysis using ${currentSeasonYear} data failed: ${errorCurrent.message}. Falling back to last completed season (${lastCompletedSeasonYear}).`);
-            
-            const userPromptFallback = generatePromptForSeason(lastCompletedSeasonYear);
-
-            // LOGGING: Print the exact fallback prompt
-            console.log(`----------- PROMPT SENT TO GEMINI (Fallback Season ${lastCompletedSeasonYear}) -----------`);
-            console.log(userPromptFallback);
-            console.log("----------------------------------------------------------------------");
-
-            analysisData = await runAiChatWithTools(userPromptFallback); 
-            if (!analysisData || !analysisData.finalPick) {
-                throw new Error(`AI analysis fallback for ${lastCompletedSeasonYear} also failed to produce valid JSON.`);
-            }
-            console.log(`✅ Successfully generated AI analysis using ${lastCompletedSeasonYear} fallback data.`);
+        if (!analysisData || !analysisData.finalPick) {
+            throw new Error("AI analysis failed to produce a valid JSON response after all steps.");
         }
 
+        console.log("✅ Successfully generated final AI analysis.");
         res.json({ analysisData });
 
     } catch (error) {
@@ -1585,6 +1604,7 @@ connectToDb()
         console.error("Failed to start server:", error);
         process.exit(1);
     });
+
 
 
 
