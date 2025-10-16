@@ -357,6 +357,35 @@ function cleanAndParseJson(text) {
     }
 }
 
+// Fetches and processes live goalie stats for the current season.
+async function getGoalieStats() {
+    const cacheKey = `live_goalie_stats_${new Date().toISOString().slice(0, 10)}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const url = 'https://api-web.nhle.com/v1/goalie-stats/now';
+            console.log("📡 Fetching live goalie stats from NHL API...");
+            const { data } = await axios.get(url);
+            const goalieStatsMap = {};
+            if (data && data.data) {
+                data.data.forEach(goalie => {
+                    // Create a full name key for easy lookup
+                    const fullName = `${goalie.firstName.default} ${goalie.lastName.default}`;
+                    goalieStatsMap[fullName] = {
+                        playerId: goalie.playerId,
+                        gaa: goalie.gaa,
+                        svPct: goalie.savePctg, // The API uses 'savePctg'
+                    };
+                });
+            }
+            console.log(`✅ Successfully processed stats for ${Object.keys(goalieStatsMap).length} goalies.`);
+            return goalieStatsMap;
+        } catch (error) {
+            console.error(`Could not fetch live goalie stats: ${error.message}`);
+            return {};
+        }
+    }, 3600000); // Cache for 1 hour
+}
+
 async function fetchData(key, fetcherFn, ttl = 3600000) {
     if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
         return dataCache.get(key).data;
@@ -402,7 +431,10 @@ async function runAiChatWithTools(userPrompt) {
 
     // LOGGING: See the raw response text from the AI
     const responseText = response1.text();
-    
+    console.log("----------- RAW AI RESPONSE (Attempt 1) -----------");
+    console.log(responseText);
+    console.log("-------------------------------------------------");
+
     const functionCalls = response1.functionCalls() || [];
 
     if (functionCalls && functionCalls.length > 0) {
@@ -417,12 +449,18 @@ async function runAiChatWithTools(userPrompt) {
                 const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: { error: "No data was found for the specified criteria." } } }]);
                 
                 const responseText2 = result2.response.text();
+                console.log("----------- RAW AI RESPONSE (After Tool Error) -----------");
+                console.log(responseText2);
+                console.log("----------------------------------------------------------");
                 return cleanAndParseJson(responseText2);
             }
 
             const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: apiResponse } }]);
             const responseText2 = result2.response.text();
-                     return cleanAndParseJson(responseText2);
+            console.log("----------- RAW AI RESPONSE (After Tool Success) -----------");
+            console.log(responseText2);
+            console.log("------------------------------------------------------------");
+            return cleanAndParseJson(responseText2);
         }
     }
     
@@ -1084,6 +1122,17 @@ async function getPredictionsForSport(sportKey) {
         // This is the critical connection point. buildCurrentSeasonSnapshot fetches live data.
         const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
         const oddsGames = await getOdds(sportKey);
+        
+        // --- NEW: Fetch Goalie Stats and NHL Schedule Data ---
+        const goalieStats = await getGoalieStats();
+        const goalieIdToNameMap = Object.values(goalieStats).reduce((acc, goalie) => {
+            acc[goalie.playerId] = Object.keys(goalieStats).find(name => goalieStats[name].playerId === goalie.playerId);
+            return acc;
+        }, {});
+
+        const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
+        const nhlGames = nhlScheduleData.gameWeek.flatMap(day => day.games);
+        // --- END NEW SECTION ---
 
         if (!fusedTeamData || Object.keys(fusedTeamData).length === 0) {
             console.warn("Fusion Snapshot returned no team data. Predictions cannot be generated.");
@@ -1093,16 +1142,34 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-            // The live data (`fusedTeamData`) is passed into the prediction engine via this context object.
-            // If `fusedTeamData` is incomplete (e.g., the club-stats API failed), the engine will receive
-            // partial data, leading to "N/A" for some factors, which is the intended fallback behavior.
+
+            // --- NEW: Find matching NHL game to get probable starters ---
+            const matchingNhlGame = nhlGames.find(nhlGame => 
+                (canonicalTeamNameMap[game.home_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.homeTeam.name.default.toLowerCase()]) &&
+                (canonicalTeamNameMap[game.away_team.toLowerCase()] === canonicalTeamNameMap[nhlGame.awayTeam.name.default.toLowerCase()])
+            );
+
+            const probableStarters = {};
+            if (matchingNhlGame) {
+                const homeStarterId = matchingNhlGame.homeTeam.probableStarterId;
+                const awayStarterId = matchingNhlGame.awayTeam.probableStarterId;
+                if (homeStarterId && goalieIdToNameMap[homeStarterId]) {
+                    probableStarters[canonicalTeamNameMap[game.home_team.toLowerCase()]] = goalieIdToNameMap[homeStarterId];
+                }
+                if (awayStarterId && goalieIdToNameMap[awayStarterId]) {
+                    probableStarters[canonicalTeamNameMap[game.away_team.toLowerCase()]] = goalieIdToNameMap[awayStarterId];
+                }
+            }
+            // --- END NEW SECTION ---
+
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
-                injuries: {}, // Placeholder, can be populated from another source
-                h2h: { home: '0-0', away: '0-0' }, // Placeholder
-                goalieStats: {}, // Placeholder
-                probableStarters: {} // Placeholder
+                injuries: {}, 
+                h2h: { home: '0-0', away: '0-0' }, 
+                // --- NEW: Pass goalie data to the engine ---
+                goalieStats: goalieStats,
+                probableStarters: probableStarters
             };
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
@@ -1579,6 +1646,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
