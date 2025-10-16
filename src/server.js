@@ -33,6 +33,7 @@ function __cached(key, ttlMs, fetcher) {
 // =================================================================
 async function buildCurrentSeasonSnapshot() {
     const key = `fusion_snapshot_final_v5`; // Incremented version key
+    // FIX: Added 'async' keyword to the callback function here
     return __cached(key, 15 * 60 * 1000, async () => {
         const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
         const fusedStats = {};
@@ -1625,6 +1626,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
