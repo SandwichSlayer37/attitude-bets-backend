@@ -75,41 +75,7 @@ async function buildCurrentSeasonSnapshot() {
     });
 }
 
-        // --- Step 2: Fetch Club Stats (G/GP, PP%, etc.) ---
-        // This is a separate block, so it can fail without crashing the app.
-        try {
-            console.log("📡 Fetching live club stats from NHL API...");
-            const clubStatsRes = await axios.get(allClubStatsUrl, { timeout: 15000 });
-            // NOTE: The club-stats endpoint nests the data differently. It should be clubStatsRes.data, not clubStatsRes.data.data
-            const clubStatsData = clubStatsRes.data; 
-
-            if (clubStatsData && clubStatsData.length > 0) {
-                clubStatsData.forEach(team => {
-                    // NOTE: This API uses `teamAbbrev` directly, simplifying the lookup.
-                    const abbr = team.abbreviation;
-                    if (abbr && fusedStats[abbr]) {
-                        Object.assign(fusedStats[abbr], {
-                            goalsForPerGame: safeNum(team.goalsForPerGame),
-                            goalsAgainstPerGame: safeNum(team.goalsAgainstPerGame),
-                            powerPlayPct: safeNum(team.powerPlayPctg), // API uses 'powerPlayPctg'
-                            penaltyKillPct: safeNum(team.penaltyKillPctg), // API uses 'penaltyKillPctg'
-                            faceoffWinPct: safeNum(team.faceoffWinPct),
-                        });
-                    }
-                });
-                console.log(`✅ Successfully fused detailed club stats.`);
-            } else {
-                 console.warn("[WARN] Live club stats API returned no data or an empty array.");
-            }
-        } catch (error) {
-            // If this API fails, just log a warning and continue with the data we have.
-            console.warn(`[WARN] Live club stats API failed (Status: ${error.response?.status}). Proceeding with standings data only. This may result in 'N/A' for some stats like G/GP.`);
-        }
-        
-        return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL" };
-    });
-}
-
+     
 async function fetchHistoricalTeamContext(teamAbbrev) {
   try {
     const db = (mongoose && mongoose.connection && mongoose.connection.db) ? mongoose.connection.db : null;
@@ -1626,6 +1592,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
