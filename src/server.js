@@ -1159,7 +1159,16 @@ async function getPredictionsForSport(sportKey) {
         const lastCompletedSeason = new Date().getFullYear() - 1;
         const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
+            // FIX: Add a fallback for the schedule API to ensure games are always loaded.
+            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(async (e) => {
+                console.warn(`[WARN] Primary NHL schedule API failed: ${e.message}. Falling back to ESPN scoreboard.`);
+                try {
+                    return await fetchEspnData('icehockey_nhl');
+                } catch (espnError) {
+                    console.error(`[CRITICAL] Both NHL and ESPN schedule APIs failed. No games can be processed. Error: ${espnError.message}`);
+                    return null; // Ensure failure returns null
+                }
+            }),
             getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
             // This fetcher now has a built-in fallback for live team stats
             axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
@@ -1169,7 +1178,8 @@ async function getPredictionsForSport(sportKey) {
             })
         ]);
 
-        if (!scheduleData?.gameWeek || !teamStatsData || !oddsData) {
+        // FIX: Check for either NHL's gameWeek or ESPN's events structure.
+        if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
@@ -1203,7 +1213,23 @@ async function getPredictionsForSport(sportKey) {
         console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
 
         // --- Step 3: Iterate through the official schedule (our "source of truth") ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+        // FIX: Handle both NHL API and ESPN API schedule structures.
+        let officialGames = [];
+        if (scheduleData.gameWeek) { // NHL API structure
+            officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from primary API.`);
+        } else if (scheduleData.events) { // ESPN fallback structure
+            officialGames = scheduleData.events.map(event => {
+                const home = event.competitions[0].competitors.find(c => c.homeAway === 'home');
+                const away = event.competitions[0].competitors.find(c => c.homeAway === 'away');
+                return { // Create a compatible game object
+                    homeTeam: { name: { default: home.team.displayName }, abbrev: home.team.abbreviation },
+                    awayTeam: { name: { default: away.team.displayName }, abbrev: away.team.abbreviation }
+                };
+            });
+            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from fallback ESPN API.`);
+        }
+
         const predictions = [];
 
         for (const officialGame of officialGames) {
@@ -1231,8 +1257,8 @@ async function getPredictionsForSport(sportKey) {
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
-                     homeId: officialGame.homeTeam.probableStarterId,
-                     awayId: officialGame.homeTeam.probableStarterId
+                     homeId: officialGame.homeTeam?.probableStarterId, // Use optional chaining for safety
+                     awayId: officialGame.awayTeam?.probableStarterId
                 },
                 historicalGoalieData,
                 homeAbbr,
