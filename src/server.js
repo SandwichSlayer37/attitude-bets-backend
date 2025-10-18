@@ -1169,24 +1169,25 @@ async function fetchAllPredictionData() {
             return data;
         } catch (error) {
             console.error(`[CRITICAL] Failed to fetch ${name}: ${error.message}`);
-            return null;
+            return null; // Return null on critical failure to prevent crashes
         }
     };
 
-    // FIX: This fetcher now uses the 'teamAbbrev' field for a guaranteed match, solving the N/A record issue.
+    // FIX: This fetcher has been rewritten to use the single, most stable API endpoint.
     const liveTeamStatsFetcher = async () => {
-        const { data } = await axios.get('https://api.nhle.com/stats/rest/en/team/summary');
-        if (!data || !data.data) throw new Error("Team summary API returned no data.");
+        const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+        if (!data || !data.standings) throw new Error("Stable standings API returned no data.");
         
-        return data.data.reduce((acc, team) => {
-            const abbr = team.teamAbbrev; // This is the direct 3-letter code, e.g., "BOS", "TBL"
+        return data.standings.reduce((acc, team) => {
+            const abbr = team.teamAbbrev.default;
             if (abbr) {
+                const gamesPlayed = safeNum(team.gamesPlayed);
                  acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode,
-                    goalsForPerGame: team.goalsForPerGame,
-                    goalsAgainstPerGame: team.goalsAgainstPerGame,
-                    faceoffWinPct: team.faceoffWinPct * 100,
+                    streak: `${team.streakCode}${team.streakCount}`,
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    faceoffWinPct: 0, // Faceoff % is not available in this endpoint, default to 0.
                 };
             }
             return acc;
@@ -1214,7 +1215,12 @@ async function fetchAllPredictionData() {
         console.log(`✅ Created goalie lookup map with ${Object.keys(goalieIdLookup).length} games.`);
     }
 
-    return { oddsGames, fusedTeamData, historicalGoalieData, goalieIdLookup };
+    return {
+        oddsGames: oddsGames || [],
+        fusedTeamData,
+        historicalGoalieData,
+        goalieIdLookup,
+    };
 }
 
 async function getPredictionsForSport(sportKey) {
@@ -1711,6 +1717,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
