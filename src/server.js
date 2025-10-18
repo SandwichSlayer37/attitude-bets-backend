@@ -1204,43 +1204,6 @@ async function fetchAllPredictionData() {
     };
 }
 
-    // This function tries the detailed API and falls back to the basic one
-    const liveTeamStatsFetcher = async () => {
-        try {
-            const { data } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All');
-            return (data || []).reduce((acc, team) => {
-                acc[team.abbreviation] = { record: `${team.wins}-${team.losses}-${team.otLosses}`, streak: `${team.streakCode}${team.streakCount}`, goalsForPerGame: team.goalsForPerGame, goalsAgainstPerGame: team.goalsAgainstPerGame, faceoffWinPct: team.faceoffWinPct };
-                return acc;
-            }, {});
-        } catch (e) {
-            console.warn(`[WARN] Primary club-stats API failed. Falling back to standings API.`);
-            const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-            return (data.standings || []).reduce((acc, team) => {
-                const abbr = team.teamAbbrev.default;
-                if (abbr) {
-                    const gp = safeNum(team.gamesPlayed);
-                    acc[abbr] = { record: `${team.wins}-${team.losses}-${team.otLosses}`, streak: `${team.streakCode}${team.streakCount}`, goalsForPerGame: gp > 0 ? safeNum(team.goalsFor) / gp : 0, goalsAgainstPerGame: gp > 0 ? safeNum(team.goalsAgainst) / gp : 0, faceoffWinPct: 0 };
-                }
-                return acc;
-            }, {});
-        }
-    };
-
-    // Run all data fetching in parallel
-    const [oddsGames, fusedTeamData, historicalGoalieData, scheduleData] = await Promise.all([
-        fetchDataWithFallback(() => getOdds('icehockey_nhl'), 'Odds'),
-        fetchDataWithFallback(liveTeamStatsFetcher, 'Live Team Stats'),
-        fetchDataWithFallback(() => getHistoricalGoalieData(lastCompletedSeason), 'Historical Goalie Data'),
-        fetchDataWithFallback(async () => (await axios.get('https://api-web.nhle.com/v1/schedule/now')).data, 'NHL Schedule')
-    ]);
-
-    return {
-        oddsGames: oddsGames || [],
-        fusedTeamData,
-        historicalGoalieData,
-        nhlGames: scheduleData?.gameWeek?.flatMap(day => day.games) || [],
-    };
-}
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1738,4 +1701,3 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
-
