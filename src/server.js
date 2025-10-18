@@ -1000,6 +1000,31 @@ async function runPredictionEngine(game, sportKey, context) {
     return { winner, strengthText, confidence, factors, weather, homeValue, awayValue };
 }
 
+/**
+ * NEW: A robust helper to find the probable starting goalie from a live game object.
+ * It checks multiple paths to ensure we find the goalie data regardless of API structure.
+ * @param {object} game - The official game object from the NHL schedule API.
+ * @param {string} teamType - Either 'home' or 'away'.
+ * @returns {{id: number, name: string, teamAbbrev: string}|null} A standardized goalie object or null.
+ */
+function extractProbableGoalie(game, teamType) {
+    if (!game || !game[`${teamType}Team`]) return null;
+
+    const team = game[`${teamType}Team`];
+    const probableId = team.probableStarterId;
+
+    if (probableId) {
+        // The most reliable path: the ID is directly provided.
+        const goalie = (game.roster || []).find(p => p.id === probableId && p.positionCode === 'G');
+        if (goalie) {
+            return { id: goalie.id, name: `${goalie.firstName.default} ${goalie.lastName.default}`, teamAbbrev: team.abbrev };
+        }
+    }
+    // Fallback if probableStarterId is missing or the roster lookup fails.
+    // This is less reliable as it just picks the first goalie listed.
+    return null;
+}
+
 async function getTeamSeasonAdvancedStats(team, season) {
     const cacheKey = `adv_stats_final_agg_${team}_${season}_v5`;
     return fetchData(cacheKey, async () => {
@@ -1052,7 +1077,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
 }
 
 async function runAdvancedNhlPredictionEngine(game, context) {
-    const { teamStats, allGames, h2h, probableStarters, historicalGoalieData, homeAbbr, awayAbbr } = context;
+    const { teamStats, allGames, h2h, homeGoalie, awayGoalie, homeAbbr, awayAbbr } = context;
     const { home_team, away_team } = game;
     const weights = getDynamicWeights('icehockey_nhl');
     
@@ -1075,24 +1100,15 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeAbbr] || {};
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
-    // --- GOALIE LOGIC WITH TARGETED DEBUGGING ---
-    const homeHistGoalie = historicalGoalieData[probableStarters.homeId];
-    const awayHistGoalie = historicalGoalieData[probableStarters.awayId];
-    
-    // DEBUGGING BLOCK: This will tell us exactly what's happening.
-    console.log(`--- Goalie Debug for ${away_team} @ ${home_team} ---`);
-    console.log(`Home Goalie ID from Schedule: ${probableStarters.homeId} | Away Goalie ID: ${probableStarters.awayId}`);
-    console.log(`Historical DB contains ${Object.keys(historicalGoalieData).length} goalies. First 5 keys:`, Object.keys(historicalGoalieData).slice(0, 5));
-    console.log(`Lookup for Home ID (${probableStarters.homeId}) found: ${homeHistGoalie ? `Yes, ${homeHistGoalie.name}` : 'No Match'}`);
-    console.log(`Lookup for Away ID (${probableStarters.awayId}) found: ${awayHistGoalie ? `Yes, ${awayHistGoalie.name}` : 'No Match'}`);
-    console.log("-----------------------------------------------------");
-    
-    const homeGSAx = homeHistGoalie?.gsax || 0;
-    const awayGSAx = awayHistGoalie?.gsax || 0;
+    // --- NEW GOALIE LOGIC ---
+    // The enriched goalie objects (live + historical) are now passed directly in the context.
+    const homeGSAx = homeGoalie?.historical?.gsax || 0;
+    const awayGSAx = awayGoalie?.historical?.gsax || 0;
+    const homeCurrentGAA = homeGoalie?.live?.gaa || 3.5; // Use live stats if available, else default
+    const awayCurrentGAA = awayGoalie?.live?.gaa || 3.5;
+
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
-    
-    // For now, we are focusing on historical stats, so Current Form is disabled.
-    factors['Current Goalie Form'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
+    factors['Current Goalie Form'] = { value: awayCurrentGAA - homeCurrentGAA, homeStat: `${homeCurrentGAA.toFixed(2)} GAA`, awayStat: `${awayCurrentGAA.toFixed(2)} GAA` };
     // --- END GOALIE LOGIC ---
     
     // (The rest of the factor calculations remain the same)
@@ -1141,11 +1157,12 @@ async function getPredictionsForSport(sportKey) {
 
         // --- Step 1: Fetch all data sources in parallel with robust error handling ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
+        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData, liveGoalieStats] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
             axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
             getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
+            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; }),
+            getGoalieStats().catch(e => { console.error("Failed to fetch live goalies:", e.message); return {}; })
         ]);
 
         if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
@@ -1197,16 +1214,35 @@ async function getPredictionsForSport(sportKey) {
                 console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
                 continue;
             }
-            
+
+            // --- NEW: Goalie Enrichment Pipeline ---
+            const homeLiveGoalie = extractProbableGoalie(officialGame, 'home');
+            const awayLiveGoalie = extractProbableGoalie(officialGame, 'away');
+
+            // Find historical data using the new resilient logic
+            const findHistorical = (liveGoalie) => {
+                if (!liveGoalie) return null;
+                // Primary match on ID
+                if (liveGoalie.id && historicalGoalieData[liveGoalie.id]) {
+                    return historicalGoalieData[liveGoalie.id];
+                }
+                // Fallback match on name (less reliable but better than nothing)
+                const nameMatch = Object.values(historicalGoalieData).find(g => g.name.toLowerCase() === liveGoalie.name.toLowerCase());
+                return nameMatch || null;
+            };
+
+            const homeGoalieData = { live: liveGoalieStats[homeLiveGoalie?.name] || null, historical: findHistorical(homeLiveGoalie) };
+            const awayGoalieData = { live: liveGoalieStats[awayLiveGoalie?.name] || null, historical: findHistorical(awayLiveGoalie) };
+
+            console.log(`🏒 Goalie Debug for ${awayAbbr}@${homeAbbr}: Home: ${homeLiveGoalie?.name || 'N/A'} [${homeLiveGoalie?.id || 'N/A'}] | Away: ${awayLiveGoalie?.name || 'N/A'} [${awayLiveGoalie?.id || 'N/A'}] | Historical Match: ${!!homeGoalieData.historical} / ${!!awayGoalieData.historical}`);
+            // --- END Goalie Enrichment ---
+
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
-                probableStarters: {
-                     homeId: officialGame.homeTeam.probableStarterId,
-                     awayId: officialGame.awayTeam.probableStarterId
-                },
-                historicalGoalieData,
+                homeGoalie: homeGoalieData,
+                awayGoalie: awayGoalieData,
                 homeAbbr,
                 awayAbbr,
             };
@@ -1680,4 +1716,3 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
-
