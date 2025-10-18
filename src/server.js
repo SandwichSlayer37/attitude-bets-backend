@@ -1150,7 +1150,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 async function fetchAllPredictionData() {
     const lastCompletedSeason = new Date().getFullYear() - 1;
 
-    // A helper to wrap each data fetch for resilience
     const fetchDataWithFallback = async (fetcher, name) => {
         try {
             const data = await fetcher();
@@ -1166,9 +1165,30 @@ async function fetchAllPredictionData() {
         }
     };
 
-    const liveTeamStatsFetcher = async () => { /* ... contents of this function are the same ... */ };
+    // FIX: This fetcher has been completely rewritten to use a single, more stable API endpoint.
+    const liveTeamStatsFetcher = async () => {
+        const { data } = await axios.get('https://api.nhle.com/stats/rest/en/team/summary');
+        if (!data || !data.data) throw new Error("New team summary API returned no data.");
+        
+        // This new API requires us to find the team abbreviation from a different field
+        const abbrMap = Object.values(teamToAbbrMap);
+        const teamAbbrLookup = Object.fromEntries(Object.keys(teamToAbbrMap).map(key => [key, teamToAbbrMap[key]]));
+        
+        return data.data.reduce((acc, team) => {
+            const abbr = abbrMap.find(ab => team.teamFullName.toLowerCase().includes(ab.toLowerCase()));
+            if (abbr) {
+                 acc[abbr] = {
+                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                    streak: team.streakCode, // This API provides the full streak code directly
+                    goalsForPerGame: team.goalsForPerGame,
+                    goalsAgainstPerGame: team.goalsAgainstPerGame,
+                    faceoffWinPct: team.faceoffWinPct * 100, // Convert decimal to percentage
+                };
+            }
+            return acc;
+        }, {});
+    };
 
-    // --- FIX: This block contains the new, robust matching logic ---
     const [oddsGames, fusedTeamData, historicalGoalieData, scheduleData] = await Promise.all([
         fetchDataWithFallback(() => getOdds('icehockey_nhl'), 'Odds'),
         fetchDataWithFallback(liveTeamStatsFetcher, 'Live Team Stats'),
@@ -1176,17 +1196,13 @@ async function fetchAllPredictionData() {
         fetchDataWithFallback(async () => (await axios.get('https://api-web.nhle.com/v1/schedule/now')).data, 'NHL Schedule')
     ]);
 
-    // NEW STRATEGY: Create a lookup map from the reliable NHL schedule data
     const goalieIdLookup = {};
     if (scheduleData && scheduleData.gameWeek) {
         const nhlGames = scheduleData.gameWeek.flatMap(day => day.games);
         nhlGames.forEach(game => {
-            // Use the team abbreviations, which are more consistent than full names
             const homeAbbr = game.homeTeam.abbrev;
             const awayAbbr = game.awayTeam.abbrev;
-            // Create a standardized key, e.g., "FLA@BUF"
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            // Store the goalie IDs in the map
             goalieIdLookup[matchupKey] = {
                 homeId: game.homeTeam.probableStarterId,
                 awayId: game.awayTeam.probableStarterId
@@ -1194,13 +1210,12 @@ async function fetchAllPredictionData() {
         });
         console.log(`✅ Created goalie lookup map with ${Object.keys(goalieIdLookup).length} games.`);
     }
-    // --- END FIX ---
 
     return {
         oddsGames: oddsGames || [],
         fusedTeamData,
         historicalGoalieData,
-        goalieIdLookup, // Return the new lookup map
+        goalieIdLookup,
     };
 }
 
@@ -1701,3 +1716,4 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
