@@ -71,31 +71,29 @@ async function buildCurrentSeasonSnapshot() {
 }
 
 async function getHistoricalGoalieData(season) {
-    const cacheKey = `historical_goalie_data_${season}`;
+    const cacheKey = `historical_goalie_data_${season}_v3`; // New cache key
     return fetchData(cacheKey, async () => {
         try {
-            if (!nhlStatsCollection) return {};
-
+            if (!goaliesHistCollection) {
+                console.error("[ERROR] goaliesHistCollection is not initialized.");
+                return {};
+            }
             const pipeline = [
-                // Find all documents for the given season where the position is Goalie
-                { $match: { season: season, position: 'G' } },
+                { $match: { season: season } },
                 {
                     $group: {
-                        _id: "$playerId", // Group by the unique player ID
+                        _id: "$playerId",
                         name: { $first: "$name" },
                         goals: { $sum: "$goals" },
                         xGoals: { $sum: "$xGoals" },
                     }
                 }
             ];
-            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-            
-            // Convert the array of results into a map for easy lookup by player ID
+            // FIX: Querying the correct collection now
+            const results = await goaliesHistCollection.aggregate(pipeline).toArray();
+
             const goalieDataMap = results.reduce((acc, goalie) => {
-                acc[goalie._id] = {
-                    name: goalie.name,
-                    gsax: goalie.xGoals - goalie.goals // Calculate GSAx
-                };
+                acc[goalie._id] = { name: goalie.name, gsax: goalie.xGoals - goalie.goals };
                 return acc;
             }, {});
 
@@ -105,20 +103,17 @@ async function getHistoricalGoalieData(season) {
             console.error(`Error fetching historical goalie data for season ${season}:`, error);
             return {};
         }
-    }, 86400000); // Cache for 24 hours
+    }, 86400000);
 }
      
 async function fetchHistoricalTeamContext(teamAbbrev) {
   try {
-    const db = (mongoose && mongoose.connection && mongoose.connection.db) ? mongoose.connection.db : null;
-    if (!db) return {};
-    const TEAMS = db.collection('teams');
-    const ADV = db.collection('nhl_advanced_stats');
+    if (!teamsHistCollection || !nhlStatsCollection) return {};
     const result = { team: teamAbbrev };
 
-    // TEAMS aggregates
     try {
-      const cursor = TEAMS.aggregate([
+      // FIX: Querying the correct 'teamsHistCollection' now
+      const cursor = teamsHistCollection.aggregate([
         { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
         { $group: { _id:"$team",
           seasons: { $addToSet: "$season" },
@@ -142,10 +137,10 @@ async function fetchHistoricalTeamContext(teamAbbrev) {
       }
     } catch {}
 
-    // fallback from ADV
+    // fallback from nhl_advanced_stats remains the same
     if (result.avgGF == null || result.avgGA == null) {
       try {
-        const adv = await ADV.aggregate([
+        const adv = await nhlStatsCollection.aggregate([
           { $match: { team: teamAbbrev, season: { $gte: 2008, $lte: 2024 } } },
           { $group: { _id:"$team", totalGF:{ $sum:{ $ifNull:["$goalsFor",0]} }, totalGA:{ $sum:{ $ifNull:["$goalsAgainst",0]} }, games:{ $sum:1 } } },
           { $limit: 1 }
@@ -234,7 +229,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection;
+let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection;
 
 async function connectToDb() {
     try {
@@ -242,10 +237,18 @@ async function connectToDb() {
         const client = new MongoClient(DATABASE_URL);
         await client.connect();
         db = client.db('attitudebets');
+        // Live/General Collections
         recordsCollection = db.collection('records');
         predictionsCollection = db.collection('predictions');
         dailyFeaturesCollection = db.collection('daily_features');
         nhlStatsCollection = db.collection('nhl_advanced_stats');
+
+        // NEW: Historical Data Collections
+        goaliesHistCollection = db.collection('nhl_goalie_stats_historical');
+        linesHistCollection = db.collection('nhl_line_stats_historical');
+        skatersHistCollection = db.collection('nhl_skater_stats_historical');
+        teamsHistCollection = db.collection('nhl_teams_data_historical');
+
         console.log('Connected to MongoDB');
         return db;
     } catch (e) {
@@ -510,20 +513,19 @@ async function runAiChatWithTools(userPrompt) {
 
 
 async function getHistoricalTopLineMetrics(season) {
-    const primarySeason = parseInt(String(season), 10);
-    const fallbackSeason = primarySeason - 1;
-
+    // ... (function content remains the same, just the collection name changes) ...
     const fetchMetricsForSeason = async (year) => {
-        const cacheKey = `historical_topline_${year}_v9_FINAL`;
+        const cacheKey = `historical_topline_${year}_v10_FINAL`;
         return fetchData(cacheKey, async () => {
             try {
+                // FIX: Ensure the linesHistCollection is available
+                if (!linesHistCollection) {
+                    console.error("[ERROR] linesHistCollection is not initialized.");
+                    return {};
+                }
                 const pipeline = [
                     { $match: { season: year, position: 'line' } },
-                    { 
-                        $addFields: {
-                            rankAsInt: { $toInt: "$iceTimeRank" }
-                        }
-                    },
+                    { $addFields: { rankAsInt: { $toInt: "$iceTimeRank" } } },
                     { $sort: { team: 1, rankAsInt: 1 } },
                     {
                         $group: {
@@ -533,7 +535,8 @@ async function getHistoricalTopLineMetrics(season) {
                     },
                     { $project: { _id: 0, team: "$_id", xGoalsPercentage: "$topXgPercentage" } }
                 ];
-                const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+                // FIX: Querying the correct 'linesHistCollection' now
+                const results = await linesHistCollection.aggregate(pipeline).toArray();
                 const metrics = {};
                 results.forEach(lineData => {
                     metrics[lineData.team] = { xGoalsPercentage: lineData.xGoalsPercentage };
@@ -545,14 +548,11 @@ async function getHistoricalTopLineMetrics(season) {
             }
         }, 86400000);
     };
-
+    // ... (rest of the function is the same) ...
     let results = await fetchMetricsForSeason(primarySeason);
-
     if (Object.keys(results).length === 0) {
-        // The warning log was removed from here. The fallback will still execute silently.
         results = await fetchMetricsForSeason(fallbackSeason);
     }
-    
     return results;
 }
 
@@ -1706,6 +1706,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
