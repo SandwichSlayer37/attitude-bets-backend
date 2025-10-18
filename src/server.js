@@ -1253,8 +1253,8 @@ async function getPredictionsForSport(sportKey) {
             axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
         ]);
 
-        if (!scheduleData || !scheduleData.gameWeek || !teamStandingsData) {
-            throw new Error("Critical data failure: Could not fetch schedule or team standings.");
+        if (!scheduleData || !scheduleData.gameWeek || !teamStandingsData || !oddsData) {
+            throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
         // --- Step 2: Process and map data for reliable lookups ---
@@ -1267,51 +1267,44 @@ async function getPredictionsForSport(sportKey) {
                     streak: `${team.streakCode}${team.streakCount}`,
                     goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
                     goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0, 
+                    faceoffWinPct: 0,
                 };
             }
             return acc;
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeTeamCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            if (homeTeamCanonical && awayTeamCanonical) {
-                const key = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-                acc[key] = game;
+        // NEW: Create a lookup map from the official schedule, keyed by abbreviations.
+        const scheduleMap = (scheduleData.gameWeek.flatMap(day => day.games) || []).reduce((acc, game) => {
+            const homeAbbr = game.homeTeam?.abbrev;
+            const awayAbbr = game.awayTeam?.abbrev;
+            if (homeAbbr && awayAbbr) {
+                const key = `${awayAbbr}@${homeAbbr}`; // e.g., "FLA@BUF"
+                acc[key] = game; // Store the entire official game object
             }
             return acc;
         }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+        console.log(`✅ Created schedule map with ${Object.keys(scheduleMap).length} games.`);
 
-        // --- Step 3: Iterate through the official schedule to build predictions ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+        // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
         const predictions = [];
-
-        for (const officialGame of officialGames) {
-            const homeTeamNameRaw = officialGame.homeTeam?.name?.default;
-            const awayTeamNameRaw = officialGame.awayTeam?.name?.default;
-
-            if (!homeTeamNameRaw || !awayTeamNameRaw) continue;
-
-            // FIX: Standardize the names from the official schedule before creating the key
-            const homeTeamCanonical = canonicalTeamNameMap[homeTeamNameRaw.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[awayTeamNameRaw.toLowerCase()];
+        for (const oddsGame of oddsData) {
+            const homeTeamCanonical = canonicalTeamNameMap[oddsGame.home_team.toLowerCase()];
+            const awayTeamCanonical = canonicalTeamNameMap[oddsGame.away_team.toLowerCase()];
             
-            if (!homeTeamCanonical || !awayTeamCanonical) continue; // Skip if a name can't be standardized
+            const homeAbbr = teamToAbbrMap[homeTeamCanonical];
+            const awayAbbr = teamToAbbrMap[awayTeamCanonical];
 
-            const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-            const oddsGame = oddsMap[matchupKey];
-            
-            if (!oddsGame) {
-                console.warn(`[WARN] No odds found for schedule game: ${matchupKey}. Skipping.`);
+            if (!homeAbbr || !awayAbbr) continue;
+
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const officialGame = scheduleMap[matchupKey]; // Find the match in our map
+
+            if (!officialGame) {
+                console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
                 continue;
             }
-
-            const homeAbbr = officialGame.homeTeam.abbrev;
-            const awayAbbr = officialGame.awayTeam.abbrev;
-
+            
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
@@ -1794,6 +1787,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
