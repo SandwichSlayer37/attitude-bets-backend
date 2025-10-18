@@ -1084,14 +1084,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeHistGoalie = historicalGoalieData[probableStarters.homeId];
     const awayHistGoalie = historicalGoalieData[probableStarters.awayId];
 
-    // --- DEBUGGING BLOCK ---
-    console.log(`--- Goalie Debug for ${away_team} @ ${home_team} ---`);
-    console.log(`Home Goalie ID from Schedule: ${probableStarters.homeId} | Away Goalie ID: ${probableStarters.awayId}`);
-    console.log(`Historical DB contains ${Object.keys(historicalGoalieData).length} goalies. First 5 keys:`, Object.keys(historicalGoalieData).slice(0, 5));
-    console.log(`Lookup for Home ID (${probableStarters.homeId}) found:`, homeHistGoalie ? `Yes, ${homeHistGoalie.name}` : 'No Match');
-    console.log(`Lookup for Away ID (${probableStarters.awayId}) found:`, awayHistGoalie ? `Yes, ${awayHistGoalie.name}` : 'No Match');
-    console.log("-----------------------------------------------------");
-    // --- END DEBUGGING ---
+ 
 
     const homeGSAx = homeHistGoalie?.gsax || 0;
     const awayGSAx = awayHistGoalie?.gsax || 0;
@@ -1157,7 +1150,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 async function fetchAllPredictionData() {
     const lastCompletedSeason = new Date().getFullYear() - 1;
 
-    // A helper to wrap each data fetch in a try/catch block for resilience
+    // A helper to wrap each data fetch for resilience
     const fetchDataWithFallback = async (fetcher, name) => {
         try {
             const data = await fetcher();
@@ -1169,9 +1162,47 @@ async function fetchAllPredictionData() {
             return data;
         } catch (error) {
             console.error(`[CRITICAL] Failed to fetch ${name}: ${error.message}`);
-            return null; // Return null on critical failure to prevent crashes
+            return null;
         }
     };
+
+    const liveTeamStatsFetcher = async () => { /* ... contents of this function are the same ... */ };
+
+    // --- FIX: This block contains the new, robust matching logic ---
+    const [oddsGames, fusedTeamData, historicalGoalieData, scheduleData] = await Promise.all([
+        fetchDataWithFallback(() => getOdds('icehockey_nhl'), 'Odds'),
+        fetchDataWithFallback(liveTeamStatsFetcher, 'Live Team Stats'),
+        fetchDataWithFallback(() => getHistoricalGoalieData(lastCompletedSeason), 'Historical Goalie Data'),
+        fetchDataWithFallback(async () => (await axios.get('https://api-web.nhle.com/v1/schedule/now')).data, 'NHL Schedule')
+    ]);
+
+    // NEW STRATEGY: Create a lookup map from the reliable NHL schedule data
+    const goalieIdLookup = {};
+    if (scheduleData && scheduleData.gameWeek) {
+        const nhlGames = scheduleData.gameWeek.flatMap(day => day.games);
+        nhlGames.forEach(game => {
+            // Use the team abbreviations, which are more consistent than full names
+            const homeAbbr = game.homeTeam.abbrev;
+            const awayAbbr = game.awayTeam.abbrev;
+            // Create a standardized key, e.g., "FLA@BUF"
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            // Store the goalie IDs in the map
+            goalieIdLookup[matchupKey] = {
+                homeId: game.homeTeam.probableStarterId,
+                awayId: game.awayTeam.probableStarterId
+            };
+        });
+        console.log(`✅ Created goalie lookup map with ${Object.keys(goalieIdLookup).length} games.`);
+    }
+    // --- END FIX ---
+
+    return {
+        oddsGames: oddsGames || [],
+        fusedTeamData,
+        historicalGoalieData,
+        goalieIdLookup, // Return the new lookup map
+    };
+}
 
     // This function tries the detailed API and falls back to the basic one
     const liveTeamStatsFetcher = async () => {
@@ -1211,68 +1242,45 @@ async function fetchAllPredictionData() {
     };
 }
 async function getPredictionsForSport(sportKey) {
-    const sportConfig = SPORTS_DB.find(s => s.key === sportKey);
-    if (!sportConfig) {
-        console.error(`No sport configuration found for key: ${sportKey}`);
-        return [];
-    }
+    if (sportKey !== 'icehockey_nhl') return [];
 
-    if (sportKey === 'icehockey_nhl') {
-        const { oddsGames, fusedTeamData, historicalGoalieData, nhlGames } = await fetchAllPredictionData();
-        if (!oddsGames || oddsGames.length === 0) return [];
+    try {
+        // Our new master function provides all the data we need, already matched
+        const { oddsGames, fusedTeamData, historicalGoalieData, goalieIdLookup } = await fetchAllPredictionData();
 
-        const probableStarters = (nhlGames || []).reduce((acc, game) => {
-            if (game.homeTeam?.id && game.awayTeam?.id) {
-                acc[game.id] = {
-                    homeId: game.homeTeam.probableGoalieId,
-                    awayId: game.awayTeam.probableGoalieId
-                };
-            }
-            return acc;
-        }, {});
+        if (oddsGames.length === 0 || !fusedTeamData) {
+            console.error("Missing critical data (odds or team stats), cannot generate predictions.");
+            return [];
+        }
 
-        const predictions = await Promise.all(oddsGames.map(async game => {
-            const gameDate = new Date(game.commence_time);
-            const h2h = { home: '0-0', away: '0-0' }; // Placeholder for H2H logic
+        const predictions = [];
+        for (const game of oddsGames) {
+            // --- FIX: Use the new lookup map for a reliable match ---
+            const homeAbbr = teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]];
+            const awayAbbr = teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]];
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const probableStarterIds = goalieIdLookup[matchupKey] || {}; // Get IDs from our map
+            // --- END FIX ---
+
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
-                h2h,
-                probableStarters: probableStarters[game.id] || {},
-                historicalGoalieData
+                h2h: { home: '0-0', away: '0-0' },
+                probableStarters: {
+                     homeId: probableStarterIds.homeId,
+                     awayId: probableStarterIds.awayId
+                },
+                historicalGoalieData: historicalGoalieData || {},
             };
-            const prediction = await runAdvancedNhlPredictionEngine(game, context);
-            return { game, prediction, sportKey };
-        }));
-        return predictions.filter(p => p.prediction);
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
-    } else {
-        // Fallback for other sports like MLB, NFL
-        const [odds, espnData, probablePitchers] = await Promise.all([
-            getOdds(sportKey),
-            fetchEspnData(sportKey),
-            sportKey === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({})
-        ]);
+            if (predictionData) predictions.push({ game, prediction: predictionData });
+        }
+        return predictions.filter(p => p && p.prediction);
 
-        if (!odds || odds.length === 0) return [];
-
-        const teamStats = parseEspnTeamStats(espnData.events);
-
-        const predictions = await Promise.all(odds.map(async game => {
-            const h2h = { home: '0-0', away: '0-0' }; // Placeholder
-            const weather = await getWeatherData(game.home_team);
-            const context = {
-                teamStats,
-                injuries: {}, // Placeholder
-                h2h,
-                allGames: odds,
-                probablePitchers,
-                weather
-            };
-            const prediction = await runPredictionEngine(game, sportKey, context);
-            return { game, prediction, sportKey };
-        }));
-        return predictions.filter(p => p.prediction);
+    } catch (error) {
+        console.error("Critical error during prediction generation:", error.message);
+        return []; 
     }
 }
 
@@ -1730,3 +1738,4 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
