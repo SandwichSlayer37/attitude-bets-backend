@@ -32,13 +32,11 @@ function __cached(key, ttlMs, fetcher) {
 // This version uses a single, reliable API endpoint to prevent failures.
 // =================================================================
 async function buildCurrentSeasonSnapshot() {
-    const key = `fusion_snapshot_final_v5`; // Incremented version key
-    // FIX: The 'async' keyword MUST be present on this arrow function
+    const key = `fusion_snapshot_final_v6`; // Incremented version key
     return __cached(key, 15 * 60 * 1000, async () => {
         const standingsUrl = `https://api-web.nhle.com/v1/standings/now`;
         const fusedStats = {};
 
-        // --- Fetch All Live Data from the Standings Endpoint ---
         console.log("📡 Fetching live standings and stats from NHL API...");
         const standingsRes = await axios.get(standingsUrl, { timeout: 15000 });
         const standingsData = standingsRes.data.standings;
@@ -48,11 +46,11 @@ async function buildCurrentSeasonSnapshot() {
         }
 
         standingsData.forEach(team => {
-            const abbr = team.teamAbbrev.default;
+            // FIX: The API response key has changed from 'team.teamAbbrev.default' to just 'team.teamAbbrev'.
+            const abbr = team.teamAbbrev;
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 
-                // All required stats are available in this single response object
                 fusedStats[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
                     streak: team.streakCode + team.streakCount,
@@ -63,18 +61,52 @@ async function buildCurrentSeasonSnapshot() {
                     goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
                     powerPlayPct: safeNum(team.ppPctg),
                     penaltyKillPct: safeNum(team.pkPctg),
-                    // Note: Faceoff Win % is not in this endpoint, but our prediction engine
-                    // gracefully handles this by treating it as 0.
                 };
             }
         });
         
         console.log(`✅ Successfully fetched and fused live stats for ${Object.keys(fusedStats).length} teams.`);
-        
         return { date: new Date().toISOString().slice(0, 10), teamStats: fusedStats, source: "NHL-Standings" };
     });
 }
 
+async function getHistoricalGoalieData(season) {
+    const cacheKey = `historical_goalie_data_${season}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            if (!nhlStatsCollection) return {};
+
+            const pipeline = [
+                // Find all documents for the given season where the position is Goalie
+                { $match: { season: season, position: 'G' } },
+                {
+                    $group: {
+                        _id: "$playerId", // Group by the unique player ID
+                        name: { $first: "$name" },
+                        goals: { $sum: "$goals" },
+                        xGoals: { $sum: "$xGoals" },
+                    }
+                }
+            ];
+            const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+            
+            // Convert the array of results into a map for easy lookup by player ID
+            const goalieDataMap = results.reduce((acc, goalie) => {
+                acc[goalie._id] = {
+                    name: goalie.name,
+                    gsax: goalie.xGoals - goalie.goals // Calculate GSAx
+                };
+                return acc;
+            }, {});
+
+            console.log(`✅ Successfully processed historical data for ${Object.keys(goalieDataMap).length} goalies.`);
+            return goalieDataMap;
+        } catch (error) {
+            console.error(`Error fetching historical goalie data for season ${season}:`, error);
+            return {};
+        }
+    }, 86400000); // Cache for 24 hours
+}
      
 async function fetchHistoricalTeamContext(teamAbbrev) {
   try {
@@ -1013,7 +1045,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
 }
 
 async function runAdvancedNhlPredictionEngine(game, context) {
-    const { teamStats, injuries, h2h, allGames, goalieStats, probableStarters } = context;
+    const { teamStats, allGames, h2h, goalieStats, probableStarters, historicalGoalieData } = context;
     const { home_team, away_team } = game;
     const weights = getDynamicWeights('icehockey_nhl');
 
@@ -1022,13 +1054,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeAbbr = teamToAbbrMap[homeCanonical];
     const awayAbbr = teamToAbbrMap[awayCanonical];
     
-    // ✅ FIX: Explicitly use the last completed season for all historical data.
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth(); // 0-indexed (January is 0)
-    // If it's before August (pre-season start), use the season that ended in the current year.
-    // Otherwise, use the season that ended last year.
-    const previousSeasonId = currentMonth < 7 ? currentYear - 1 : new Date().getFullYear() - 1;
-
+    const previousSeasonId = new Date().getFullYear() - 1;
 
     const [historicalMetrics, [homeAdvStats, awayAdvStats], topLineMetrics] = await Promise.all([
         getHistoricalTeamAndGoalieMetrics(previousSeasonId),
@@ -1050,12 +1076,26 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeAbbr] || {};
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
-    // --- All Factor Calculations ---
-    const homeGoalieData = homeHist.goalies?.find(g => g.name === probableStarters[homeCanonical]);
-    const awayGoalieData = awayHist.goalies?.find(g => g.name === probableStarters[awayCanonical]);
-    const homeGSAx = safeNum(homeGoalieData?.xGoals) - safeNum(homeGoalieData?.goals);
-    const awayGSAx = safeNum(awayGoalieData?.xGoals) - safeNum(awayGoalieData?.goals);
-    factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: `${homeGSAx.toFixed(2)}`, awayStat: `${awayGSAx.toFixed(2)}` };
+    // --- NEW: Robust Goalie Factor Calculations ---
+    const homeHistGoalie = historicalGoalieData[probableStarters.homeId];
+    const awayHistGoalie = historicalGoalieData[probableStarters.awayId];
+    const homeGSAx = homeHistGoalie?.gsax || 0;
+    const awayGSAx = awayHistGoalie?.gsax || 0;
+    factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
+
+    const homeGoalieName = Object.values(probableStarters).find(name => homeHistGoalie && name === homeHistGoalie.name);
+    const awayGoalieName = Object.values(probableStarters).find(name => awayHistGoalie && name === awayHistGoalie.name);
+    const homeLiveGoalieStats = goalieStats[homeGoalieName] || null;
+    const awayLiveGoalieStats = goalieStats[awayGoalieName] || null;
+
+    let goalieValue = 0;
+    if (homeLiveGoalieStats?.svPct != null && awayLiveGoalieStats?.svPct != null) {
+        goalieValue = (safeNum(awayLiveGoalieStats.gaa) - safeNum(homeLiveGoalieStats.gaa)) + ((safeNum(homeLiveGoalieStats.svPct) - safeNum(awayLiveGoalieStats.svPct)) * 100);
+    }
+    factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeLiveGoalieStats?.svPct ? homeLiveGoalieStats.svPct.toFixed(3) : 'N/A', awayStat: awayLiveGoalieStats?.svPct ? awayLiveGoalieStats.svPct.toFixed(3) : 'N/A' };
+    // --- END NEW GOALIE LOGIC ---
+
+    // (The rest of the factor calculations remain the same)
     const homeFinish = safeNum(homeHist.xGoalsFor) > 0 ? safeNum(homeHist.goalsFor) / safeNum(homeHist.xGoalsFor) : 1;
     const awayFinish = safeNum(awayHist.xGoalsFor) > 0 ? safeNum(awayHist.goalsFor) / safeNum(awayHist.xGoalsFor) : 1;
     factors['Team Finishing Skill'] = { value: homeFinish - awayFinish, homeStat: `${(homeFinish * 100).toFixed(1)}%`, awayStat: `${(awayFinish * 100).toFixed(1)}%` };
@@ -1074,18 +1114,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeStreakVal = (safeText(homeRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(homeRealTimeStats.streak).substring(1) || '0', 10);
     const awayStreakVal = (safeText(awayRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(awayRealTimeStats.streak).substring(1) || '0', 10);
     factors['Hot Streak'] = { value: homeStreakVal - awayStreakVal, homeStat: safeText(homeRealTimeStats.streak), awayStat: safeText(awayRealTimeStats.streak) };
-    const homeGoalieStats = goalieStats ? goalieStats[probableStarters[homeCanonical] || ''] : null;
-    const awayGoalieStats = goalieStats ? goalieStats[probableStarters[awayCanonical] || ''] : null;
-    let goalieValue = 0;
-    if (homeGoalieStats && awayGoalieStats) {
-        goalieValue = (safeNum(awayGoalieStats.gaa) - safeNum(homeGoalieStats.gaa)) + ((safeNum(homeGoalieStats.svPct) - safeNum(awayGoalieStats.svPct)) * 100);
-    }
-    factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeGoalieStats ? `${safeNum(homeGoalieStats.svPct).toFixed(3)}` : 'N/A', awayStat: awayGoalieStats ? `${safeNum(awayGoalieStats.svPct).toFixed(3)}` : 'N/A' };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
     factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
-    const homeInjuryImpact = (injuries && injuries[homeCanonical]) ? injuries[homeCanonical].length : 0;
-    const awayInjuryImpact = (injuries && injuries[awayCanonical]) ? injuries[awayCanonical].length : 0;
-    factors['Injury Impact'] = { value: awayInjuryImpact - homeInjuryImpact, homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`};
+    factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`}; // Placeholder
 
     // Final Scoring
     Object.keys(factors).forEach(factorName => {
@@ -1121,26 +1152,34 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
-
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        const { teamStats: fusedTeamData, source } = await buildCurrentSeasonSnapshot();
+        // We no longer use buildCurrentSeasonSnapshot, fetching live data directly here.
         const oddsGames = await getOdds(sportKey);
         
-        const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
-        
-        if (!nhlScheduleData || !nhlScheduleData.gameWeek) {
-            throw new Error("NHL schedule data is missing or in an unexpected format.");
-        }
-        const nhlGames = nhlScheduleData.gameWeek.flatMap(day => day.games);
+        // --- NEW: Fetch all necessary data sources with robust error handling ---
+        const { data: teamStatsData } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All');
+        const fusedTeamData = (teamStatsData || []).reduce((acc, team) => {
+            acc[team.abbreviation] = {
+                record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                streak: team.streakCode + team.streakCount,
+                goalsForPerGame: team.goalsForPerGame,
+                goalsAgainstPerGame: team.goalsAgainstPerGame,
+                faceoffWinPct: team.faceoffWinPct,
+            };
+            return acc;
+        }, {});
+        console.log(`✅ Successfully fetched live team stats for ${Object.keys(fusedTeamData).length} teams.`);
 
-        if (!fusedTeamData || Object.keys(fusedTeamData).length === 0) {
-            console.warn("Fusion Snapshot returned no team data. Predictions cannot be generated.");
-            return [];
-        }
-        console.log(`Generating predictions using fused data from source: ${source}`);
+        const lastCompletedSeason = new Date().getFullYear() - 1;
+        const historicalGoalieData = await getHistoricalGoalieData(lastCompletedSeason);
+        
+        const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
+        if (!nhlScheduleData?.gameWeek) throw new Error("NHL schedule data is missing or invalid.");
+        const nhlGames = nhlScheduleData.gameWeek.flatMap(day => day.games);
+        // --- END NEW DATA FETCHING ---
 
         const predictions = [];
         for (const game of oddsGames) {
@@ -1152,53 +1191,50 @@ async function getPredictionsForSport(sportKey) {
             const probableStarters = {};
             const goalieStats = {};
 
-            // Helper to fetch stats for a single goalie by ID
-            const fetchGoalieData = async (goalieId) => {
+            const fetchLiveGoalieData = async (goalieId) => {
                 if (!goalieId) return null;
                 try {
-                    const { data: landingData } = await axios.get(`https://api-web.nhle.com/v1/player/${goalieId}/landing`);
-                    const fullName = `${landingData.firstName.default} ${landingData.lastName.default}`;
-                    const seasonStats = landingData.featuredStats?.season;
+                    const { data: landing } = await axios.get(`https://api-web.nhle.com/v1/player/${goalieId}/landing`);
                     return {
-                        name: fullName,
-                        stats: {
-                            gaa: seasonStats?.gaa,
-                            svPct: seasonStats?.savePctg
-                        }
+                        name: `${landing.firstName.default} ${landing.lastName.default}`,
+                        stats: landing.featuredStats?.season ? {
+                            gaa: landing.featuredStats.season.gaa,
+                            svPct: landing.featuredStats.season.savePctg
+                        } : { gaa: null, svPct: null } // Handle early season with no stats
                     };
                 } catch (e) {
-                    console.error(`[WARN] Failed to fetch data for goalie ID ${goalieId}.`);
                     return null;
                 }
             };
 
             if (matchingNhlGame) {
-                const homeGoalie = await fetchGoalieData(matchingNhlGame.homeTeam.probableStarterId);
+                const homeGoalie = await fetchLiveGoalieData(matchingNhlGame.homeTeam.probableStarterId);
                 if (homeGoalie) {
-                    probableStarters[canonicalTeamNameMap[game.home_team.toLowerCase()]] = homeGoalie.name;
+                    probableStarters[matchingNhlGame.homeTeam.id] = homeGoalie.name;
                     goalieStats[homeGoalie.name] = homeGoalie.stats;
                 }
-
-                const awayGoalie = await fetchGoalieData(matchingNhlGame.awayTeam.probableStarterId);
+                const awayGoalie = await fetchLiveGoalieData(matchingNhlGame.awayTeam.probableStarterId);
                 if (awayGoalie) {
-                    probableStarters[canonicalTeamNameMap[game.away_team.toLowerCase()]] = awayGoalie.name;
+                    probableStarters[matchingNhlGame.awayTeam.id] = awayGoalie.name;
                     goalieStats[awayGoalie.name] = awayGoalie.stats;
                 }
             }
-
+            
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
-                injuries: {}, 
-                h2h: { home: '0-0', away: '0-0' }, 
+                h2h: { home: '0-0', away: '0-0' }, // Placeholder
+                // NEW: Pass all goalie data to the engine
                 goalieStats: goalieStats,
-                probableStarters: probableStarters
+                probableStarters: {
+                     homeId: matchingNhlGame?.homeTeam.probableStarterId,
+                     awayId: matchingNhlGame?.awayTeam.probableStarterId
+                },
+                historicalGoalieData: historicalGoalieData,
             };
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
 
-            if (predictionData) {
-                predictions.push({ game, prediction: predictionData });
-            }
+            if (predictionData) predictions.push({ game, prediction: predictionData });
         }
         return predictions.filter(p => p && p.prediction);
 
@@ -1662,6 +1698,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
