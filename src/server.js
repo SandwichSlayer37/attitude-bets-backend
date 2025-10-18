@@ -1156,22 +1156,32 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // We no longer use buildCurrentSeasonSnapshot, fetching live data directly here.
         const oddsGames = await getOdds(sportKey);
         
-        // --- NEW: Fetch all necessary data sources with robust error handling ---
-        const { data: teamStatsData } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All');
-        const fusedTeamData = (teamStatsData || []).reduce((acc, team) => {
-            acc[team.abbreviation] = {
-                record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                streak: team.streakCode + team.streakCount,
-                goalsForPerGame: team.goalsForPerGame,
-                goalsAgainstPerGame: team.goalsAgainstPerGame,
-                faceoffWinPct: team.faceoffWinPct,
-            };
+        // --- FIX: Fetch live team stats from the reliable /standings/now endpoint ---
+        const { data: standingsDataResponse } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+        if (!standingsDataResponse || !standingsDataResponse.standings) {
+            throw new Error("Standings API returned no data.");
+        }
+        
+        const fusedTeamData = (standingsDataResponse.standings).reduce((acc, team) => {
+            // This API uses a different key for the abbreviation
+            const abbr = team.teamAbbrev.default;
+            if (abbr) {
+                const gamesPlayed = safeNum(team.gamesPlayed);
+                acc[abbr] = {
+                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                    streak: team.streakCode + team.streakCount,
+                    // Calculate G/GP directly, as this endpoint provides totals
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    // Note: Faceoff % is not in this endpoint, but the engine handles this gracefully.
+                };
+            }
             return acc;
         }, {});
-        console.log(`✅ Successfully fetched live team stats for ${Object.keys(fusedTeamData).length} teams.`);
+        console.log(`✅ Successfully fetched and fused live stats for ${Object.keys(fusedTeamData).length} teams.`);
+        // --- END FIX ---
 
         const lastCompletedSeason = new Date().getFullYear() - 1;
         const historicalGoalieData = await getHistoricalGoalieData(lastCompletedSeason);
@@ -1179,7 +1189,6 @@ async function getPredictionsForSport(sportKey) {
         const { data: nhlScheduleData } = await axios.get('https://api-web.nhle.com/v1/schedule/now');
         if (!nhlScheduleData?.gameWeek) throw new Error("NHL schedule data is missing or invalid.");
         const nhlGames = nhlScheduleData.gameWeek.flatMap(day => day.games);
-        // --- END NEW DATA FETCHING ---
 
         const predictions = [];
         for (const game of oddsGames) {
@@ -1200,7 +1209,7 @@ async function getPredictionsForSport(sportKey) {
                         stats: landing.featuredStats?.season ? {
                             gaa: landing.featuredStats.season.gaa,
                             svPct: landing.featuredStats.season.savePctg
-                        } : { gaa: null, svPct: null } // Handle early season with no stats
+                        } : { gaa: null, svPct: null }
                     };
                 } catch (e) {
                     return null;
@@ -1223,8 +1232,7 @@ async function getPredictionsForSport(sportKey) {
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
-                h2h: { home: '0-0', away: '0-0' }, // Placeholder
-                // NEW: Pass all goalie data to the engine
+                h2h: { home: '0-0', away: '0-0' },
                 goalieStats: goalieStats,
                 probableStarters: {
                      homeId: matchingNhlGame?.homeTeam.probableStarterId,
@@ -1698,6 +1706,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
