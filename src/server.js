@@ -1165,24 +1165,22 @@ async function fetchAllPredictionData() {
         }
     };
 
-    // FIX: This fetcher has been completely rewritten to use a single, more stable API endpoint.
+    // FIX #1: This fetcher uses a new, more stable API for live team stats.
     const liveTeamStatsFetcher = async () => {
         const { data } = await axios.get('https://api.nhle.com/stats/rest/en/team/summary');
-        if (!data || !data.data) throw new Error("New team summary API returned no data.");
-        
-        // This new API requires us to find the team abbreviation from a different field
-        const abbrMap = Object.values(teamToAbbrMap);
-        const teamAbbrLookup = Object.fromEntries(Object.keys(teamToAbbrMap).map(key => [key, teamToAbbrMap[key]]));
+        if (!data || !data.data) throw new Error("Team summary API returned no data.");
         
         return data.data.reduce((acc, team) => {
-            const abbr = abbrMap.find(ab => team.teamFullName.toLowerCase().includes(ab.toLowerCase()));
+            // Find the three-letter abbreviation from our map based on the full team name
+            const abbr = teamToAbbrMap[team.teamFullName];
             if (abbr) {
                  acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode, // This API provides the full streak code directly
+                    // This API provides the full streak string (e.g., "W3") directly
+                    streak: team.streakCode, 
                     goalsForPerGame: team.goalsForPerGame,
                     goalsAgainstPerGame: team.goalsAgainstPerGame,
-                    faceoffWinPct: team.faceoffWinPct * 100, // Convert decimal to percentage
+                    faceoffWinPct: team.faceoffWinPct * 100, // API provides decimal, convert to percentage
                 };
             }
             return acc;
@@ -1196,10 +1194,10 @@ async function fetchAllPredictionData() {
         fetchDataWithFallback(async () => (await axios.get('https://api-web.nhle.com/v1/schedule/now')).data, 'NHL Schedule')
     ]);
 
+    // FIX #2: Create a reliable lookup map to match games by their abbreviations
     const goalieIdLookup = {};
     if (scheduleData && scheduleData.gameWeek) {
-        const nhlGames = scheduleData.gameWeek.flatMap(day => day.games);
-        nhlGames.forEach(game => {
+        scheduleData.gameWeek.flatMap(day => day.games).forEach(game => {
             const homeAbbr = game.homeTeam.abbrev;
             const awayAbbr = game.awayTeam.abbrev;
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
@@ -1223,7 +1221,6 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        // Our new master function provides all the data we need, already matched
         const { oddsGames, fusedTeamData, historicalGoalieData, goalieIdLookup } = await fetchAllPredictionData();
 
         if (oddsGames.length === 0 || !fusedTeamData) {
@@ -1233,12 +1230,11 @@ async function getPredictionsForSport(sportKey) {
 
         const predictions = [];
         for (const game of oddsGames) {
-            // --- FIX: Use the new lookup map for a reliable match ---
+            // Use the lookup map for a guaranteed match
             const homeAbbr = teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]];
             const awayAbbr = teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]];
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const probableStarterIds = goalieIdLookup[matchupKey] || {}; // Get IDs from our map
-            // --- END FIX ---
+            const probableStarterIds = goalieIdLookup[matchupKey] || {};
 
             const context = {
                 teamStats: fusedTeamData,
@@ -1716,4 +1712,5 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
