@@ -1210,7 +1210,71 @@ async function fetchAllPredictionData() {
         nhlGames: scheduleData?.gameWeek?.flatMap(day => day.games) || [],
     };
 }
-async function getPredictionsForSport
+async function getPredictionsForSport(sportKey) {
+    const sportConfig = SPORTS_DB.find(s => s.key === sportKey);
+    if (!sportConfig) {
+        console.error(`No sport configuration found for key: ${sportKey}`);
+        return [];
+    }
+
+    if (sportKey === 'icehockey_nhl') {
+        const { oddsGames, fusedTeamData, historicalGoalieData, nhlGames } = await fetchAllPredictionData();
+        if (!oddsGames || oddsGames.length === 0) return [];
+
+        const probableStarters = (nhlGames || []).reduce((acc, game) => {
+            if (game.homeTeam?.id && game.awayTeam?.id) {
+                acc[game.id] = {
+                    homeId: game.homeTeam.probableGoalieId,
+                    awayId: game.awayTeam.probableGoalieId
+                };
+            }
+            return acc;
+        }, {});
+
+        const predictions = await Promise.all(oddsGames.map(async game => {
+            const gameDate = new Date(game.commence_time);
+            const h2h = { home: '0-0', away: '0-0' }; // Placeholder for H2H logic
+            const context = {
+                teamStats: fusedTeamData,
+                allGames: oddsGames,
+                h2h,
+                probableStarters: probableStarters[game.id] || {},
+                historicalGoalieData
+            };
+            const prediction = await runAdvancedNhlPredictionEngine(game, context);
+            return { game, prediction, sportKey };
+        }));
+        return predictions.filter(p => p.prediction);
+
+    } else {
+        // Fallback for other sports like MLB, NFL
+        const [odds, espnData, probablePitchers] = await Promise.all([
+            getOdds(sportKey),
+            fetchEspnData(sportKey),
+            sportKey === 'baseball_mlb' ? getProbablePitchersAndStats() : Promise.resolve({})
+        ]);
+
+        if (!odds || odds.length === 0) return [];
+
+        const teamStats = parseEspnTeamStats(espnData.events);
+
+        const predictions = await Promise.all(odds.map(async game => {
+            const h2h = { home: '0-0', away: '0-0' }; // Placeholder
+            const weather = await getWeatherData(game.home_team);
+            const context = {
+                teamStats,
+                injuries: {}, // Placeholder
+                h2h,
+                allGames: odds,
+                probablePitchers,
+                weather
+            };
+            const prediction = await runPredictionEngine(game, sportKey, context);
+            return { game, prediction, sportKey };
+        }));
+        return predictions.filter(p => p.prediction);
+    }
+}
 
 // Health check route for Render to confirm the service is running
 app.get('/api/health', (req, res) => {
@@ -1666,33 +1730,3 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
