@@ -1186,7 +1186,8 @@ async function getPredictionsForSport(sportKey) {
         // --- Step 2: Process and map data for reliable lookups ---
         const liveTeamStats = teamStatsData.reduce((acc, team) => {
             // Handle data from either the primary or fallback API
-            const abbr = team.abbreviation || team.teamAbbrev?.default;
+            // FIX: Normalize the abbreviation to ensure it's a consistent key.
+            const abbr = normalizeAbbreviation(team.abbreviation || team.teamAbbrev?.default);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
@@ -1231,8 +1232,18 @@ async function getPredictionsForSport(sportKey) {
         }
 
         const predictions = [];
+        let unmatchedCount = 0;
 
         for (const officialGame of officialGames) {
+            // Step 2: Normalize team abbreviations before prediction generation
+            const homeAbbrev = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
+            const awayAbbrev = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
+
+            // Step 2 (cont.): Update matching logic to use normalized values
+            const homeStats = liveTeamStats[homeAbbrev];
+            const awayStats = liveTeamStats[awayAbbrev];
+
+            // Step 3: Add debug output for verification
             const homeTeamName = officialGame.homeTeam?.name?.default;
             const awayTeamName = officialGame.awayTeam?.name?.default;
             if (!homeTeamName || !awayTeamName) continue;
@@ -1240,6 +1251,14 @@ async function getPredictionsForSport(sportKey) {
             const homeTeamCanonical = canonicalTeamNameMap[homeTeamName.toLowerCase()];
             const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
             if (!homeTeamCanonical || !awayTeamCanonical) continue;
+
+            if (!homeStats || !awayStats) {
+                console.warn(`[WARN] Missing team stats for matchup: ${homeAbbrev} vs ${awayAbbrev}`);
+                unmatchedCount++;
+                continue; // Skip this game as we can't generate a prediction
+            } else {
+                console.log(`🔗 Matched ${homeAbbrev} vs ${awayAbbrev} | Found: ${!!homeStats}/${!!awayStats}`);
+            }
 
             const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
             const oddsGame = oddsMap[matchupKey];
@@ -1249,11 +1268,8 @@ async function getPredictionsForSport(sportKey) {
                 continue;
             }
 
-            const homeAbbr = officialGame.homeTeam.abbrev;
-            const awayAbbr = officialGame.awayTeam.abbrev;
-
             const context = {
-                teamStats: liveTeamStats,
+                teamStats: { [homeAbbrev]: homeStats, [awayAbbrev]: awayStats },
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
@@ -1271,6 +1287,9 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
+        if (unmatchedCount > 0) {
+            console.log(`[INFO] Total games skipped due to missing stats: ${unmatchedCount}`);
+        }
         console.log(`✅ Generated ${predictions.length} predictions.`);
         return predictions;
 
