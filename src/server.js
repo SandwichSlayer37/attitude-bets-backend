@@ -393,6 +393,7 @@ async function getGoalieStats() {
 }
 
 // NEW: Resilient function to fetch live team stats with a fallback
+// NEW: Resilient function to fetch live team stats with a fallback
 async function getLiveTeamStats() {
     try {
         // First, try the more detailed but sometimes unstable API
@@ -1095,7 +1096,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
     let goalieValue = 0;
     if (homeLiveGoalieStats?.svPct != null && awayLiveGoalieStats?.svPct != null) {
-        // Use a default GAA if it's null to prevent NaN errors
         const homeGAA = safeNum(homeLiveGoalieStats.gaa);
         const awayGAA = safeNum(awayLiveGoalieStats.gaa);
         goalieValue = (awayGAA - homeGAA) + ((safeNum(homeLiveGoalieStats.svPct) - safeNum(awayLiveGoalieStats.svPct)) * 100);
@@ -1103,6 +1103,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeLiveGoalieStats?.svPct?.toFixed(3) || 'N/A', awayStat: awayLiveGoalieStats?.svPct?.toFixed(3) || 'N/A' };
     // --- END FIX ---
 
+    // (The rest of the factor calculations remain the same)
     const homeFinish = safeNum(homeHist.xGoalsFor) > 0 ? safeNum(homeHist.goalsFor) / safeNum(homeHist.xGoalsFor) : 1;
     const awayFinish = safeNum(awayHist.xGoalsFor) > 0 ? safeNum(awayHist.goalsFor) / safeNum(awayHist.xGoalsFor) : 1;
     factors['Team Finishing Skill'] = { value: homeFinish - awayFinish, homeStat: `${(homeFinish * 100).toFixed(1)}%`, awayStat: `${(awayFinish * 100).toFixed(1)}%` };
@@ -1207,7 +1208,6 @@ async function getPredictionsForSport(sportKey) {
                 allGames: oddsGames,
                 h2h: { home: '0-0', away: '0-0' },
                 goalieStats: goalieStats,
-                // FIX: Pass the goalie's name along with the ID
                 probableStarters: {
                      homeId: matchingNhlGame?.homeTeam.probableStarterId,
                      awayId: matchingNhlGame?.awayTeam.probableStarterId,
@@ -1682,6 +1682,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
