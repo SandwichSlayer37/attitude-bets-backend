@@ -1169,42 +1169,35 @@ async function getPredictionsForSport(sportKey) {
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        // Create a lookup map from the betting odds data, keyed by a standardized name.
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeTeamCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            if (homeTeamCanonical && awayTeamCanonical) {
-                const key = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-                acc[key] = game;
+        // NEW: Create a lookup map from the official schedule, keyed by abbreviations. This is our "source of truth".
+        const scheduleMap = (scheduleData.gameWeek.flatMap(day => day.games) || []).reduce((acc, game) => {
+            const homeAbbr = game.homeTeam?.abbrev;
+            const awayAbbr = game.awayTeam?.abbrev;
+            if (homeAbbr && awayAbbr) {
+                const key = `${awayAbbr}@${homeAbbr}`; // e.g., "FLA@BUF"
+                acc[key] = game; // Store the entire official game object
             }
             return acc;
         }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+        console.log(`✅ Created schedule map with ${Object.keys(scheduleMap).length} games.`);
 
-        // --- Step 3: Iterate through the official schedule (our "source of truth") ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+        // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
         const predictions = [];
+        for (const oddsGame of oddsData) {
+            // Convert odds team names to their abbreviations to create a matching key
+            const homeAbbr = teamToAbbrMap[canonicalTeamNameMap[oddsGame.home_team.toLowerCase()]];
+            const awayAbbr = teamToAbbrMap[canonicalTeamNameMap[oddsGame.away_team.toLowerCase()]];
 
-        for (const officialGame of officialGames) {
-            const homeTeamName = officialGame.homeTeam?.name?.default;
-            const awayTeamName = officialGame.awayTeam?.name?.default;
-            if (!homeTeamName || !awayTeamName) continue;
+            if (!homeAbbr || !awayAbbr) continue;
 
-            // Standardize names from the official schedule to create a reliable key
-            const homeTeamCanonical = canonicalTeamNameMap[homeTeamName.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
-            if (!homeTeamCanonical || !awayTeamCanonical) continue;
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const officialGame = scheduleMap[matchupKey]; // Find the match in our new map
 
-            const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-            const oddsGame = oddsMap[matchupKey]; // Find the matching odds game
-            if (!oddsGame) {
-                console.warn(`[WARN] No odds found for schedule game: ${matchupKey}. Skipping.`);
+            if (!officialGame) {
+                console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
                 continue;
             }
-
-            const homeAbbr = officialGame.homeTeam.abbrev;
-            const awayAbbr = officialGame.awayTeam.abbrev;
-
+            
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
@@ -1687,3 +1680,4 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
