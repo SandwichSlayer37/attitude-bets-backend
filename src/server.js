@@ -1211,7 +1211,7 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
+        // --- Step 1: Fetch all data sources in parallel ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
         const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
@@ -1220,7 +1220,7 @@ async function getPredictionsForSport(sportKey) {
             axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
         ]);
 
-        if (!scheduleData || !scheduleData.gameWeek || !teamStandingsData || !oddsData) {
+        if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
@@ -1752,6 +1752,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
