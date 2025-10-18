@@ -513,12 +513,14 @@ async function runAiChatWithTools(userPrompt) {
 
 
 async function getHistoricalTopLineMetrics(season) {
-    // ... (function content remains the same, just the collection name changes) ...
+    // FIX: These two lines were missing. They define the variables needed below.
+    const primarySeason = parseInt(String(season), 10);
+    const fallbackSeason = primarySeason - 1;
+
     const fetchMetricsForSeason = async (year) => {
         const cacheKey = `historical_topline_${year}_v10_FINAL`;
         return fetchData(cacheKey, async () => {
             try {
-                // FIX: Ensure the linesHistCollection is available
                 if (!linesHistCollection) {
                     console.error("[ERROR] linesHistCollection is not initialized.");
                     return {};
@@ -535,7 +537,6 @@ async function getHistoricalTopLineMetrics(season) {
                     },
                     { $project: { _id: 0, team: "$_id", xGoalsPercentage: "$topXgPercentage" } }
                 ];
-                // FIX: Querying the correct 'linesHistCollection' now
                 const results = await linesHistCollection.aggregate(pipeline).toArray();
                 const metrics = {};
                 results.forEach(lineData => {
@@ -548,7 +549,7 @@ async function getHistoricalTopLineMetrics(season) {
             }
         }, 86400000);
     };
-    // ... (rest of the function is the same) ...
+
     let results = await fetchMetricsForSeason(primarySeason);
     if (Object.keys(results).length === 0) {
         results = await fetchMetricsForSeason(fallbackSeason);
@@ -1706,6 +1707,7 @@ app.listen(PORT, () => {
         // Your routes will handle the case where the DB is not available
     });
 });
+
 
 
 
