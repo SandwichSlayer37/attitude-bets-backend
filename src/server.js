@@ -1227,103 +1227,72 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources with fallbacks ---
+        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
+        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary NHL schedule API failed: ${e.message}. Falling back to ESPN scoreboard.`);
-                try {
-                    return await fetchEspnData('icehockey_nhl');
-                } catch (espnError) {
-                    console.error(`[CRITICAL] Both NHL and ESPN schedule APIs failed. Error: ${espnError.message}`);
-                    return null;
-                }
-            }),
+            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
             getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-                return data.standings;
-            })
+            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
         ]);
 
-        if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
+        if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
         // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => {
-            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
+        const liveTeamStats = teamStandingsData.reduce((acc, team) => {
+            const abbr = team.teamAbbrev.default;
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}`: 'N/A',
-                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
-                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
-                    faceoffWinPct: team.faceoffWinPct ?? 0,
+                    streak: `${team.streakCode}${team.streakCount}`,
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    faceoffWinPct: 0,
                 };
             }
             return acc;
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+        // NEW: Create a lookup map from the official schedule, keyed by abbreviations. This is our "source of truth".
+        const scheduleMap = (scheduleData.gameWeek.flatMap(day => day.games) || []).reduce((acc, game) => {
+            const homeAbbr = game.homeTeam?.abbrev;
+            const awayAbbr = game.awayTeam?.abbrev;
             if (homeAbbr && awayAbbr) {
-                const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game;
+                const key = `${awayAbbr}@${homeAbbr}`; // e.g., "FLA@BUF"
+                acc[key] = game; // Store the entire official game object
             }
             return acc;
         }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+        console.log(`✅ Created schedule map with ${Object.keys(scheduleMap).length} games.`);
 
-        // --- Step 3: Iterate through the official schedule ---
-        let officialGames = [];
-        if (scheduleData.gameWeek) { // NHL API structure
-            officialGames = scheduleData.gameWeek.flatMap(day => day.games);
-            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from primary API.`);
-        } else if (scheduleData.events) { // ESPN fallback structure
-            officialGames = scheduleData.events.map(event => {
-                const home = event.competitions[0].competitors.find(c => c.homeAway === 'home');
-                const away = event.competitions[0].competitors.find(c => c.homeAway === 'away');
-                return {
-                    homeTeam: { name: { default: home.team.displayName }, abbrev: home.team.abbreviation, probableStarterId: home.probablePitcher?.id },
-                    awayTeam: { name: { default: away.team.displayName }, abbrev: away.team.abbreviation, probableStarterId: away.probablePitcher?.id }
-                };
-            });
-            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from fallback ESPN API.`);
-        }
-
+        // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
         const predictions = [];
-        for (const officialGame of (officialGames || [])) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
+        for (const oddsGame of oddsData) {
+            // Convert odds team names to their abbreviations to create a matching key
+            const homeAbbr = teamToAbbrMap[canonicalTeamNameMap[oddsGame.home_team.toLowerCase()]];
+            const awayAbbr = teamToAbbrMap[canonicalTeamNameMap[oddsGame.away_team.toLowerCase()]];
 
             if (!homeAbbr || !awayAbbr) continue;
-            
+
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[matchupKey];
+            const officialGame = scheduleMap[matchupKey]; // Find the match in our new map
 
-            // BUG FIX #1: Use the correct variable names (homeAbbr, awayAbbr)
-            const homeStats = liveTeamStats[homeAbbr];
-            const awayStats = liveTeamStats[awayAbbr];
-
-            if (!homeStats || !awayStats || !oddsGame) {
-                console.warn(`[SKIP] Missing data for ${awayAbbr}@${homeAbbr}.`);
+            if (!officialGame) {
+                console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
                 continue;
             }
-
+            
             const context = {
-                // BUG FIX #2: Pass the entire liveTeamStats object
-                teamStats: liveTeamStats, 
+                teamStats: liveTeamStats,
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
-                     homeId: officialGame.homeTeam?.probableStarterId,
-                     awayId: officialGame.awayTeam?.probableStarterId
+                     homeId: officialGame.homeTeam.probableStarterId,
+                     awayId: officialGame.awayTeam.probableStarterId
                 },
                 historicalGoalieData,
                 homeAbbr,
@@ -1807,4 +1776,5 @@ server.listen(PORT, () => {
         console.error("Background database connection failed:", error);
     });
 });
+
 
