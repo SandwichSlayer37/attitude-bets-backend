@@ -32,17 +32,61 @@ const app = express();
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // --- Self-Learning Abbreviation Map ---
-const TEAM_MAP = {
-  MTL: 'MON', MON: 'MTL', LAK: 'LA', LA: 'LAK', TBL: 'TB', TB: 'TBL',
-  PHX: 'ARI', ARZ: 'ARI', NJD: 'NJ', NJ: 'NJD', SJS: 'SJ', SJ: 'SJS',
-  VGK: 'LV', LV: 'VGK', WSH: 'WAS', WAS: 'WSH', QUE: 'COL', ATL: 'WPG'
+const TEAM_NAME_TO_ABBREV = {
+  "Anaheim Ducks": "ANA",
+  "Arizona Coyotes": "ARI",
+  "Boston Bruins": "BOS",
+  "Buffalo Sabres": "BUF",
+  "Calgary Flames": "CGY",
+  "Carolina Hurricanes": "CAR",
+  "Chicago Blackhawks": "CHI",
+  "Colorado Avalanche": "COL",
+  "Columbus Blue Jackets": "CBJ",
+  "Dallas Stars": "DAL",
+  "Detroit Red Wings": "DET",
+  "Edmonton Oilers": "EDM",
+  "Florida Panthers": "FLA",
+  "Los Angeles Kings": "LAK",
+  "Minnesota Wild": "MIN",
+  "Montréal Canadiens": "MTL",
+  "Montreal Canadiens": "MTL",
+  "Nashville Predators": "NSH",
+  "New Jersey Devils": "NJD",
+  "New York Islanders": "NYI",
+  "New York Rangers": "NYR",
+  "Ottawa Senators": "OTT",
+  "Philadelphia Flyers": "PHI",
+  "Pittsburgh Penguins": "PIT",
+  "San Jose Sharks": "SJS",
+  "Seattle Kraken": "SEA",
+  "St. Louis Blues": "STL",
+  "Tampa Bay Lightning": "TBL",
+  "Toronto Maple Leafs": "TOR",
+  "Utah Mammoth": "UTA",
+  "Vancouver Canucks": "VAN",
+  "Vegas Golden Knights": "VGK",
+  "Washington Capitals": "WSH",
+  "Winnipeg Jets": "WPG"
 };
-let TEAM_ABBREV_MAP = { ...TEAM_MAP }; // Keep for self-learning compatibility
 
-function normalizeTeamAbbrev(code = '') {
-  if (!code || typeof code !== 'string') return '';
-  code = code.trim().toUpperCase();
-  return TEAM_MAP[code] || code;
+function normalizeTeamAbbrev(raw = "") {
+  if (!raw) return "";
+  const key = raw.trim().toUpperCase();
+  // First handle name-based normalization
+  for (const [name, abbr] of Object.entries(TEAM_NAME_TO_ABBREV)) {
+    if (key === name.toUpperCase()) return abbr;
+  }
+  // Then handle existing abbreviations or aliases
+  const aliasMap = {
+    LA: "LAK",
+    LV: "VGK",
+    TB: "TBL",
+    MON: "MTL",
+    NJ: "NJD",
+    SJ: "SJS",
+    PHX: "ARI"
+  };
+  return aliasMap[key] || key;
 }
 
 async function saveNewAbbreviation(unrecognized, canonical) {
@@ -1259,47 +1303,40 @@ async function getPredictionsForSport(sportKey) {
 
         // Create a lookup map from the betting odds data, keyed by a standardized name.
         const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+            const homeAbbr = normalizeTeamAbbrev(game.home_team || game.homeTeam || game.home_name);
+            const awayAbbr = normalizeTeamAbbrev(game.away_team || game.awayTeam || game.away_name);
 
             if (homeAbbr && awayAbbr) {
                 const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game;
+                acc[key] = game; // Use 'game' which is the iterator variable
             } else {
-                console.warn(`[WARN] Could not create odds map key for game: ${game.home_team} vs ${game.away_team}`);
+                console.warn(`[WARN] Could not create odds map key for game: ${game.away_team} vs ${game.home_team}`);
             }
-            return acc;
+            return acc; // Always return accumulator
         }, {});
         console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
 
         // --- Step 3: Iterate through the OFFICIAL SCHEDULE (our "source of truth") ---
         const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
         const predictions = [];
+        let unmatchedCount = 0;
 
         for (const officialGame of officialGames) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
+            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.name?.default || officialGame.homeTeam?.abbrev);
+            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.name?.default || officialGame.awayTeam?.abbrev);
 
             if (!homeAbbr || !awayAbbr) {
-                console.warn(`[SKIP] Missing abbreviations in schedule data for game involving: ${officialGame.homeTeam?.name?.default} vs ${officialGame.awayTeam?.name?.default}`);
+                unmatchedCount++;
                 continue;
             }
 
-            const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[matchupKey];
+            const oddsKey = `${awayAbbr}@${homeAbbr}`;
+            const oddsGame = oddsMap[oddsKey];
             const homeStats = liveTeamStats[homeAbbr];
             const awayStats = liveTeamStats[awayAbbr];
 
-            console.log("🔍 Match check:", {
-                homeAbbr,
-                awayAbbr,
-                hasHomeStats: !!homeStats,
-                hasAwayStats: !!awayStats,
-                hasOdds: !!oddsGame,
-            });
-
             if (!homeStats || !awayStats || !oddsGame) {
-                console.warn(`[SKIP] Incomplete data for matchup ${awayAbbr}@${homeAbbr}.`);
+                unmatchedCount++;
                 continue;
             }
 
@@ -1322,6 +1359,9 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
+        if (unmatchedCount > 0) {
+            console.log(`📊 Prediction summary: ${predictions.length}/${officialGames.length} games processed. Skipped ${unmatchedCount}.`);
+        }
         console.log(`✅ Generated ${predictions.length} predictions.`);
         return predictions;
 
