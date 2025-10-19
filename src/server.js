@@ -84,14 +84,12 @@ function normalizeTeamAbbrev(raw = "") {
   }
   // Then handle existing abbreviations or aliases
   const aliasMap = {
-    LA: "LAK",
-    LV: "VGK",
-    TB: "TBL",
-    MON: "MTL",
-    NJ: "NJD",
-    SJ: "SJS",
-    PHX: "ARI",
-    ARI: "UTA" // Temporary fix for Utah rebrand
+    LA: "LAK", LV: "VGK", TB: "TBL", MON: "MTL", NJ: "NJD", SJ: "SJS", PHX: "ARI",
+    ARI: "UTA", // Temporary fix for Utah rebrand
+    VGS: "LV",
+    UTAH: "UTA",
+    LOS: "LA",
+    SJSJ: "SJ",
   };
   return aliasMap[key] || key;
 }
@@ -1282,6 +1280,81 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
 
+//-------------------------------------------------------------
+// 🧠 TEAM / PLAYER / GOALIE DATA ENRICHMENT PATCH
+//-------------------------------------------------------------
+
+function findGoalieByTeam(goalieStats = [], teamAbbr) {
+  const normalized = normalizeTeamAbbrev(teamAbbr);
+  return goalieStats.find(
+    g => normalizeTeamAbbrev(g.teamAbbr) === normalized
+  ) || null;
+}
+
+function mergePlayerData(livePlayers = [], historicalPlayers = []) {
+  const combined = [];
+  const seen = new Set();
+
+  [...livePlayers, ...historicalPlayers].forEach(p => {
+    const key = p.playerId || p.name;
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      combined.push(p);
+    }
+  });
+
+  return combined;
+}
+
+function buildKeyFactors({
+  homePlayers = [],
+  awayPlayers = [],
+  homeGoalie = {},
+  awayGoalie = {},
+  homeTeamStats = {},
+  awayTeamStats = {},
+}) {
+  const safeNum = v => (isNaN(v) || v === null || v === undefined ? 0 : Number(v));
+
+  const homeHybridRating = safeNum(homeTeamStats.hybridRating);
+  const awayHybridRating = safeNum(awayTeamStats.hybridRating);
+
+  const goalieEdge = safeNum(homeGoalie?.gsax) - safeNum(awayGoalie?.gsax);
+
+  const specialTeamsEdge = (safeNum(homeTeamStats.pp_pct) - safeNum(awayTeamStats.pp_pct)) +
+                           (safeNum(homeTeamStats.pk_pct) - safeNum(awayTeamStats.pk_pct));
+
+  return {
+    hybridData: {
+      home: homeHybridRating,
+      away: awayHybridRating,
+      totalPlayers: homePlayers.length + awayPlayers.length,
+    },
+    injuryImpact: {
+      affectedPlayers: [
+        ...homePlayers.filter(p => p.injuryStatus),
+        ...awayPlayers.filter(p => p.injuryStatus),
+      ].length,
+    },
+    goalieForm: {
+      home: safeNum(homeGoalie?.recentSv_pct) || 0,
+      away: safeNum(awayGoalie?.recentSv_pct) || 0,
+      edge: goalieEdge,
+    },
+    historicalEdge: goalieEdge,
+    specialTeams: specialTeamsEdge,
+  };
+}
+
+function enrichPrediction(prediction, keyFactors) {
+  // Replace the prediction's default/empty factors with the newly hydrated ones
+  prediction.factors['Hybrid Data'] = { value: keyFactors.hybridData.home - keyFactors.hybridData.away, homeStat: `${keyFactors.hybridData.totalPlayers} players`, awayStat: '' };
+  prediction.factors['Injury Impact'] = { value: keyFactors.injuryImpact.affectedPlayers, homeStat: `${keyFactors.injuryImpact.affectedPlayers} affected`, awayStat: '' };
+  prediction.factors['Current Goalie Form'] = { value: keyFactors.goalieForm.edge, homeStat: `${(keyFactors.goalieForm.home * 100).toFixed(1)}%`, awayStat: `${(keyFactors.goalieForm.away * 100).toFixed(1)}%` };
+  prediction.factors['Special Teams Duel'] = { value: keyFactors.specialTeams, homeStat: 'N/A', awayStat: 'N/A' };
+  return prediction;
+}
+
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1370,9 +1443,35 @@ async function getPredictionsForSport(sportKey) {
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            let predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+
             if (predictionData) {
-                predictions.push({ game: oddsGame, prediction: predictionData });
+                // --- ENRICHMENT STEP ---
+                const homePlayers = []; // Placeholder for live/historical player data
+                const awayPlayers = []; // Placeholder
+
+                console.log("🔍 Hydration check:", {
+                    matchup: `${awayAbbr}@${homeAbbr}`,
+                    homePlayers: homePlayers.length,
+                    awayPlayers: awayPlayers.length,
+                    homeGoalie: predictionData.factors['Historical Goalie Edge (GSAx)']?.homeStat || "N/A",
+                    awayGoalie: predictionData.factors['Historical Goalie Edge (GSAx)']?.awayStat || "N/A",
+                    hasHomeStats: !!homeStats,
+                    hasAwayStats: !!awayStats,
+                    hasOdds: !!oddsGame,
+                });
+
+                const keyFactors = buildKeyFactors({
+                    homePlayers,
+                    awayPlayers,
+                    homeGoalie: { gsax: predictionData.factors['Historical Goalie Edge (GSAx)']?.homeStat },
+                    awayGoalie: { gsax: predictionData.factors['Historical Goalie Edge (GSAx)']?.awayStat },
+                    homeTeamStats: homeStats,
+                    awayTeamStats: awayStats,
+                });
+
+                const enrichedPrediction = enrichPrediction(predictionData, keyFactors);
+                predictions.push({ game: oddsGame, prediction: enrichedPrediction });
             }
         }
         
