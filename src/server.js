@@ -38,10 +38,10 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Import new utility modules ---
-const { normalizeTeamAbbrev, buildOddsKey } = require('./hockeyNormalize');
-const { buildGoalieIndex } = require('./goalieIndex');
-const { enrichPrediction } = require('./enrichPrediction');
-const { setCache, getCache } = require('./simpleCache');
+const { normalizeTeamAbbrev, buildOddsKey } = require('./Utils/hockeyNormalize');
+const { buildGoalieIndex } = require('./Utils/goalieIndex');
+const { enrichPrediction } = require('./Utils/enrichPrediction');
+const { setCache, getCache } = require('./Utils/simpleCache');
 
 async function saveNewAbbreviation(unrecognized, canonical) {
     if (!teamMappingsCollection) return;
