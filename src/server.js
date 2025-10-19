@@ -38,7 +38,7 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Import new utility modules ---
-const { normalizeTeamAbbrev, buildOddsKey } = require('./utils/hockeyNormalize');
+const { normalizeTeamAbbrev, buildOddsKey } = require('./hockeyNormalize');
 const { buildGoalieIndex } = require('./utils/goalieIndex');
 const { enrichPrediction } = require('./utils/enrichPrediction');
 const { setCache, getCache } = require('./utils/simpleCache');
