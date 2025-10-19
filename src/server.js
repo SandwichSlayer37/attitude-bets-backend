@@ -84,13 +84,12 @@ function normalizeTeamAbbrev(raw = "") {
   }
   // Then handle existing abbreviations or aliases
   const aliasMap = {
-    LA: "LAK",
-    LV: "VGK",
-    TB: "TBL",
-    MON: "MTL",
-    NJ: "NJD",
-    SJ: "SJS",
-    PHX: "ARI"
+    LA: "LAK", LV: "VGK", TB: "TBL", MON: "MTL", NJ: "NJD", SJ: "SJS", PHX: "ARI",
+    ARI: "UTA", // Temporary fix for Utah rebrand
+    VGS: "LV",
+    UTAH: "UTA",
+    LOS: "LA",
+    SJSJ: "SJ",
   };
   return aliasMap[key] || key;
 }
@@ -1201,6 +1200,16 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeTopLine = topLineMetrics[homeAbbr] || {};
     const awayTopLine = topLineMetrics[awayAbbr] || {};
 
+    // Hydration Check
+    console.log("🔍 Hydration check:", {
+      homeAbbr,
+      awayAbbr,
+      hasHomeLiveStats: !!teamStats[homeAbbr],
+      hasAwayLiveStats: !!teamStats[awayAbbr],
+      hasHomeAdvStats: !!homeAdvStats && Object.keys(homeAdvStats).length > 0,
+      hasAwayAdvStats: !!awayAdvStats && Object.keys(awayAdvStats).length > 0,
+    });
+
     let homeScore = 50.0;
     const factors = {};
 
@@ -1219,10 +1228,10 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeLiveGoalieStats = await fetchLiveGoalieData(probableStarters.homeId);
     const awayLiveGoalieStats = await fetchLiveGoalieData(probableStarters.awayId);
 
-    const homeHistGoalie = historicalGoalieData[probableStarters.homeId];
-    const awayHistGoalie = historicalGoalieData[probableStarters.awayId];
+    const homeHistGoalie = probableStarters.homeId ? historicalGoalieData[probableStarters.homeId] : null;
+    const awayHistGoalie = probableStarters.awayId ? historicalGoalieData[probableStarters.awayId] : null;
     
-    const homeGSAx = homeHistGoalie?.gsax || 0;
+    const homeGSAx = homeHistGoalie?.gsax ?? 0;
     const awayGSAx = awayHistGoalie?.gsax || 0;
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
 
@@ -1230,7 +1239,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     if (homeLiveGoalieStats?.svPct != null && awayLiveGoalieStats?.svPct != null) {
         goalieValue = (safeNum(awayLiveGoalieStats.gaa) - safeNum(homeLiveGoalieStats.gaa)) + ((safeNum(homeLiveGoalieStats.svPct) - safeNum(awayLiveGoalieStats.svPct)) * 100);
     }
-    // FIX: Re-enabled the "Current Goalie Form" calculation
+    
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeLiveGoalieStats?.svPct?.toFixed(3) || 'N/A', awayStat: awayLiveGoalieStats?.svPct?.toFixed(3) || 'N/A' };
     
     // (The rest of the factor calculations remain the same)
@@ -1271,6 +1280,81 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
 
+//-------------------------------------------------------------
+// 🧠 TEAM / PLAYER / GOALIE DATA ENRICHMENT PATCH
+//-------------------------------------------------------------
+
+function findGoalieByTeam(goalieStats = [], teamAbbr) {
+  const normalized = normalizeTeamAbbrev(teamAbbr);
+  return goalieStats.find(
+    g => normalizeTeamAbbrev(g.teamAbbr) === normalized
+  ) || null;
+}
+
+function mergePlayerData(livePlayers = [], historicalPlayers = []) {
+  const combined = [];
+  const seen = new Set();
+
+  [...livePlayers, ...historicalPlayers].forEach(p => {
+    const key = p.playerId || p.name;
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      combined.push(p);
+    }
+  });
+
+  return combined;
+}
+
+function buildKeyFactors({
+  homePlayers = [],
+  awayPlayers = [],
+  homeGoalie = {},
+  awayGoalie = {},
+  homeTeamStats = {},
+  awayTeamStats = {},
+}) {
+  const safeNum = v => (isNaN(v) || v === null || v === undefined ? 0 : Number(v));
+
+  const homeHybridRating = safeNum(homeTeamStats.hybridRating);
+  const awayHybridRating = safeNum(awayTeamStats.hybridRating);
+
+  const goalieEdge = safeNum(homeGoalie?.gsax) - safeNum(awayGoalie?.gsax);
+
+  const specialTeamsEdge = (safeNum(homeTeamStats.pp_pct) - safeNum(awayTeamStats.pp_pct)) +
+                           (safeNum(homeTeamStats.pk_pct) - safeNum(awayTeamStats.pk_pct));
+
+  return {
+    hybridData: {
+      home: homeHybridRating,
+      away: awayHybridRating,
+      totalPlayers: homePlayers.length + awayPlayers.length,
+    },
+    injuryImpact: {
+      affectedPlayers: [
+        ...homePlayers.filter(p => p.injuryStatus),
+        ...awayPlayers.filter(p => p.injuryStatus),
+      ].length,
+    },
+    goalieForm: {
+      home: safeNum(homeGoalie?.recentSv_pct) || 0,
+      away: safeNum(awayGoalie?.recentSv_pct) || 0,
+      edge: goalieEdge,
+    },
+    historicalEdge: goalieEdge,
+    specialTeams: specialTeamsEdge,
+  };
+}
+
+function enrichPrediction(prediction, keyFactors) {
+  // Replace the prediction's default/empty factors with the newly hydrated ones
+  prediction.factors['Hybrid Data'] = { value: keyFactors.hybridData.home - keyFactors.hybridData.away, homeStat: `${keyFactors.hybridData.totalPlayers} players`, awayStat: '' };
+  prediction.factors['Injury Impact'] = { value: keyFactors.injuryImpact.affectedPlayers, homeStat: `${keyFactors.injuryImpact.affectedPlayers} affected`, awayStat: '' };
+  prediction.factors['Current Goalie Form'] = { value: keyFactors.goalieForm.edge, homeStat: `${(keyFactors.goalieForm.home * 100).toFixed(1)}%`, awayStat: `${(keyFactors.goalieForm.away * 100).toFixed(1)}%` };
+  prediction.factors['Special Teams Duel'] = { value: keyFactors.specialTeams, homeStat: 'N/A', awayStat: 'N/A' };
+  return prediction;
+}
+
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1279,11 +1363,14 @@ async function getPredictionsForSport(sportKey) {
 
         // --- Step 1: Fetch all data sources in parallel with robust error handling ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
+        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData, livePlayers, historicalPlayers] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
             axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
             getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
+            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; }),
+            // Fetch player data - assuming placeholder functions for now
+            Promise.resolve([]), // Placeholder for livePlayers fetcher
+            skatersHistCollection ? skatersHistCollection.find({ season: lastCompletedSeason }).toArray() : Promise.resolve([]) // Fetch historical players
         ]);
 
         if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
@@ -1359,9 +1446,42 @@ async function getPredictionsForSport(sportKey) {
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            let predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+
             if (predictionData) {
-                predictions.push({ game: oddsGame, prediction: predictionData });
+                // --- ENRICHMENT STEP ---
+                const allGoalies = Object.values(historicalGoalieData);
+                const homeGoalie = findGoalieByTeam(allGoalies, homeAbbr);
+                const awayGoalie = findGoalieByTeam(allGoalies, awayAbbr);
+
+                const homePlayers = mergePlayerData(
+                    livePlayers.filter(p => normalizeTeamAbbrev(p.team) === homeAbbr),
+                    historicalPlayers.filter(p => normalizeTeamAbbrev(p.team) === homeAbbr)
+                );
+                const awayPlayers = mergePlayerData(
+                    livePlayers.filter(p => normalizeTeamAbbrev(p.team) === awayAbbr),
+                    historicalPlayers.filter(p => normalizeTeamAbbrev(p.team) === awayAbbr)
+                );
+
+                console.log("🔍 Hydration check:", {
+                    matchup: `${awayAbbr}@${homeAbbr}`,
+                    homePlayers: homePlayers.length,
+                    awayPlayers: awayPlayers.length,
+                    homeGoalie: homeGoalie?.name || "N/A",
+                    awayGoalie: awayGoalie?.name || "N/A",
+                    hasHomeStats: !!homeStats,
+                    hasAwayStats: !!awayStats,
+                    hasOdds: !!oddsGame,
+                });
+
+                const keyFactors = buildKeyFactors({
+                    homePlayers, awayPlayers,
+                    homeGoalie, awayGoalie,
+                    homeTeamStats: homeStats, awayTeamStats: awayStats,
+                });
+
+                const enrichedPrediction = enrichPrediction(predictionData, keyFactors);
+                predictions.push({ game: oddsGame, prediction: enrichedPrediction });
             }
         }
         
