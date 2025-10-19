@@ -39,9 +39,9 @@ app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Import new utility modules ---
 const { normalizeTeamAbbrev, buildOddsKey } = require('./hockeyNormalize');
-const { buildGoalieIndex } = require('./utils/goalieIndex');
-const { enrichPrediction } = require('./utils/enrichPrediction');
-const { setCache, getCache } = require('./utils/simpleCache');
+const { buildGoalieIndex } = require('./goalieIndex');
+const { enrichPrediction } = require('./enrichPrediction');
+const { setCache, getCache } = require('./simpleCache');
 
 async function saveNewAbbreviation(unrecognized, canonical) {
     if (!teamMappingsCollection) return;
