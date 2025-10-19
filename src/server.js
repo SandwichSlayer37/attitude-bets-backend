@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 require('dotenv').config();
+const http = require('http');
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -8,10 +9,29 @@ const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-/**
- * SELF-LEARNING ABBREVIATION NORMALIZER
- * This system uses a base map and learns new mappings from the database.
- */
+// =================================================================
+// SECTION 1: CONFIGURATION & INITIALIZATION
+// =================================================================
+
+// --- Environment Variables & API Keys ---
+const {
+    PORT = 10000,
+    DATABASE_URL,
+    ODDS_API_KEY,
+    GEMINI_API_KEY,
+    RECONCILE_PASSWORD = "your_secret_password",
+    REDDIT_USER_AGENT,
+    REDDIT_CLIENT_ID,
+    REDDIT_CLIENT_SECRET,
+    REDDIT_USERNAME,
+    REDDIT_PASSWORD
+} = process.env;
+
+// --- SDK & Client Initialization ---
+const app = express();
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// --- Self-Learning Abbreviation Map ---
 let TEAM_ABBREV_MAP = {
     'MTL': 'MON', 'LAK': 'LA', 'TBL': 'TB', 'NJD': 'NJ',
     'SJS': 'SJ', 'VGK': 'LV', 'CBJ': 'CLS', 'WSH': 'WAS'
@@ -19,8 +39,8 @@ let TEAM_ABBREV_MAP = {
 
 function normalizeTeamAbbrev(code = '') {
     if (!code) return '';
-    const upperCode = code.trim().toUpperCase();
-    return TEAM_ABBREV_MAP[upperCode] || upperCode;
+    const upperCode = String(code).trim().toUpperCase();
+    return TEAM_ABBREV_MAP[upperCode] || upperCode; // Return mapped value or original
 }
 
 async function saveNewAbbreviation(unrecognized, canonical) {
@@ -37,17 +57,6 @@ async function saveNewAbbreviation(unrecognized, canonical) {
     }
 }
 
-const QUERYABLE_TEAM_STATS = [
-    'xGoalsFor', 'goalsFor', 'shotsOnGoalFor', 'shotAttemptsFor', 'missedShotsFor',
-    'xGoalsAgainst', 'goalsAgainst', 'shotsOnGoalAgainst', 'shotAttemptsAgainst',
-    'powerPlayPercentage', 'penaltyKillPercentage', 'GSAx', 'shootingPercentage', 'savePercentage'
-];
-
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, '..', 'Public')));
-
 // --- CACHING HELPER ---
 const __FUSION_CACHE = new Map();
 function __cached(key, ttlMs, fetcher) {
@@ -56,12 +65,6 @@ function __cached(key, ttlMs, fetcher) {
   if (hit && (now - hit.t) < ttlMs) return hit.v;
   return Promise.resolve(fetcher()).then(v => { __FUSION_CACHE.set(key, { t: now, v }); return v; });
 }
-
-// =================================================================
-// ✅ FINAL, RESILIENT DATA FUSION SYSTEM
-// This version uses a single, reliable API endpoint to prevent failures.
-// =================================================================
-
 
 async function getHistoricalGoalieData(season) {
     const cacheKey = `historical_goalie_data_${season}_v3`; // New cache key
@@ -98,7 +101,7 @@ async function getHistoricalGoalieData(season) {
         }
     }, 86400000);
 }
-     
+
 async function fetchHistoricalTeamContext(teamAbbrev) {
   try {
     if (!teamsHistCollection || !nhlStatsCollection) return {};
@@ -159,6 +162,12 @@ function mergeHistoricalCurrent(historical, current) {
   return out;
 }
 
+// =================================================================
+// SECTION 2: GEMINI AI CONFIGURATION & TOOLS
+// =================================================================
+
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
 const queryNhlStatsTool = {
   functionDeclarations: [
     {
@@ -202,24 +211,9 @@ const queryNhlStatsTool = {
   ]
 };
 
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const DATABASE_URL = process.env.DATABASE_URL;
-const RECONCILE_PASSWORD = process.env.RECONCILE_PASSWORD || "your_secret_password";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: "gemini-1.5-flash",
     tools: [queryNhlStatsTool],
-});
-
-const r = new Snoowrap({
-    userAgent: process.env.REDDIT_USER_AGENT,
-    clientId: process.env.REDDIT_CLIENT_ID,
-    clientSecret: process.env.REDDIT_CLIENT_SECRET,
-    username: process.env.REDDIT_USERNAME,
-    password: process.env.REDDIT_PASSWORD
 });
 
 let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection, teamMappingsCollection;
@@ -262,6 +256,10 @@ async function connectToDb() {
     }
 }
 
+// =================================================================
+// SECTION 3: STATIC DATA & CONSTANTS
+// =================================================================
+
 // --- DATA MAPS ---
 const teamToAbbrMap = {
     'Anaheim Ducks': 'ANA', 'Arizona Coyotes': 'ARI', 'Boston Bruins': 'BOS', 'Buffalo Sabres': 'BUF', 
@@ -275,7 +273,7 @@ const teamToAbbrMap = {
     'Utah Hockey Club': 'UTA' // Updated name for Utah
 };
 
-const SPORTS_DB = [ 
+const SPORTS_DB = [
     { key: 'baseball_mlb', name: 'MLB', gameCountThreshold: 5 }, 
     { key: 'icehockey_nhl', name: 'NHL', gameCountThreshold: 5 }, 
     { key: 'americanfootball_nfl', name: 'NFL', gameCountThreshold: 4 } 
@@ -309,12 +307,15 @@ const FUTURES_PICKS_DB = {
     'icehockey_nhl': { championship: 'Colorado Avalanche', hotPick: 'New York Rangers' },
     'americanfootball_nfl': { championship: 'Kansas City Chiefs', hotPick: 'Detroit Lions' }
 };
-const dataCache = new Map();
 
 const teamToSubredditMap = {
     'Anaheim Ducks': 'ducks', 'Arizona Coyotes': 'Coyotes', 'Boston Bruins': 'BostonBruins', 'Buffalo Sabres': 'sabres', 'Calgary Flames': 'CalgaryFlames', 'Carolina Hurricanes': 'canes', 'Chicago Blackhawks': 'hawks', 'Colorado Avalanche': 'ColoradoAvalanche', 'Columbus Blue Jackets': 'BlueJackets', 'Dallas Stars': 'DallasStars', 'Detroit Red Wings': 'DetroitRedWings', 'Edmonton Oilers': 'EdmontonOilers', 'Florida Panthers': 'FloridaPanthers', 'Los Angeles Kings': 'losangeleskings', 'Minnesota Wild': 'wildhockey', 'Montreal Canadiens': 'Habs', 'Nashville Predators': 'Predators', 'New Jersey Devils': 'devils', 'New York Islanders': 'NewYorkIslanders', 'New York Rangers': 'rangers', 'Ottawa Senators': 'OttawaSenators', 'Philadelphia Flyers': 'Flyers', 'Pittsburgh Penguins': 'penguins', 'San Jose Sharks': 'SanJoseSharks', 'Seattle Kraken': 'SeattleKraken', 'St. Louis Blues': 'stlouisblues', 'Tampa Bay Lightning': 'TampaBayLightning', 'Toronto Maple Leafs': 'leafs', 'Vancouver Canucks': 'canucks', 'Vegas Golden Knights': 'goldenknights', 'Washington Capitals': 'caps', 'Winnipeg Jets': 'winnipegjets', 'Utah Hockey Club': 'UtahHockey',
     'Arizona Diamondbacks': 'azdiamondbacks', 'Atlanta Braves': 'Braves', 'Baltimore Orioles': 'orioles', 'Boston Red Sox': 'redsox', 'Chicago Cubs': 'CHICubs', 'Chicago White Sox': 'whitesox', 'Cincinnati Reds': 'reds', 'Cleveland Guardians': 'ClevelandGuardians', 'Colorado Rockies': 'ColoradoRockies', 'Detroit Tigers': 'motorcitykitties', 'Houston Astros': 'Astros', 'Kansas City Royals': 'KCRoyals', 'Los Angeles Angels': 'angelsbaseball', 'Los Angeles Dodgers': 'Dodgers', 'Miami Marlins': 'miamimarlins', 'Milwaukee Brewers': 'Brewers', 'Minnesota Twins': 'minnesotatwins', 'New York Mets': 'NewYorkMets', 'New York Yankees': 'NYYankees', 'Oakland Athletics': 'oaklandathletics', 'Philadelphia Phillies': 'phillies', 'Pittsburgh Pirates': 'buccos', 'San Diego Padres': 'Padres', 'San Francisco Giants': 'SFGiants', 'Seattle Mariners': 'Mariners', 'St. Louis Cardinals': 'Cardinals', 'Tampa Bay Rays': 'tampabayrays', 'Texas Rangers': 'TexasRangers', 'Toronto Blue Jays': 'TorontoBlueJays', 'Washington Nationals': 'Nationals',
 };
+
+// =================================================================
+// SECTION 4: CORE HELPERS & UTILITIES
+// =================================================================
 
 // --- HELPER FUNCTIONS ---
 function safeNum(value) {
@@ -324,6 +325,22 @@ function safeNum(value) {
 
 function safeText(value) {
     return (value && value !== 'undefined' && value !== 'null') ? String(value) : 'N/A';
+}
+
+const parseRecord = (rec) => {
+    if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
+    const parts = rec.split('-');
+    if (parts.length < 2) return { w: 0, l: 0, otl: 0 };
+    const wins = parseInt(parts[0], 10);
+    const losses = parseInt(parts[1], 10);
+    const otl = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0, otl: 0 };
+    return { w: wins, l: losses, otl: otl };
+};
+
+const getWinPct = (rec) => {
+    const totalGames = rec.w + rec.l + (rec.otl || 0);
+    return totalGames > 0 ? rec.w / totalGames : 0;
 }
 
 function parseEspnTeamStats(espnEvents) {
@@ -342,6 +359,9 @@ function parseEspnTeamStats(espnEvents) {
     });
     return stats;
 }
+
+const dataCache = new Map();
+
 
 // New helper function to get key historical data before calling the AI
 async function getAiContextualData(teamName, season) {
@@ -396,6 +416,10 @@ function cleanAndParseJson(text) {
         return null;
     }
 }
+
+// =================================================================
+// SECTION 5: DATA FETCHING & CACHING LAYER
+// =================================================================
 
 // Fetches and processes live goalie stats for the current season.
 async function getGoalieStats() {
@@ -506,11 +530,6 @@ async function getOdds(sportKey) {
     }, 300000); // Cache for 5 minutes
 }
 
-// =================================================================
-// ✅ FINAL, ROBUST AI INTERACTION FUNCTION
-// This version gracefully handles cases where the AI's tool finds no data,
-// preventing the final analysis from failing.
-// =================================================================
 async function runAiChatWithTools(userPrompt) {
     const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. Use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome. You must always return your final analysis in the specified JSON format. If your tool call returns an error or no data, you must indicate that in your final analysis.`;
     const chat = chatModel.startChat({
@@ -558,7 +577,6 @@ async function runAiChatWithTools(userPrompt) {
     // This path is for when the AI doesn't use a tool.
     return cleanAndParseJson(responseText);
 }
-
 
 async function getHistoricalTopLineMetrics(season) {
     // FIX: These two lines were missing. They define the variables needed below.
@@ -648,23 +666,15 @@ async function getHistoricalTeamAndGoalieMetrics(season) {
     }, 86400000);
 }
 
-const parseRecord = (rec) => {
-    if (!rec || typeof rec !== 'string') return { w: 0, l: 0, otl: 0 };
-    const parts = rec.split('-');
-    if (parts.length < 2) return { w: 0, l: 0, otl: 0 };
-    const wins = parseInt(parts[0], 10);
-    const losses = parseInt(parts[1], 10);
-    const otl = parts.length > 2 ? parseInt(parts[2], 10) : 0;
-    if (isNaN(wins) || isNaN(losses)) return { w: 0, l: 0, otl: 0 };
-    return { w: wins, l: losses, otl: otl };
-};
-const getWinPct = (rec) => {
-    const totalGames = rec.w + rec.l + (rec.otl || 0);
-    return totalGames > 0 ? rec.w / totalGames : 0;
-}
-
 async function getTeamNewsFromReddit(teamName) {
     try {
+        const r = new Snoowrap({
+            userAgent: REDDIT_USER_AGENT,
+            clientId: REDDIT_CLIENT_ID,
+            clientSecret: REDDIT_CLIENT_SECRET,
+            username: REDDIT_USERNAME,
+            password: REDDIT_PASSWORD
+        });
         const subredditName = teamToSubredditMap[teamName];
         if (!subredditName) return "No subreddit found.";
         
@@ -675,6 +685,10 @@ async function getTeamNewsFromReddit(teamName) {
         return "Could not fetch news.";
     }
 }
+
+// =================================================================
+// SECTION 6: PREDICTION ENGINE & AI ANALYSIS
+// =================================================================
 
 const ALLOWED_STATS = new Set(['playerId','season','name','team','position','situation','games_played','icetime','xGoals','goals','unblocked_shot_attempts','xRebounds','rebounds','xFreeze','freeze','xOnGoal','ongoal','xPlayStopped','playStopped','xPlayContinuedInZone','playContinuedInZone','xPlayContinuedOutsideZone','playContinuedOutsideZone','flurryAdjustedxGoals','lowDangerShots','mediumDangerShots','highDangerShots','lowDangerxGoals','mediumDangerxGoals','highDangerxGoals','lowDangerGoals','mediumDangerGoals','highDangerGoals','blocked_shot_attempts','penalityMinutes','penalties','lineId','iceTimeRank','xGoalsPercentage','corsiPercentage','fenwickPercentage','xOnGoalFor','xGoalsFor','xReboundsFor','xFreezeFor','xPlayStoppedFor','xPlayContinuedInZoneFor','xPlayContinuedOutsideZoneFor','flurryAdjustedxGoalsFor','scoreVenueAdjustedxGoalsFor','flurryScoreVenueAdjustedxGoalsFor','shotsOnGoalFor','missedShotsFor','blockedShotAttemptsFor','shotAttemptsFor','goalsFor','reboundsFor','reboundGoalsFor','freezeFor','playStoppedFor','playContinuedInZoneFor','playContinuedOutsideZoneFor','savedShotsOnGoalFor','savedUnblockedShotAttemptsFor','penaltiesFor','penalityMinutesFor','faceOffsWonFor','hitsFor','takeawaysFor','giveawaysFor','lowDangerShotsFor','mediumDangerShotsFor','highDangerShotsFor','lowDangerxGoalsFor','mediumDangerxGoalsFor','highDangerxGoalsFor','lowDangerGoalsFor','mediumDangerGoalsFor','highDangerGoalsFor','scoreAdjustedShotsAttemptsFor','unblockedShotAttemptsFor','scoreAdjustedUnblockedShotAttemptsFor','dZoneGiveawaysFor','xGoalsFromxReboundsOfShotsFor','xGoalsFromActualReboundsOfShotsFor','reboundxGoalsFor','totalShotCreditFor','scoreAdjustedTotalShotCreditFor','scoreFlurryAdjustedTotalShotCreditFor','xOnGoalAgainst','xGoalsAgainst','xReboundsAgainst','xFreezeAgainst','xPlayStoppedAgainst','xPlayContinuedInZoneAgainst','xPlayContinuedOutsideZoneAgainst','flurryAdjustedxGoalsAgainst','scoreVenueAdjustedxGoalsAgainst','flurryScoreVenueAdjustedxGoalsAgainst','shotsOnGoalAgainst','missedShotsAgainst','blockedShotAttemptsAgainst','shotAttemptsAgainst','goalsAgainst','reboundsAgainst','reboundGoalsAgainst','freezeAgainst','playStoppedAgainst','playContinuedInZoneAgainst','playContinuedOutsideZoneAgainst','savedShotsOnGoalAgainst','savedUnblockedShotAttemptsAgainst','penaltiesAgainst','penalityMinutesAgainst','faceOffsWonAgainst','hitsAgainst','takeawaysAgainst','giveawaysAgainst','lowDangerShotsAgainst','mediumDangerShotsAgainst','highDangerShotsAgainst','lowDangerxGoalsAgainst','mediumDangerxGoalsAgainst','highDangerxGoalsAgainst','lowDangerGoalsAgainst','mediumDangerGoalsAgainst','highDangerGoalsAgainst','scoreAdjustedShotsAttemptsAgainst','unblockedShotAttemptsAgainst','scoreAdjustedUnblockedShotAttemptsAgainst','dZoneGiveawaysAgainst','xGoalsFromxReboundsOfShotsAgainst','xGoalsFromActualReboundsOfShotsAgainst','reboundxGoalsAgainst','totalShotCreditAgainst','scoreAdjustedTotalShotCreditAgainst','scoreFlurryAdjustedTotalShotCreditAgainst','shifts','gameScore','onIce_xGoalsPercentage','offIce_xGoalsPercentage','onIce_corsiPercentage','offIce_corsiPercentage','onIce_fenwickPercentage','offIce_fenwickPercentage','I_F_xOnGoal','I_F_xGoals','I_F_xRebounds','I_F_xFreeze','I_F_xPlayStopped','I_F_xPlayContinuedInZone','I_F_xPlayContinuedOutsideZone','I_F_flurryAdjustedxGoals','I_F_scoreVenueAdjustedxGoals','I_F_flurryScoreVenueAdjustedxGoals','I_F_primaryAssists','I_F_secondaryAssists','I_F_shotsOnGoal','I_F_missedShots','I_F_blockedShotAttempts','I_F_shotAttempts','I_F_points','I_F_goals','I_F_rebounds','I_F_reboundGoals','I_F_freeze','I_F_playStopped','I_F_playContinuedInZone','I_F_playContinuedOutsideZone','I_F_savedShotsOnGoal','I_F_savedUnblockedShotAttempts','I_F_penalityMinutes','I_F_faceOffsWon','I_F_hits','I_F_takeaways','I_F_giveaways','I_F_lowDangerShots','I_F_mediumDangerShots','I_F_highDangerShots','I_F_lowDangerxGoals','I_F_mediumDangerxGoals','I_F_highDangerxGoals','I_F_lowDangerGoals','I_F_mediumDangerGoals','I_F_highDangerGoals','I_F_scoreAdjustedShotsAttempts','I_F_unblockedShotAttempts','I_F_scoreAdjustedUnblockedShotAttempts','I_F_dZoneGiveaways','I_F_xGoalsFromxReboundsOfShots','I_F_xGoalsFromActualReboundsOfShots','I_F_reboundxGoals','I_F_xGoals_with_earned_rebounds','I_F_xGoals_with_earned_rebounds_scoreAdjusted','I_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','I_F_shifts','I_F_oZoneShiftStarts','I_F_dZoneShiftStarts','I_F_neutralZoneShiftStarts','I_F_flyShiftStarts','I_F_oZoneShiftEnds','I_F_dZoneShiftEnds','I_F_neutralZoneShiftEnds','I_F_flyShiftEnds','faceoffsWon','faceoffsLost','timeOnBench','penalityMinutesDrawn','penaltiesDrawn','shotsBlockedByPlayer','OnIce_F_xOnGoal','OnIce_F_xGoals','OnIce_F_flurryAdjustedxGoals','OnIce_F_scoreVenueAdjustedxGoals','OnIce_F_flurryScoreVenueAdjustedxGoals','OnIce_F_shotsOnGoal','OnIce_F_missedShots','OnIce_F_blockedShotAttempts','OnIce_F_shotAttempts','OnIce_F_goals','OnIce_F_rebounds','OnIce_F_reboundGoals','OnIce_F_lowDangerShots','OnIce_F_mediumDangerShots','OnIce_F_highDangerShots','OnIce_F_lowDangerxGoals','OnIce_F_mediumDangerxGoals','OnIce_F_highDangerxGoals','OnIce_F_lowDangerGoals','OnIce_F_mediumDangerGoals','OnIce_F_highDangerGoals','OnIce_F_scoreAdjustedShotsAttempts','OnIce_F_unblockedShotAttempts','OnIce_F_scoreAdjustedUnblockedShotAttempts','OnIce_F_xGoalsFromxReboundsOfShots','OnIce_F_xGoalsFromActualReboundsOfShots','OnIce_F_reboundxGoals','OnIce_F_xGoals_with_earned_rebounds','OnIce_F_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_F_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OnIce_A_xOnGoal','OnIce_A_xGoals','OnIce_A_flurryAdjustedxGoals','OnIce_A_scoreVenueAdjustedxGoals','OnIce_A_flurryScoreVenueAdjustedxGoals','OnIce_A_shotsOnGoal','OnIce_A_missedShots','OnIce_A_blockedShotAttempts','OnIce_A_shotAttempts','OnIce_A_goals','OnIce_A_rebounds','OnIce_A_reboundGoals','OnIce_A_lowDangerShots','OnIce_A_mediumDangerShots','OnIce_A_highDangerShots','OnIce_A_lowDangerxGoals','OnIce_A_mediumDangerxGoals','OnIce_A_highDangerxGoals','OnIce_A_lowDangerGoals','OnIce_A_mediumDangerGoals','OnIce_A_highDangerGoals','OnIce_A_scoreAdjustedShotsAttempts','OnIce_A_unblockedShotAttempts','OnIce_A_scoreAdjustedUnblockedShotAttempts','OnIce_A_xGoalsFromxReboundsOfShots','OnIce_A_xGoalsFromActualReboundsOfShots','OnIce_A_reboundxGoals','OnIce_A_xGoals_with_earned_rebounds','OnIce_A_xGoals_with_earned_rebounds_scoreAdjusted','OnIce_A_xGoals_with_earned_rebounds_scoreFlurryAdjusted','OffIce_F_xGoals','OffIce_A_xGoals','OffIce_F_shotAttempts','OffIce_A_shotAttempts','xGoalsForAfterShifts','xGoalsAgainstAfterShifts','corsiForAfterShifts','corsiAgainstAfterShifts','fenwickForAfterShifts','fenwickAgainstAfterShifts']);
 
@@ -1353,63 +1367,9 @@ async function getPredictionsForSport(sportKey) {
     }
 }
 
-async function getPredictionsForSport(sportKey) {
-    if (sportKey !== 'icehockey_nhl') return [];
-
-    try {
-        console.log("🚀 Starting new definitive prediction pipeline...");
-
-        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
-        const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
-            getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            // FIX: Add a fallback for the schedule API to ensure games are always loaded.
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary NHL schedule API failed: ${e.message}. Falling back to ESPN scoreboard.`);
-                try {
-                    return await fetchEspnData('icehockey_nhl');
-                } catch (espnError) {
-                    console.error(`[CRITICAL] Both NHL and ESPN schedule APIs failed. No games can be processed. Error: ${espnError.message}`);
-                    return null; // Ensure failure returns null
-                }
-            }),
-            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            // This fetcher now has a built-in fallback for live team stats
-            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-                return data.standings;
-            })
-        ]);
-
-        // FIX: Check for either NHL's gameWeek or ESPN's events structure.
-        if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
-            throw new Error("Critical data failure: Could not fetch all required data sources.");
-        }
-
-        // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => {
-            // Handle data from either the primary or fallback API
-            // FIX: Use the correct normalizer function.
-            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
-            if (abbr) {
-                const gamesPlayed = safeNum(team.gamesPlayed);
-                acc[abbr] = {
-                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}` : 'N/A',
-                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
-                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
-                    faceoffWinPct: team.faceoffWinPct ?? 0,
-                };
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
-
-// Health check route for Render to confirm the service is running
-app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'ok', message: 'Service is healthy' });
-});
+// =================================================================
+// SECTION 7: API ROUTES & SERVER LOGIC
+// =================================================================
 
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
@@ -1418,11 +1378,11 @@ app.get('/api/predictions', async (req, res) => {
     try {
         const predictions = await getPredictionsForSport(sport);
         if (predictions.length === 0 && !dataCache.has(`odds_${sport}`)) {
-            return res.json({ message: `No upcoming games for ${sport}.` });
+            return res.json({ message: `No upcoming games for ${sport}.`, predictions: [] });
         }
         res.json(predictions);
-    } catch(error) {
-        console.error(`Prediction Error for ${sport}:`, error.message);
+    } catch (error) {
+        console.error(`[CRITICAL] Prediction Error for ${sport}:`, error.message);
         res.status(500).json({ error: `Failed to get predictions for ${sport}`});
     }
 });
@@ -1843,20 +1803,29 @@ app.get('/api/fusion-preview', async (req, res) => {
     }
 });
 
+// Health check route for Render to confirm the service is running
+app.get('/api/health', (req, res) => {
+    res.status(200).json({
+        status: 'ok',
+        message: 'Service is healthy'
+    });
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
-const PORT = process.env.PORT || 10000;
+// --- Express Middleware ---
+app.use(cors());
+app.use(express.json({ limit: '5mb' }));
+app.use(express.static(path.join(__dirname, '..', 'Public')));
 
-// Start the server immediately
-app.listen(PORT, () => {
+// --- Server Startup ---
+const server = http.createServer(app);
+server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    
     // Connect to the database in the background after the server has started
     connectToDb().catch(error => {
         console.error("Background database connection failed:", error);
-        // We don't exit the process here, so the server keeps running
-        // Your routes will handle the case where the DB is not available
     });
 });
