@@ -121,7 +121,7 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -167,7 +167,7 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     tools: [queryNhlStatsTool],
 });
 
@@ -176,7 +176,12 @@ let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlSt
 async function connectToDb() {
     try {
         if (db) return db;
-        const client = new MongoClient(DATABASE_URL);
+        // FIX: Use mongoose.connect with the correct environment variable
+        await mongoose.connect(process.env.DATABASE_URL, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        const client = mongoose.connection.getClient();
         await client.connect();
         db = client.db('attitudebets');
         // Live/General Collections
