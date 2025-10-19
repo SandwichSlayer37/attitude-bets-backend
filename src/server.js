@@ -9,21 +9,34 @@ const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 /**
- * NEW: A helper to normalize team abbreviations from different API sources.
- * It ensures that variations like 'MTL' and 'MON' both map to a single canonical abbreviation.
+ * SELF-LEARNING ABBREVIATION NORMALIZER
+ * This system uses a base map and learns new mappings from the database.
  */
+let TEAM_ABBREV_MAP = {
+    'MTL': 'MON', 'LAK': 'LA', 'TBL': 'TB', 'NJD': 'NJ',
+    'SJS': 'SJ', 'VGK': 'LV', 'CBJ': 'CLS', 'WSH': 'WAS'
+};
+
 function normalizeTeamAbbrev(code = '') {
     if (!code) return '';
-    return code.trim().toUpperCase()
-        .replace('MTL', 'MON')
-        .replace('LAK', 'LA')
-        .replace('TBL', 'TB')
-        .replace('NJD', 'NJ')
-        .replace('SJS', 'SJ')
-        .replace('VGK', 'LV')
-        .replace('CBJ', 'CLS')
-        .replace('WSH', 'WAS');
+    const upperCode = code.trim().toUpperCase();
+    return TEAM_ABBREV_MAP[upperCode] || upperCode;
 }
+
+async function saveNewAbbreviation(unrecognized, canonical) {
+    if (!teamMappingsCollection) return;
+    try {
+        await teamMappingsCollection.updateOne(
+            { unrecognized: unrecognized },
+            { $set: { canonical: canonical } },
+            { upsert: true }
+        );
+        console.log(`[LEARN] Successfully saved new mapping: ${unrecognized} -> ${canonical}`);
+    } catch (error) {
+        console.error(`[ERROR] Could not save new abbreviation mapping:`, error);
+    }
+}
+
 const QUERYABLE_TEAM_STATS = [
     'xGoalsFor', 'goalsFor', 'shotsOnGoalFor', 'shotAttemptsFor', 'missedShotsFor',
     'xGoalsAgainst', 'goalsAgainst', 'shotsOnGoalAgainst', 'shotAttemptsAgainst',
@@ -209,7 +222,7 @@ const r = new Snoowrap({
     password: process.env.REDDIT_PASSWORD
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection;
+let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection, teamMappingsCollection;
 
 async function connectToDb() {
     try {
@@ -228,8 +241,20 @@ async function connectToDb() {
         linesHistCollection = db.collection('nhl_line_stats_historical');
         skatersHistCollection = db.collection('nhl_skater_stats_historical');
         teamsHistCollection = db.collection('nhl_teams_data_historical');
+        teamMappingsCollection = db.collection('team_mappings');
 
         console.log('Connected to MongoDB');
+
+        // Load and merge dynamic mappings from the database
+        const storedMappings = await teamMappingsCollection.find({}).toArray();
+        if (storedMappings.length > 0) {
+            const newMappings = storedMappings.reduce((acc, item) => {
+                acc[item.unrecognized] = item.canonical;
+                return acc;
+            }, {});
+            TEAM_ABBREV_MAP = { ...TEAM_ABBREV_MAP, ...newMappings };
+            console.log(`✅ Loaded and merged ${storedMappings.length} custom team abbreviation mappings.`);
+        }
         return db;
     } catch (e) {
         console.error("Failed to connect to MongoDB", e);
@@ -1269,12 +1294,21 @@ async function getPredictionsForSport(sportKey) {
             const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
             if (!homeTeamCanonical || !awayTeamCanonical) continue;
 
-            if (!homeStats || !awayStats) {
-                console.warn(`[WARN] Missing team stats for matchup: ${homeAbbrev} vs ${awayAbbrev}`);
+            // FIX: If stats are missing, attempt to find a match and learn it
+            if (!homeStats && homeAbbrev) {
+                console.warn(`[LEARN] Unrecognized abbreviation found: ${homeAbbrev}. Attempting to find canonical match.`);
+                const canonicalMatch = Object.keys(liveTeamStats).find(key => key.includes(homeAbbrev) || homeAbbrev.includes(key));
+                if (canonicalMatch) saveNewAbbreviation(homeAbbrev, canonicalMatch);
+            }
+            if (!awayStats && awayAbbrev) {
+                console.warn(`[LEARN] Unrecognized abbreviation found: ${awayAbbrev}. Attempting to find canonical match.`);
+                const canonicalMatch = Object.keys(liveTeamStats).find(key => key.includes(awayAbbrev) || awayAbbrev.includes(key));
+                if (canonicalMatch) saveNewAbbreviation(awayAbbrev, canonicalMatch);
+            }
+
+            if (!liveTeamStats[homeAbbrev] || !liveTeamStats[awayAbbrev]) {
                 unmatchedCount++;
                 continue; // Skip this game as we can't generate a prediction
-            } else {
-                console.log(`🔗 Matched ${homeAbbrev} vs ${awayAbbrev} | Found: ${!!homeStats}/${!!awayStats}`);
             }
 
             const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
@@ -1318,6 +1352,59 @@ async function getPredictionsForSport(sportKey) {
         return []; 
     }
 }
+
+async function getPredictionsForSport(sportKey) {
+    if (sportKey !== 'icehockey_nhl') return [];
+
+    try {
+        console.log("🚀 Starting new definitive prediction pipeline...");
+
+        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
+        const lastCompletedSeason = new Date().getFullYear() - 1;
+        const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
+            getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
+            // FIX: Add a fallback for the schedule API to ensure games are always loaded.
+            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(async (e) => {
+                console.warn(`[WARN] Primary NHL schedule API failed: ${e.message}. Falling back to ESPN scoreboard.`);
+                try {
+                    return await fetchEspnData('icehockey_nhl');
+                } catch (espnError) {
+                    console.error(`[CRITICAL] Both NHL and ESPN schedule APIs failed. No games can be processed. Error: ${espnError.message}`);
+                    return null; // Ensure failure returns null
+                }
+            }),
+            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
+            // This fetcher now has a built-in fallback for live team stats
+            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
+                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
+                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+                return data.standings;
+            })
+        ]);
+
+        // FIX: Check for either NHL's gameWeek or ESPN's events structure.
+        if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
+            throw new Error("Critical data failure: Could not fetch all required data sources.");
+        }
+
+        // --- Step 2: Process and map data for reliable lookups ---
+        const liveTeamStats = teamStatsData.reduce((acc, team) => {
+            // Handle data from either the primary or fallback API
+            // FIX: Use the correct normalizer function.
+            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
+            if (abbr) {
+                const gamesPlayed = safeNum(team.gamesPlayed);
+                acc[abbr] = {
+                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}` : 'N/A',
+                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
+                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
+                    faceoffWinPct: team.faceoffWinPct ?? 0,
+                };
+            }
+            return acc;
+        }, {});
+        console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
 // Health check route for Render to confirm the service is running
 app.get('/api/health', (req, res) => {
