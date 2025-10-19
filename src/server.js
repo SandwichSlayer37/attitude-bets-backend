@@ -32,15 +32,17 @@ const app = express();
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // --- Self-Learning Abbreviation Map ---
-let TEAM_ABBREV_MAP = {
-    'MTL': 'MON', 'LAK': 'LA', 'TBL': 'TB', 'NJD': 'NJ',
-    'SJS': 'SJ', 'VGK': 'LV', 'CBJ': 'CLS', 'WSH': 'WAS'
+const TEAM_MAP = {
+    MTL: 'MON', LAK: 'LA', TBL: 'TB', NJD: 'NJ', SJS: 'SJ', VGK: 'LV',
+    CBJ: 'CLS', WSH: 'WAS', NYR: 'NYR', NYI: 'NYI', ARI: 'ARI', PHX: 'ARI',
+    QUE: 'COL', ATL: 'WPG', // Legacy cases
 };
+let TEAM_ABBREV_MAP = { ...TEAM_MAP }; // Keep for self-learning compatibility
 
 function normalizeTeamAbbrev(code = '') {
     if (!code) return '';
     const upperCode = String(code).trim().toUpperCase();
-    return TEAM_ABBREV_MAP[upperCode] || upperCode; // Return mapped value or original
+    return TEAM_MAP[upperCode] || upperCode; // Return mapped value or original
 }
 
 async function saveNewAbbreviation(unrecognized, canonical) {
@@ -1242,13 +1244,13 @@ async function getPredictionsForSport(sportKey) {
         // --- Step 2: Process and map data for reliable lookups ---
         const liveTeamStats = teamStatsData.reduce((acc, team) => {
             // Handle data from either the primary or fallback API
-            // FIX: Use the correct normalizer function.
+            // FIX: Normalize abbreviations at the source.
             const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}` : 'N/A',
+                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}`: 'N/A',
                     goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
                     goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
                     faceoffWinPct: team.faceoffWinPct ?? 0,
@@ -1259,10 +1261,13 @@ async function getPredictionsForSport(sportKey) {
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
         const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeTeamCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            if (homeTeamCanonical && awayTeamCanonical) {
-                const key = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
+            // FIX: Normalize abbreviations derived from odds data to create a reliable key.
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+
+            if (homeAbbr && awayAbbr) {
+                // Use a consistent key format: AWAY@HOME
+                const key = `${awayAbbr}@${homeAbbr}`;
                 acc[key] = game;
             }
             return acc;
@@ -1291,47 +1296,24 @@ async function getPredictionsForSport(sportKey) {
         let unmatchedCount = 0;
 
         for (const officialGame of (officialGames || [])) {
-            // Step 2: Normalize team abbreviations before prediction generation
+            // FIX: Normalize abbreviations from the schedule data source.
             const homeAbbrev = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
             const awayAbbrev = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
 
-            // Step 2 (cont.): Update matching logic to use normalized values
+            // Create the standardized key to look up odds.
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const oddsGame = oddsMap[matchupKey];
             const homeStats = liveTeamStats[homeAbbrev];
             const awayStats = liveTeamStats[awayAbbrev];
 
-            // Step 3: Add debug output for verification
-            const homeTeamName = officialGame.homeTeam?.name?.default;
-            const awayTeamName = officialGame.awayTeam?.name?.default;
-            if (!homeTeamName || !awayTeamName) continue;
-
-            const homeTeamCanonical = canonicalTeamNameMap[homeTeamName.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
-            if (!homeTeamCanonical || !awayTeamCanonical) continue;
-
-            // FIX: If stats are missing, attempt to find a match and learn it
-            if (!homeStats && homeAbbrev) {
-                console.warn(`[LEARN] Unrecognized abbreviation found: ${homeAbbrev}. Attempting to find canonical match.`);
-                const canonicalMatch = Object.keys(liveTeamStats).find(key => key.includes(homeAbbrev) || homeAbbrev.includes(key));
-                if (canonicalMatch) saveNewAbbreviation(homeAbbrev, canonicalMatch);
-            }
-            if (!awayStats && awayAbbrev) {
-                console.warn(`[LEARN] Unrecognized abbreviation found: ${awayAbbrev}. Attempting to find canonical match.`);
-                const canonicalMatch = Object.keys(liveTeamStats).find(key => key.includes(awayAbbrev) || awayAbbrev.includes(key));
-                if (canonicalMatch) saveNewAbbreviation(awayAbbrev, canonicalMatch);
-            }
-
-            if (!liveTeamStats[homeAbbrev] || !liveTeamStats[awayAbbrev]) {
+            // FIX: Add safeguard and debug logging.
+            if (!homeStats || !awayStats || !oddsGame) {
+                console.warn(`[SKIP] Missing data for ${awayAbbr}@${homeAbbr}. Stats found: [Home: ${!!homeStats}, Away: ${!!awayStats}]. Odds found: ${!!oddsGame}.`);
                 unmatchedCount++;
                 continue; // Skip this game as we can't generate a prediction
             }
 
-            const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-            const oddsGame = oddsMap[matchupKey];
-            
-            if (!oddsGame) {
-                console.warn(`[WARN] No odds found for schedule game: ${matchupKey}. Skipping.`);
-                continue;
-            }
+            console.log(`🔗 Matched ${awayAbbr}@${homeAbbr} | Stats: ${!!homeStats}/${!!awayStats} | Odds: ${!!oddsGame}`);
 
             const context = {
                 teamStats: { [homeAbbrev]: homeStats, [awayAbbrev]: awayStats },
