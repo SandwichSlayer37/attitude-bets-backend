@@ -31,6 +31,12 @@ const {
 const app = express();
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
+// --- Express Middleware ---
+// IMPORTANT: Middleware must be configured BEFORE routes are defined.
+app.use(cors({ origin: '*', credentials: true })); // Allow all origins for now
+app.use(express.json({ limit: '5mb' }));
+app.use(express.static(path.join(__dirname, '..', 'Public')));
+
 // --- Self-Learning Abbreviation Map ---
 const TEAM_NAME_TO_ABBREV = {
   "Anaheim Ducks": "ANA",
@@ -1377,6 +1383,7 @@ async function getPredictionsForSport(sportKey) {
 
 app.get('/api/predictions', async (req, res) => {
     const { sport } = req.query;
+    console.log(`[HIT] GET /api/predictions received for sport: ${sport}`);
     if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
 
     try {
@@ -1819,14 +1826,9 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
-// --- Express Middleware ---
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.static(path.join(__dirname, '..', 'Public')));
-
 // --- Server Startup ---
 const server = http.createServer(app);
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with containers
     console.log(`Server running on port ${PORT}`);
     // Connect to the database in the background after the server has started
     connectToDb().catch(error => {
