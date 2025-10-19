@@ -7,6 +7,23 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+/**
+ * NEW: A helper to normalize team abbreviations from different API sources.
+ * It ensures that variations like 'MTL' and 'MON' both map to a single canonical abbreviation.
+ */
+function normalizeTeamAbbrev(code = '') {
+    if (!code) return '';
+    return code.trim().toUpperCase()
+        .replace('MTL', 'MON')
+        .replace('LAK', 'LA')
+        .replace('TBL', 'TB')
+        .replace('NJD', 'NJ')
+        .replace('SJS', 'SJ')
+        .replace('VGK', 'LV')
+        .replace('CBJ', 'CLS')
+        .replace('WSH', 'WAS');
+}
 const QUERYABLE_TEAM_STATS = [
     'xGoalsFor', 'goalsFor', 'shotsOnGoalFor', 'shotAttemptsFor', 'missedShotsFor',
     'xGoalsAgainst', 'goalsAgainst', 'shotsOnGoalAgainst', 'shotAttemptsAgainst',
