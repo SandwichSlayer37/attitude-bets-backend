@@ -40,8 +40,8 @@ const TEAM_MAP = {
 let TEAM_ABBREV_MAP = { ...TEAM_MAP }; // Keep for self-learning compatibility
 
 function normalizeTeamAbbrev(code = '') {
-    if (!code) return '';
-    const upperCode = String(code).trim().toUpperCase();
+    if (!code || typeof code !== 'string') return '';
+    const upperCode = code.trim().toUpperCase();
     return TEAM_MAP[upperCode] || upperCode; // Return mapped value or original
 }
 
@@ -1296,10 +1296,16 @@ async function getPredictionsForSport(sportKey) {
         let unmatchedCount = 0;
 
         for (const officialGame of (officialGames || [])) {
-            // FIX: Normalize abbreviations from the schedule data source.
-            const homeAbbrev = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
-            const awayAbbrev = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
+            // FIX: Correctly define both abbreviations with fallbacks.
+            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
+            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
 
+            // Add safeguard for invalid abbreviations
+            if (!homeAbbr || !awayAbbr) {
+                console.warn(`[SKIP] Invalid or missing abbreviations for game involving teams: ${officialGame.homeTeam?.name?.default} vs ${officialGame.awayTeam?.name?.default}`);
+                unmatchedCount++;
+                continue;
+            }
             // Create the standardized key to look up odds.
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
             const oddsGame = oddsMap[matchupKey];
