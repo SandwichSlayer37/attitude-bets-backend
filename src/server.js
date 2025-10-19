@@ -90,7 +90,8 @@ function normalizeTeamAbbrev(raw = "") {
     MON: "MTL",
     NJ: "NJD",
     SJ: "SJS",
-    PHX: "ARI"
+    PHX: "ARI",
+    ARI: "UTA" // Temporary fix for Utah rebrand
   };
   return aliasMap[key] || key;
 }
@@ -1201,6 +1202,16 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeTopLine = topLineMetrics[homeAbbr] || {};
     const awayTopLine = topLineMetrics[awayAbbr] || {};
 
+    // Hydration Check
+    console.log("🔍 Hydration check:", {
+      homeAbbr,
+      awayAbbr,
+      hasHomeLiveStats: !!teamStats[homeAbbr],
+      hasAwayLiveStats: !!teamStats[awayAbbr],
+      hasHomeAdvStats: !!homeAdvStats && Object.keys(homeAdvStats).length > 0,
+      hasAwayAdvStats: !!awayAdvStats && Object.keys(awayAdvStats).length > 0,
+    });
+
     let homeScore = 50.0;
     const factors = {};
 
@@ -1219,10 +1230,10 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeLiveGoalieStats = await fetchLiveGoalieData(probableStarters.homeId);
     const awayLiveGoalieStats = await fetchLiveGoalieData(probableStarters.awayId);
 
-    const homeHistGoalie = historicalGoalieData[probableStarters.homeId];
-    const awayHistGoalie = historicalGoalieData[probableStarters.awayId];
+    const homeHistGoalie = probableStarters.homeId ? historicalGoalieData[probableStarters.homeId] : null;
+    const awayHistGoalie = probableStarters.awayId ? historicalGoalieData[probableStarters.awayId] : null;
     
-    const homeGSAx = homeHistGoalie?.gsax || 0;
+    const homeGSAx = homeHistGoalie?.gsax ?? 0;
     const awayGSAx = awayHistGoalie?.gsax || 0;
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
 
@@ -1230,7 +1241,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     if (homeLiveGoalieStats?.svPct != null && awayLiveGoalieStats?.svPct != null) {
         goalieValue = (safeNum(awayLiveGoalieStats.gaa) - safeNum(homeLiveGoalieStats.gaa)) + ((safeNum(homeLiveGoalieStats.svPct) - safeNum(awayLiveGoalieStats.svPct)) * 100);
     }
-    // FIX: Re-enabled the "Current Goalie Form" calculation
+    
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeLiveGoalieStats?.svPct?.toFixed(3) || 'N/A', awayStat: awayLiveGoalieStats?.svPct?.toFixed(3) || 'N/A' };
     
     // (The rest of the factor calculations remain the same)
