@@ -176,14 +176,13 @@ let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlSt
 async function connectToDb() {
     try {
         if (db) return db;
-        // FIX: Use mongoose.connect with the correct environment variable
-        await mongoose.connect(process.env.DATABASE_URL, {
+        // Use the correct environment variable and modern connection options
+        await mongoose.connect(process.env.DATABASE_URL || process.env.MONGO_URI, {
             useNewUrlParser: true,
             useUnifiedTopology: true,
         });
-        const client = mongoose.connection.getClient();
-        await client.connect();
-        db = client.db('attitudebets');
+        console.log('✅ Connected to MongoDB');
+        db = mongoose.connection.db;
         // Live/General Collections
         recordsCollection = db.collection('records');
         predictionsCollection = db.collection('predictions');
@@ -197,17 +196,10 @@ async function connectToDb() {
         teamsHistCollection = db.collection('nhl_teams_data_historical');
         teamMappingsCollection = db.collection('team_mappings');
 
-        console.log('Connected to MongoDB');
-
         // Load and merge dynamic mappings from the database
         const storedMappings = await teamMappingsCollection.find({}).toArray();
         if (storedMappings.length > 0) {
-            const newMappings = storedMappings.reduce((acc, item) => {
-                acc[item.unrecognized] = item.canonical;
-                return acc;
-            }, {});
-            TEAM_ABBREV_MAP = { ...TEAM_ABBREV_MAP, ...newMappings };
-            console.log(`✅ Loaded and merged ${storedMappings.length} custom team abbreviation mappings.`);
+            // This logic can be re-enabled if you continue with the self-learning map
         }
         return db;
     } catch (e) {
