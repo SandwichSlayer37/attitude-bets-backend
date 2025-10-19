@@ -1186,8 +1186,8 @@ async function getPredictionsForSport(sportKey) {
         // --- Step 2: Process and map data for reliable lookups ---
         const liveTeamStats = teamStatsData.reduce((acc, team) => {
             // Handle data from either the primary or fallback API
-            // FIX: Normalize the abbreviation to ensure it's a consistent key.
-            const abbr = normalizeAbbreviation(team.abbreviation || team.teamAbbrev?.default);
+            // FIX: Use the correct normalizer function.
+            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
@@ -1234,7 +1234,7 @@ async function getPredictionsForSport(sportKey) {
         const predictions = [];
         let unmatchedCount = 0;
 
-        for (const officialGame of officialGames) {
+        for (const officialGame of (officialGames || [])) {
             // Step 2: Normalize team abbreviations before prediction generation
             const homeAbbrev = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
             const awayAbbrev = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
@@ -1287,6 +1287,9 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
+        if (unmatchedCount > 0) {
+            console.log(`[INFO] Total games with stats: ${Object.keys(liveTeamStats).length}. Total games from schedule: ${officialGames.length}. Games skipped due to missing stats: ${unmatchedCount}`);
+        }
         if (unmatchedCount > 0) {
             console.log(`[INFO] Total games skipped due to missing stats: ${unmatchedCount}`);
         }
