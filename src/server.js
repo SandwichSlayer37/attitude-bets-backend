@@ -502,7 +502,8 @@ async function getGoalieStats() {
         } catch (error) {
             console.error(`[WARN] Could not fetch live goalie stats: ${error.message}. Proceeding without them.`);
             return setCache(cacheKey, {}, 3600000); // Cache empty result on failure
-        });
+        }
+    });
 }
 
 // NEW: Resilient function to fetch live team stats with a fallback
