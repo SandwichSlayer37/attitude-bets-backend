@@ -39,7 +39,7 @@ app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Import new utility modules ---
 const { normalizeTeamAbbrev, buildOddsKey } = require('./Utils/hockeyNormalize');
-const { buildGoalieIndex } = require('./Utils/goalieIndex');
+const { buildGoalieIndex, getHistoricalGoalieData } = require('./Utils/goalieIndex');
 const { enrichPrediction } = require('./Utils/enrichPrediction');
 const { setCache, getCache } = require('./Utils/simpleCache');
 
@@ -1182,27 +1182,29 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources in parallel, using only stable APIs ---
+        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
+        const [oddsData, scheduleData, historicalGoaliesArr, teamStandingsData, liveGoalieStatsArray, historicalPlayersArr, specialTeamsByTeam, historicalAdvancedByTeam] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
-            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            // FIX: Replaced the entire complex fetcher with a single, reliable API call.
-            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { 
-                console.error("Failed to fetch team standings:", e.message); 
-                return []; // Return an empty array on failure
-            })
+            fetchData('schedule_nhl', () => axios.get('https://api-web.nhle.com/v1/schedule/now', { timeout: 10000 }).then(res => res.data), 60000).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
+            goaliesHistCollection ? goaliesHistCollection.find({ season: lastCompletedSeason }).toArray() : Promise.resolve([]),
+            fetchData('live_team_stats', getLiveTeamStats, 60000),
+            getGoalieStats().then(map => Object.values(map)).catch(e => { console.error("Failed to fetch live goalies:", e.message); return []; }),
+            skatersHistCollection ? skatersHistCollection.find({ season: lastCompletedSeason }).toArray() : Promise.resolve([]),
+            Promise.resolve({}), // Placeholder for specialTeamsByTeam
+            Promise.resolve({}), // Placeholder for historicalAdvancedByTeam
         ]);
 
         if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
+        // --- Step 2: Build Centralized Indexes ---
+        const goalieIdx = buildGoalieIndex({ liveGoalies: liveGoalieStatsArray, historicalGoalies: historicalGoaliesArr });
+
         // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStandingsData.reduce((acc, team) => {
-            // FIX: This logic is now simpler because we only have one data source to handle.
-            const abbr = team.teamAbbrev.default;
+        const liveTeamStats = (teamStandingsData || []).reduce((acc, team) => {
+            const abbr = normalizeTeamAbbrev(team.teamAbbrev?.default || team.abbreviation);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
@@ -1210,69 +1212,84 @@ async function getPredictionsForSport(sportKey) {
                     streak: `${team.streakCode}${team.streakCount}`,
                     goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
                     goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0, // Not available in this API, so we default to 0
+                    faceoffWinPct: 0, // Standings API doesn't provide this
                 };
             }
             return acc;
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeTeamCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            if (homeTeamCanonical && awayTeamCanonical) {
-                const key = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-                acc[key] = game;
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+        // Create a lookup map from the betting odds data, keyed by a standardized name.
+        const oddsMap = new Map(); // Using Map for better performance
+        for (const o of oddsData || []) {
+            const key = buildOddsKey(o.away_team, o.home_team);
+            if (key) oddsMap.set(key, o);
+        }
+        console.log(`✅ Created odds map with ${oddsMap.size} games.`);
 
-        // --- Step 3: Iterate through the official schedule (our "source of truth") ---
+        // --- Step 3: Iterate through the OFFICIAL SCHEDULE (our "source of truth") ---
         const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
         const predictions = [];
+        let unmatchedCount = 0;
 
         for (const officialGame of officialGames) {
-            const homeTeamName = officialGame.homeTeam?.name?.default;
-            const awayTeamName = officialGame.awayTeam?.name?.default;
-            if (!homeTeamName || !awayTeamName) continue;
+            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
+            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
 
-            const homeTeamCanonical = canonicalTeamNameMap[homeTeamName.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
-            if (!homeTeamCanonical || !awayTeamCanonical) continue;
-
-            const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-            const oddsGame = oddsMap[matchupKey];
-            
-            if (!oddsGame) {
-                console.warn(`[WARN] No odds found for schedule game: ${matchupKey}. Skipping.`);
+            if (!homeAbbr || !awayAbbr) {
+                unmatchedCount++;
                 continue;
             }
 
-            const homeAbbr = officialGame.homeTeam.abbrev;
-            const awayAbbr = officialGame.awayTeam.abbrev;
+            const oddsKey = buildOddsKey(awayAbbr, homeAbbr);
+            const oddsGame = oddsMap.get(oddsKey);
+            const homeStats = liveTeamStats[homeAbbr];
+            const awayStats = liveTeamStats[awayAbbr];
+
+            if (!homeStats || !awayStats || !oddsGame) {
+                unmatchedCount++;
+                continue;
+            }
 
             const context = {
-                teamStats: liveTeamStats,
+                teamStats: { [homeAbbr]: homeStats, [awayAbbr]: awayStats },
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
                      homeId: officialGame.homeTeam.probableStarterId,
                      awayId: officialGame.awayTeam.probableStarterId
                 },
-                historicalGoalieData,
+                historicalGoalieData: goalieIdx.byId,
                 homeAbbr,
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            let predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+
             if (predictionData) {
-                predictions.push({ game: oddsGame, prediction: predictionData });
+                // --- ENRICHMENT STEP ---
+                const enrichedPrediction = enrichPrediction(predictionData, {
+                    homeAbbr,
+                    awayAbbr,
+                    homeGoalieMeta: { id: officialGame.homeTeam.probableStarterId },
+                    awayGoalieMeta: { id: officialGame.awayTeam.probableStarterId },
+                    goalieIdx,
+                    specialTeamsByTeam,
+                    injuriesByTeam: {}, // Placeholder
+                    hybridCountsByTeam: {}, // Placeholder
+                    historicalAdvancedByTeam
+                });
+                predictions.push({ game: oddsGame, prediction: enrichedPrediction });
             }
         }
         
+        console.log('📡 Sources:', { liveTeams: !!teamStandingsData?.length, odds: !!oddsData?.length, schedule: !!scheduleData?.gameWeek?.length, historicalGoalies: !!historicalGoaliesArr?.length });
+        console.log('🥅 Goalie Index:', { byId: goalieIdx.byId.size, bySlugName: goalieIdx.bySlug.size });
+        const matchedOddsPct = Math.round((predictions.length / (officialGames?.length || 1)) * 100);
+        console.log(`🎯 Odds Matched: ~${matchedOddsPct}%`);
         console.log(`✅ Generated ${predictions.length} predictions.`);
-        return predictions;
+        console.log('🧪 Enrichment Sample:', predictions.slice(0, 2).map(p => ({ matchup: `${p.prediction.awayAbbr}@${p.prediction.homeAbbr}`, homeGAA5: p.prediction.keyFactors.goalieForm.home.gaaLast5, awayGAA5: p.prediction.keyFactors.goalieForm.away.gaaLast5, gsaxEdge: p.prediction.keyFactors.historicalGoalieEdge.edge })));
+        return predictions; // Return enriched predictions
 
     } catch (error) {
         console.error("Critical error during the new prediction pipeline:", error.message);
@@ -1743,4 +1760,3 @@ server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with
         console.error("Background database connection failed:", error);
     });
 });
-
