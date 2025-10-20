@@ -264,7 +264,7 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     tools: [queryNhlStatsTool],
 });
 
@@ -1307,17 +1307,18 @@ async function getPredictionsForSport(sportKey) {
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
         // Create a lookup map from the betting odds data, keyed by a standardized name.
+        // FIX: Use the more robust canonicalTeamNameMap and teamToAbbrMap for creating odds keys.
         const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(game.home_team || game.homeTeam || game.home_name);
-            const awayAbbr = normalizeTeamAbbrev(game.away_team || game.awayTeam || game.away_name);
+            const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
+            const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
+            const homeAbbr = homeCanonical ? teamToAbbrMap[homeCanonical] : null;
+            const awayAbbr = awayCanonical ? teamToAbbrMap[awayCanonical] : null;
 
             if (homeAbbr && awayAbbr) {
                 const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game; // Use 'game' which is the iterator variable
-            } else {
-                console.warn(`[WARN] Could not create odds map key for game: ${game.away_team} vs ${game.home_team}`);
+                acc[key] = game;
             }
-            return acc; // Always return accumulator
+            return acc;
         }, {});
         console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
 
@@ -1842,4 +1843,3 @@ server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with
         console.error("Background database connection failed:", error);
     });
 });
-
