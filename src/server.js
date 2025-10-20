@@ -1210,7 +1210,7 @@ async function getPredictionsForSport(sportKey) {
         }
 
         // Build goalie index after fetching data
-        const goalieIdx = buildGoalieIndex({ historicalGoalies: Object.values(historicalGoalieData) }, slugifyName);
+        const goalieIdx = buildGoalieIndex({ historicalGoalies: historicalGoalieData }, slugifyName);
 
         // --- Step 2: Process and map data (this logic is now correct) ---
         const liveTeamStats = teamStatsData.reduce((acc, team) => {
@@ -1269,13 +1269,8 @@ async function getPredictionsForSport(sportKey) {
             const homeStats = liveTeamStats[homeAbbr];
             const awayStats = liveTeamStats[awayAbbr];
 
-            if (!homeStats || !awayStats || !oddsGame) {
-                console.warn(`[SKIP] Missing data for ${awayAbbr}@${homeAbbr}.`);
-                continue;
-            }
-
             const context = {
-                teamStats: liveTeamStats,
+                teamStats: { [homeAbbr]: homeStats, [awayAbbr]: awayStats },
                 allGames: oddsData,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
@@ -1287,7 +1282,7 @@ async function getPredictionsForSport(sportKey) {
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame || { home_team: homeAbbr, away_team: awayAbbr }, context);
             if (predictionData) {
                 predictions.push({ game: oddsGame, prediction: predictionData });
             }
