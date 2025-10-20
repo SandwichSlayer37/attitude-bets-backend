@@ -529,7 +529,7 @@ async function getLiveTeamStats() {
     } catch (e) {
         // If it fails, fall back to the simpler but more reliable standings API
         console.warn(`[WARN] Primary club-stats API failed. Falling back to standings API.`);
-        const { data: standingsDataResponse } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+        const { data: standingsDataResponse } = await axios.get('https://api-web.nhle.com/v1/standings/now', { timeout: 10000 });
         if (!standingsDataResponse || !standingsDataResponse.standings) throw new Error("Fallback standings API also failed.");
         
         return (standingsDataResponse.standings).reduce((acc, team) => {
@@ -1398,148 +1398,6 @@ async function getPredictionsForSport(sportKey) {
     }
 }
 
-// =================================================================
-// SECTION 7: API ROUTES & SERVER LOGIC
-// =================================================================
-
-app.get('/api/predictions', async (req, res) => {
-    const { sport } = req.query;
-    console.log(`[HIT] GET /api/predictions received for sport: ${sport}`);
-    if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
-
-    try {
-        const predictions = await getPredictionsForSport(sport);
-        if (predictions.length === 0 && !dataCache.has(`odds_${sport}`)) {
-            return res.json({ message: `No upcoming games for ${sport}.` });
-        }
-        res.json(predictions);
-    } catch (error) {
-        console.error(`[CRITICAL] Prediction Error for ${sport}:`, error.message);
-        res.status(500).json({ error: `Failed to get predictions for ${sport}`});
-    }
-});
-
-async function getPredictionsForSport(sportKey) {
-    if (sportKey !== 'icehockey_nhl') return [];
-
-    try {
-        console.log("🚀 Starting new definitive prediction pipeline...");
-
-        // --- Step 1: Fetch all data sources with corrected fallbacks ---
-        const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
-            getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary NHL schedule API failed: ${e.message}. Falling back to ESPN scoreboard.`);
-                try {
-                    return await fetchEspnData('icehockey_nhl');
-                } catch (espnError) {
-                    console.error(`[CRITICAL] Both NHL and ESPN schedule APIs failed. Error: ${espnError.message}`);
-                    return null;
-                }
-            }),
-            getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            // This fetcher contains the critical fix
-            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
-                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-                // FIX: Ensure the fallback returns the array 'data.standings', not the 'data' object.
-                return data.standings;
-            })
-        ]);
-
-        if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
-            throw new Error("Critical data failure: Could not fetch all required data sources.");
-        }
-
-        // Build goalie index after fetching data
-        const goalieIdx = buildGoalieIndex({ historicalGoalies: historicalGoalieData }, slugifyName);
-
-        // --- Step 2: Process and map data (this logic is now correct) ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => {
-            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
-            if (abbr) {
-                const gamesPlayed = safeNum(team.gamesPlayed);
-                acc[abbr] = {
-                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount}` : 'N/A',
-                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
-                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
-                    faceoffWinPct: team.faceoffWinPct ?? 0,
-                };
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
-
-        // FIX: Use the robust normalizer directly on the odds data to build a reliable map.
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(game.home_team);
-            const awayAbbr = normalizeTeamAbbrev(game.away_team);
-            if (homeAbbr && awayAbbr) {
-                const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game;
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
-
-        // --- Step 3: Iterate through the official schedule ---
-        let officialGames = [];
-        if (scheduleData.gameWeek) {
-            officialGames = scheduleData.gameWeek.flatMap(day => day.games);
-            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from primary API.`);
-        } else if (scheduleData.events) {
-            officialGames = scheduleData.events.map(event => {
-                const home = event.competitions[0].competitors.find(c => c.homeAway === 'home');
-                const away = event.competitions[0].competitors.find(c => c.homeAway === 'away');
-                return {
-                    homeTeam: { name: { default: home.team.displayName }, abbrev: home.team.abbreviation, probableStarterId: home.probablePitcher?.id },
-                    awayTeam: { name: { default: away.team.displayName }, abbrev: away.team.abbreviation, probableStarterId: away.probablePitcher?.id }
-                };
-            });
-            console.log(`✅ Loaded ${officialGames.length} upcoming NHL games from fallback ESPN API.`);
-        }
-
-        const predictions = [];
-        for (const officialGame of (officialGames || [])) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
-            if (!homeAbbr || !awayAbbr) continue;
-            
-            const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[matchupKey];
-            const homeStats = liveTeamStats[homeAbbr];
-            const awayStats = liveTeamStats[awayAbbr];
-
-            const context = {
-                teamStats: { [homeAbbr]: homeStats, [awayAbbr]: awayStats },
-                allGames: oddsData,
-                h2h: { home: '0-0', away: '0-0' },
-                probableStarters: {
-                     homeId: officialGame.homeTeam?.probableStarterId,
-                     awayId: officialGame.awayTeam?.probableStarterId
-                },
-                historicalGoalieData,
-                homeAbbr,
-                awayAbbr,
-            };
-
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame || { home_team: homeAbbr, away_team: awayAbbr }, context);
-            if (predictionData) {
-                predictions.push({ game: oddsGame, prediction: predictionData });
-            }
-        }
-        
-        console.log(`✅ Generated ${predictions.length} predictions.`);
-        return predictions;
-
-    } catch (error) {
-        console.error("Critical error during the new prediction pipeline:", error.message);
-        return []; 
-    }
-}
-
 async function getAllDailyPredictions() {
     let allPredictions = [];
     const gameCounts = {};
@@ -1970,7 +1828,7 @@ app.get('*', (req, res) => {
 
 // --- Server Startup ---
 const server = http.createServer(app);
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with containers
     console.log(`Server running on port ${PORT}`);
     // Connect to the database in the background after the server has started
     connectToDb().catch(error => {
