@@ -1229,9 +1229,10 @@ async function getPredictionsForSport(sportKey) {
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
+        // FIX: Use the robust normalizer directly on the odds data to build a reliable map.
         const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+            const homeAbbr = normalizeTeamAbbrev(game.home_team);
+            const awayAbbr = normalizeTeamAbbrev(game.away_team);
             if (homeAbbr && awayAbbr) {
                 const key = `${awayAbbr}@${homeAbbr}`;
                 acc[key] = game;
