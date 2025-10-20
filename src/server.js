@@ -37,63 +37,11 @@ app.use(cors({ origin: '*', credentials: true })); // Allow all origins for now
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
-// --- Self-Learning Abbreviation Map ---
-const TEAM_NAME_TO_ABBREV = {
-  "Anaheim Ducks": "ANA",
-  "Arizona Coyotes": "ARI",
-  "Boston Bruins": "BOS",
-  "Buffalo Sabres": "BUF",
-  "Calgary Flames": "CGY",
-  "Carolina Hurricanes": "CAR",
-  "Chicago Blackhawks": "CHI",
-  "Colorado Avalanche": "COL",
-  "Columbus Blue Jackets": "CBJ",
-  "Dallas Stars": "DAL",
-  "Detroit Red Wings": "DET",
-  "Edmonton Oilers": "EDM",
-  "Florida Panthers": "FLA",
-  "Los Angeles Kings": "LAK",
-  "Minnesota Wild": "MIN",
-  "Montréal Canadiens": "MTL",
-  "Montreal Canadiens": "MTL",
-  "Nashville Predators": "NSH",
-  "New Jersey Devils": "NJD",
-  "New York Islanders": "NYI",
-  "New York Rangers": "NYR",
-  "Ottawa Senators": "OTT",
-  "Philadelphia Flyers": "PHI",
-  "Pittsburgh Penguins": "PIT",
-  "San Jose Sharks": "SJS",
-  "Seattle Kraken": "SEA",
-  "St. Louis Blues": "STL",
-  "Tampa Bay Lightning": "TBL",
-  "Toronto Maple Leafs": "TOR",
-  "Utah Mammoth": "UTA",
-  "Vancouver Canucks": "VAN",
-  "Vegas Golden Knights": "VGK",
-  "Washington Capitals": "WSH",
-  "Winnipeg Jets": "WPG"
-};
-
-function normalizeTeamAbbrev(raw = "") {
-  if (!raw) return "";
-  const key = raw.trim().toUpperCase();
-  // First handle name-based normalization
-  for (const [name, abbr] of Object.entries(TEAM_NAME_TO_ABBREV)) {
-    if (key === name.toUpperCase()) return abbr;
-  }
-  // Then handle existing abbreviations or aliases
-  const aliasMap = {
-    LA: "LAK",
-    LV: "VGK",
-    TB: "TBL",
-    MON: "MTL",
-    NJ: "NJD",
-    SJ: "SJS",
-    PHX: "ARI"
-  };
-  return aliasMap[key] || key;
-}
+// --- Import new utility modules ---
+const { normalizeTeamAbbrev, buildOddsKey, slugifyName } = require('./Utils/hockeyNormalize.js');
+const { buildGoalieIndex, getHistoricalGoalieData } = require('./Utils/goalieIndex.js');
+const { enrichPrediction } = require('./Utils/enrichPrediction.js');
+const { setCache, getCache } = require('./Utils/simpleCache.js');
 
 async function saveNewAbbreviation(unrecognized, canonical) {
     if (!teamMappingsCollection) return;
@@ -107,51 +55,6 @@ async function saveNewAbbreviation(unrecognized, canonical) {
     } catch (error) {
         console.error(`[ERROR] Could not save new abbreviation mapping:`, error);
     }
-}
-
-// --- CACHING HELPER ---
-const __FUSION_CACHE = new Map();
-function __cached(key, ttlMs, fetcher) {
-  const now = Date.now();
-  const hit = __FUSION_CACHE.get(key);
-  if (hit && (now - hit.t) < ttlMs) return hit.v;
-  return Promise.resolve(fetcher()).then(v => { __FUSION_CACHE.set(key, { t: now, v }); return v; });
-}
-
-async function getHistoricalGoalieData(season) {
-    const cacheKey = `historical_goalie_data_${season}_v3`; // New cache key
-    return fetchData(cacheKey, async () => {
-        try {
-            if (!goaliesHistCollection) {
-                console.error("[ERROR] goaliesHistCollection is not initialized.");
-                return {};
-            }
-            const pipeline = [
-                { $match: { season: season } },
-                {
-                    $group: {
-                        _id: "$playerId",
-                        name: { $first: "$name" },
-                        goals: { $sum: "$goals" },
-                        xGoals: { $sum: "$xGoals" },
-                    }
-                }
-            ];
-            // FIX: Querying the correct collection now
-            const results = await goaliesHistCollection.aggregate(pipeline).toArray();
-
-            const goalieDataMap = results.reduce((acc, goalie) => {
-                acc[goalie._id] = { name: goalie.name, gsax: goalie.xGoals - goalie.goals };
-                return acc;
-            }, {});
-
-            console.log(`✅ Successfully processed historical data for ${Object.keys(goalieDataMap).length} goalies.`);
-            return goalieDataMap;
-        } catch (error) {
-            console.error(`Error fetching historical goalie data for season ${season}:`, error);
-            return {};
-        }
-    }, 86400000);
 }
 
 async function fetchHistoricalTeamContext(teamAbbrev) {
@@ -264,7 +167,7 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     tools: [queryNhlStatsTool],
 });
 
@@ -273,9 +176,13 @@ let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlSt
 async function connectToDb() {
     try {
         if (db) return db;
-        const client = new MongoClient(DATABASE_URL);
-        await client.connect();
-        db = client.db('attitudebets');
+        // Use the correct environment variable and modern connection options
+        await mongoose.connect(process.env.DATABASE_URL || process.env.MONGO_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        console.log('✅ Connected to MongoDB');
+        db = mongoose.connection.db;
         // Live/General Collections
         recordsCollection = db.collection('records');
         predictionsCollection = db.collection('predictions');
@@ -289,17 +196,10 @@ async function connectToDb() {
         teamsHistCollection = db.collection('nhl_teams_data_historical');
         teamMappingsCollection = db.collection('team_mappings');
 
-        console.log('Connected to MongoDB');
-
         // Load and merge dynamic mappings from the database
         const storedMappings = await teamMappingsCollection.find({}).toArray();
         if (storedMappings.length > 0) {
-            const newMappings = storedMappings.reduce((acc, item) => {
-                acc[item.unrecognized] = item.canonical;
-                return acc;
-            }, {});
-            TEAM_ABBREV_MAP = { ...TEAM_ABBREV_MAP, ...newMappings };
-            console.log(`✅ Loaded and merged ${storedMappings.length} custom team abbreviation mappings.`);
+            // This logic can be re-enabled if you continue with the self-learning map
         }
         return db;
     } catch (e) {
@@ -475,14 +375,14 @@ function cleanAndParseJson(text) {
 
 // Fetches and processes live goalie stats for the current season.
 async function getGoalieStats() {
-    // Using a new cache key for the updated endpoint
-    const cacheKey = `live_goalie_stats_v4_${new Date().toISOString().slice(0, 10)}`;
-    return fetchData(cacheKey, async () => {
+    const cacheKey = `live_goalie_stats_v5_${new Date().toISOString().slice(0, 10)}`;
+    const cached = getCache(cacheKey);
+    if (cached) return cached;
+
         try {
-            // This is a different, more stable API endpoint for player summaries
             const url = 'https://api.nhle.com/stats/rest/en/goalie/summary';
             console.log("📡 Fetching live goalie stats from new summary API...");
-            const { data } = await axios.get(url);
+            const { data } = await axios.get(url, { timeout: 10000 });
             const goalieStatsMap = {};
 
             if (data && data.data) {
@@ -503,7 +403,6 @@ async function getGoalieStats() {
             console.error(`[WARN] Could not fetch live goalie stats: ${error.message}. Proceeding without them.`);
             return setCache(cacheKey, {}, 3600000); // Cache empty result on failure
         }
-    });
 }
 
 // NEW: Resilient function to fetch live team stats with a fallback
@@ -550,17 +449,17 @@ async function getLiveTeamStats() {
 }
 
 async function fetchData(key, fetcherFn, ttl = 3600000) {
-    if (dataCache.has(key) && (Date.now() - dataCache.get(key).timestamp < ttl)) {
-        return dataCache.get(key).data;
-    }
+    const cached = getCache(key);
+    if (cached) return cached;
     const data = await fetcherFn();
-    dataCache.set(key, { data, timestamp: Date.now() });
-    return data;
+    return setCache(key, data, ttl);
 }
 
 async function getOdds(sportKey) {
     const cacheKey = `odds_${sportKey}`;
-    return fetchData(cacheKey, async () => {
+    const cached = getCache(cacheKey);
+    if (cached) return cached;
+
         try {
             const { data } = await axios.get(`https://api.the-odds-api.com/v4/sports/${sportKey}/odds`, {
                 params: {
@@ -568,14 +467,14 @@ async function getOdds(sportKey) {
                     regions: 'us',
                     markets: 'h2h',
                     oddsFormat: 'decimal',
-                }
+                },
+                timeout: 10000
             });
-            return data;
+            return setCache(cacheKey, data, 300000);
         } catch (error) {
             console.error(`Could not fetch odds for ${sportKey}:`, error.response ? error.response.data.message : error.message);
-            return [];
+            return setCache(cacheKey, [], 300000);
         }
-    }, 300000); // Cache for 5 minutes
 }
 
 async function runAiChatWithTools(userPrompt) {
@@ -1236,7 +1135,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     if (homeLiveGoalieStats?.svPct != null && awayLiveGoalieStats?.svPct != null) {
         goalieValue = (safeNum(awayLiveGoalieStats.gaa) - safeNum(homeLiveGoalieStats.gaa)) + ((safeNum(homeLiveGoalieStats.svPct) - safeNum(awayLiveGoalieStats.svPct)) * 100);
     }
-    // FIX: Re-enabled the "Current Goalie Form" calculation
+    // This factor will be overwritten by the enrichment layer
     factors['Current Goalie Form'] = { value: goalieValue, homeStat: homeLiveGoalieStats?.svPct?.toFixed(3) || 'N/A', awayStat: awayLiveGoalieStats?.svPct?.toFixed(3) || 'N/A' };
     
     // (The rest of the factor calculations remain the same)
@@ -1296,7 +1195,7 @@ async function getPredictionsForSport(sportKey) {
                     return null;
                 }
             }),
-            getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
+            getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return []; }),
             // This fetcher contains the critical fix
             axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
                 console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
@@ -1397,6 +1296,32 @@ async function getPredictionsForSport(sportKey) {
         return []; 
     }
 }
+
+// =================================================================
+// SECTION 7: API ROUTES & SERVER LOGIC
+// =================================================================
+
+app.get('/api/predictions', async (req, res) => {
+    const { sport } = req.query;
+    console.log(`[HIT] GET /api/predictions received for sport: ${sport}`);
+    if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
+
+    try {
+        const predictions = await getPredictionsForSport(sport);
+        if (predictions.length === 0 && !dataCache.has(`odds_${sport}`)) {
+            return res.json({ message: `No upcoming games for ${sport}.`, predictions: [] });
+        }
+        // Ensure UI backward compatibility
+        const formatted = predictions.map(p => ({
+            ...p,
+            factors: p.prediction.keyFactors || p.prediction.factors || {}, // Send keyFactors as factors
+        }));
+        res.json(formatted);
+    } catch (error) {
+        console.error(`[CRITICAL] Prediction Error for ${sport}:`, error.message);
+        res.status(500).json({ error: `Failed to get predictions for ${sport}`});
+    }
+});
 
 async function getAllDailyPredictions() {
     let allPredictions = [];
