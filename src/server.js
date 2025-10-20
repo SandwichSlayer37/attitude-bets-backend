@@ -38,7 +38,7 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Import new utility modules ---
-const { normalizeTeamAbbrev, buildOddsKey } = require('./Utils/hockeyNormalize');
+const { normalizeTeamAbbrev, buildOddsKey, slugifyName } = require('./Utils/hockeyNormalize');
 const { buildGoalieIndex, getHistoricalGoalieData } = require('./Utils/goalieIndex');
 const { enrichPrediction } = require('./Utils/enrichPrediction');
 const { setCache, getCache } = require('./Utils/simpleCache');
@@ -1195,7 +1195,7 @@ async function getPredictionsForSport(sportKey) {
                     return null;
                 }
             }),
-            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
+            getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
             // This fetcher contains the critical fix
             axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => {
                 console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
@@ -1208,6 +1208,9 @@ async function getPredictionsForSport(sportKey) {
         if ((!scheduleData?.gameWeek && !scheduleData?.events) || !teamStatsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
+
+        // Build goalie index after fetching data
+        const goalieIdx = buildGoalieIndex({ historicalGoalies: Object.values(historicalGoalieData) }, slugifyName);
 
         // --- Step 2: Process and map data (this logic is now correct) ---
         const liveTeamStats = teamStatsData.reduce((acc, team) => {
@@ -1278,7 +1281,7 @@ async function getPredictionsForSport(sportKey) {
                      homeId: officialGame.homeTeam?.probableStarterId,
                      awayId: officialGame.awayTeam?.probableStarterId
                 },
-                historicalGoalieData: await getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData),
+                historicalGoalieData,
                 homeAbbr,
                 awayAbbr,
             };
