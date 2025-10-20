@@ -1278,7 +1278,7 @@ async function getPredictionsForSport(sportKey) {
                      homeId: officialGame.homeTeam?.probableStarterId,
                      awayId: officialGame.awayTeam?.probableStarterId
                 },
-                historicalGoalieData,
+                historicalGoalieData: await getHistoricalGoalieData(goaliesHistCollection, lastCompletedSeason, fetchData),
                 homeAbbr,
                 awayAbbr,
             };
@@ -1761,5 +1761,3 @@ server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with
         console.error("Background database connection failed:", error);
     });
 });
-
-
