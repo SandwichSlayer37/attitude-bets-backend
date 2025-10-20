@@ -10,9 +10,9 @@ const NAME_FIX = {
   'LOS ANGELES': 'LA',
   'KINGS': 'LA',
   'COLORADO AVALANCHE': 'COL',
-  'UTAH MAMMOTH': 'UTA',
-  'ARIZONA COYOTES': 'UTA',
-  'MONTREAL CANADIENS': 'MON',
+  'UTAH MAMMOTH': 'UTA',      // post-relocation
+  'ARIZONA COYOTES': 'UTA',   // legacy -> UTA
+  'MONTREAL CANADIENS': 'MON', // we normalize to MON (UI expects MON)
   'MONTRÉAL CANADIENS': 'MON',
   'MTL': 'MON',
   'TBL': 'TB',
@@ -47,32 +47,65 @@ const NAME_FIX = {
   'MINNESOTA WILD': 'MIN'
 };
 
+// Abbrev aliases we see in various feeds
 const ABBR_FIX = {
-  'VGK': 'VGK', 'LV': 'VGK', 'LAK': 'LA', 'LA': 'LA',
-  'COL': 'COL', 'ARI': 'UTA', 'UTA': 'UTA',
-  'MTL': 'MON', 'MON': 'MON', 'TBL': 'TB', 'TB': 'TB',
-  'WSH': 'WAS', 'WAS': 'WAS', 'NJD': 'NJ', 'NJ': 'NJ',
-  'SJS': 'SJ', 'SJ': 'SJ', 'NYR': 'NYR', 'NYI': 'NYI',
-  'CBJ': 'CBJ', 'TOR': 'TOR', 'EDM': 'EDM', 'DET': 'DET',
-  'BOS': 'BOS', 'CGY': 'CGY', 'WPG': 'WPG', 'CHI': 'CHI',
-  'ANA': 'ANA', 'FLA': 'FLA', 'BUF': 'BUF', 'OTT': 'OTT',
-  'SEA': 'SEA', 'PHI': 'PHI', 'NSH': 'NSH', 'CAR': 'CAR',
-  'VAN': 'VAN', 'DAL': 'DAL', 'STL': 'STL', 'PIT': 'PIT', 'MIN': 'MIN'
+  'VGK': 'VGK',
+  'LV': 'VGK',
+  'LAK': 'LA',
+  'LA': 'LA',
+  'COL': 'COL',
+  'ARI': 'UTA',
+  'UTA': 'UTA',
+  'MTL': 'MON',
+  'MON': 'MON',
+  'TBL': 'TB',
+  'TB': 'TB',
+  'WSH': 'WAS',
+  'WAS': 'WAS',
+  'NJD': 'NJ',
+  'NJ': 'NJ',
+  'SJS': 'SJ',
+  'SJ': 'SJ',
+  'NYR': 'NYR',
+  'NYI': 'NYI',
+  'CBJ': 'CBJ',
+  'TOR': 'TOR',
+  'EDM': 'EDM',
+  'DET': 'DET',
+  'BOS': 'BOS',
+  'CGY': 'CGY',
+  'WPG': 'WPG',
+  'CHI': 'CHI',
+  'ANA': 'ANA',
+  'FLA': 'FLA',
+  'BUF': 'BUF',
+  'OTT': 'OTT',
+  'SEA': 'SEA',
+  'PHI': 'PHI',
+  'NSH': 'NSH',
+  'CAR': 'CAR',
+  'VAN': 'VAN',
+  'DAL': 'DAL',
+  'STL': 'STL',
+  'PIT': 'PIT',
+  'MIN': 'MIN',
 };
 
 function normalizeTeamAbbrev(input) {
   if (!input) return null;
-  const s = String(input).trim().toUpperCase();
-  if (ABBR_FIX[s]) return ABBR_FIX[s];
-  if (NAME_FIX[s]) return NAME_FIX[s];
-  if (s.includes('VEGAS')) return 'VGK';
-  if (s.includes('LOS ANGELES')) return 'LA';
-  if (s.includes('ARIZONA')) return 'UTA';
-  if (s.includes('MONTREAL') || s.includes('MONTRÉAL')) return 'MON';
-  if (s.includes('WASHINGTON')) return 'WAS';
-  if (s.includes('TAMPA')) return 'TB';
-  if (/^[A-Z]{2,3}$/.test(s)) return s;
-  return s;
+  const s = String(input).trim();
+  const up = s.toUpperCase();
+  if (ABBR_FIX[up]) return ABBR_FIX[up];
+  const key = up.replace(/\./g, '').replace(/\s+/g, ' ');
+  if (NAME_FIX[key]) return NAME_FIX[key];
+  if (up.includes('VEGAS')) return 'VGK';
+  if (up.includes('LOS ANGELES')) return 'LA';
+  if (up.includes('ARIZONA')) return 'UTA';
+  if (up.includes('MONTREAL') || up.includes('MONTRÉAL')) return 'MON';
+  if (up.includes('WASHINGTON')) return 'WAS';
+  if (up.includes('TAMPA')) return 'TB';
+  if (/^[A-Z]{2,3}$/.test(up)) return up;
+  return up;
 }
 
 function buildOddsKey(away, home) {
@@ -89,4 +122,4 @@ function slugifyName(name) {
     .replace(/\s+/g, '-');
 }
 
-module.exports = { normalizeTeamAbbrev, buildOddsKey, slugifyName };
+module.exports = { normalizeTeamAbbrev, buildOddsKey, slugifyName, ABBR_FIX, NAME_FIX };

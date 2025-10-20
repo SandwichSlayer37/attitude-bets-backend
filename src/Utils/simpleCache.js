@@ -7,13 +7,13 @@ function setCache(key, value, ttlMs = 60000) {
 }
 
 function getCache(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expires) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expires) {
     cache.delete(key);
     return null;
   }
-  return entry.value;
+  return hit.value;
 }
 
 module.exports = { setCache, getCache };
