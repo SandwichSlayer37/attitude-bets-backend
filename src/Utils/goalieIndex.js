@@ -131,12 +131,8 @@ async function getHistoricalGoalieData(goaliesHistCollection, season, fetchData)
                 }
             ];
             const results = await goaliesHistCollection.aggregate(pipeline).toArray();
-            const goalieDataMap = results.reduce((acc, goalie) => {
-                acc[goalie._id] = { name: goalie.name, gsax: goalie.gsax };
-                return acc;
-            }, {});
-            console.log(`✅ Successfully processed historical data for ${Object.keys(goalieDataMap).length} goalies.`);
-            return goalieDataMap;
+            console.log(`✅ Successfully processed historical data for ${results.length} goalies.`);
+            return results.map(g => ({ playerId: g._id, name: g.name, gsax: g.gsax }));
         } catch (error) {
             console.error(`Error fetching historical goalie data for season ${season}:`, error);
             return {};
