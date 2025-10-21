@@ -218,7 +218,7 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -543,9 +543,10 @@ async function getLiveTeamStats() {
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
                     streak: `${team.streakCode}${team.streakCount}`,
-                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
-                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0, // Not available in this API
+                    // FIX: Correctly calculate G/GP and GA/GP in the fallback
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0, 
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0, 
+                    faceoffWinPct: 0 // Faceoff % is unavailable here
                 };
             }
             return acc;
