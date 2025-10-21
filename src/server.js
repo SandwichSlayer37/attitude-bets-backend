@@ -5,9 +5,9 @@ const axios = require('axios');
 const { MongoClient } = require('mongodb');
 const path = require('path');
 
-let genAI = null;
+let GoogleGenerativeAI = null;
 try {
-  genAI = require("@google/generative-ai");
+  ({ GoogleGenerativeAI } = require("@google/generative-ai"));
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
@@ -38,7 +38,7 @@ const {
 } = process.env;
 
 // --- SDK & Client Initialization ---
-let db;
+let db, genAI;
 let ctx = {
   goalieIdx: null,
   advByTeam: null,
@@ -210,7 +210,10 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+if (GoogleGenerativeAI && GEMINI_API_KEY) {
+    genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+}
+const analysisModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.5-flash" }) : null;
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -255,10 +258,10 @@ const queryNhlStatsTool = {
   ]
 };
 
-const chatModel = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+const chatModel = genAI ? genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
     tools: [queryNhlStatsTool],
-});
+}) : null;
 
 async function connectToDb() {
   const client = new MongoClient(MONGO_URI, { maxPoolSize: 5 });
