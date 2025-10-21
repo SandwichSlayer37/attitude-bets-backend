@@ -1366,12 +1366,11 @@ async function getPredictionsForSport(sportKey) {
             
             if (predictionData) {
                 // FIX: Ensure the 'game' object is never null to prevent crashes in other routes.
-                // FIX: Correctly pass the mongo collection to the enrichment function.
+                // FIX: DO NOT pass the mongo collection into the prediction object.
                 const enrichedData = await enrichNhlPrediction({
                     ...predictionData,
                     homeAbbr,
                     awayAbbr,
-                    mongoGoalieStats: goaliesHistCollection 
                 });
                 const gameForPush = oddsGame || {
                     id: officialGame.id,
