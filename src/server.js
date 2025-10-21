@@ -10,10 +10,10 @@ try {
   genAI = require("@google/generative-ai");
 } catch { /* optional */ }
 
-const { normalizeTeamAbbrev } = require("./utils/hockeyNormalize");
-const { buildGoalieIndex } = require("./utils/goalieIndex");
+const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
+const { buildGoalieIndex } = require("./Utils/goalieIndex");
 const { fetchProbableGoalies } = require("./services/goalielineup");
-const { enrichPrediction } = require("./enrichPrediction");
+const { enrichPrediction } = require("./Utils/enrichPrediction");
 
 const app = express();
 app.use(cors());
