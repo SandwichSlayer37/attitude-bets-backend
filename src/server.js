@@ -218,7 +218,7 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -1851,3 +1851,4 @@ server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with
         console.error("Background database connection failed:", error);
     });
 });
+
