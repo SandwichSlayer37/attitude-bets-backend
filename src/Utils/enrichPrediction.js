@@ -1,6 +1,6 @@
 // Takes a raw matchup prediction and enriches with Key Factors.
-const { normalizeTeamAbbrev, normalizeGoalieName, buildKey } = require("./utils/hockeyNormalize");
-const { neutralGoalieMetrics } = require("./utils/goalieIndex");
+const { normalizeTeamAbbrev, normalizeGoalieName, buildKey } = require("./hockeyNormalize");
+const { neutralGoalieMetrics } = require("./goalieIndex");
 
 function asPct(v, fallback = 50.0) {
   if (v === null || v === undefined || Number.isNaN(v)) return fallback;
