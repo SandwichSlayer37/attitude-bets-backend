@@ -1,5 +1,5 @@
 // src/utils/goalieIndex.js
-const { getGoalieLineup } = require("./goalieLineup.js");
+const { getGoalieLineup } = require("./goalielineup.js");
 const { slugifyName } = require('./hockeyNormalize.js');
 
 const GSAX_FIELDS = ['gsax', 'gsaX', 'goals_saved_above_expected', 'goalsSavedAboveExpected', 'gsaxTotal'];
