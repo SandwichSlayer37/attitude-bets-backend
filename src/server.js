@@ -8,6 +8,7 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { enrichNhlPrediction } = require('./Utils/enrichPrediction.js');
 
 // =================================================================
 // SECTION 1: CONFIGURATION & INITIALIZATION
@@ -1851,4 +1852,3 @@ server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with
         console.error("Background database connection failed:", error);
     });
 });
-
