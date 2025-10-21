@@ -1,13 +1,23 @@
-const mongoose = require('mongoose');
 require('dotenv').config();
-const http = require('http');
 const express = require('express');
-const path = require('path');
 const cors = require('cors');
 const axios = require('axios');
-const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const path = require('path');
+
+let genAI = null;
+try {
+  genAI = require("@google/generative-ai");
+} catch { /* optional */ }
+
+const { normalizeTeamAbbrev } = require("./utils/hockeyNormalize");
+const { buildGoalieIndex } = require("./utils/goalieIndex");
+const { fetchProbableGoalies } = require("./services/goalielineup");
+const { enrichPrediction } = require("./enrichPrediction");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
 
 // =================================================================
 // SECTION 1: CONFIGURATION & INITIALIZATION
@@ -15,8 +25,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // --- Environment Variables & API Keys ---
 const {
-    PORT = 10000,
-    DATABASE_URL,
+    PORT = process.env.PORT || 10000,
+    DATABASE_URL: MONGO_URI,
     ODDS_API_KEY,
     GEMINI_API_KEY,
     RECONCILE_PASSWORD = "your_secret_password",
@@ -28,13 +38,15 @@ const {
 } = process.env;
 
 // --- SDK & Client Initialization ---
-const app = express();
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+let db;
+let ctx = {
+  goalieIdx: null,
+  advByTeam: null,
+  liveByTeam: null
+};
 
 // --- Express Middleware ---
 // IMPORTANT: Middleware must be configured BEFORE routes are defined.
-app.use(cors({ origin: '*', credentials: true })); // Allow all origins for now
-app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'Public')));
 
 // --- Self-Learning Abbreviation Map ---
@@ -264,48 +276,14 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash",
     tools: [queryNhlStatsTool],
 });
 
-let db, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection, teamMappingsCollection;
-
 async function connectToDb() {
-    try {
-        if (db) return db;
-        const client = new MongoClient(DATABASE_URL);
-        await client.connect();
-        db = client.db('attitudebets');
-        // Live/General Collections
-        recordsCollection = db.collection('records');
-        predictionsCollection = db.collection('predictions');
-        dailyFeaturesCollection = db.collection('daily_features');
-        nhlStatsCollection = db.collection('nhl_advanced_stats');
-
-        // NEW: Historical Data Collections
-        goaliesHistCollection = db.collection('nhl_goalie_stats_historical');
-        linesHistCollection = db.collection('nhl_line_stats_historical');
-        skatersHistCollection = db.collection('nhl_skater_stats_historical');
-        teamsHistCollection = db.collection('nhl_teams_data_historical');
-        teamMappingsCollection = db.collection('team_mappings');
-
-        console.log('Connected to MongoDB');
-
-        // Load and merge dynamic mappings from the database
-        const storedMappings = await teamMappingsCollection.find({}).toArray();
-        if (storedMappings.length > 0) {
-            const newMappings = storedMappings.reduce((acc, item) => {
-                acc[item.unrecognized] = item.canonical;
-                return acc;
-            }, {});
-            TEAM_ABBREV_MAP = { ...TEAM_ABBREV_MAP, ...newMappings };
-            console.log(`✅ Loaded and merged ${storedMappings.length} custom team abbreviation mappings.`);
-        }
-        return db;
-    } catch (e) {
-        console.error("Failed to connect to MongoDB", e);
-        process.exit(1);
-    }
+  const client = new MongoClient(MONGO_URI, { maxPoolSize: 5 });
+  await client.connect();
+  db = client.db(); // default database from URL
 }
 
 // =================================================================
@@ -1270,142 +1248,45 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
 
-async function getPredictionsForSport(sportKey) {
-    if (sportKey !== 'icehockey_nhl') return [];
+async function hydrateIndexes() {
+  // Build goalie index from Mongo (Moneypuck dump)
+  ctx.goalieIdx = await buildGoalieIndex(db);
 
-    try {
-        console.log("🚀 Starting new definitive prediction pipeline...");
+  // Build/refresh your existing live/adv maps (assume you already have code that produces these Maps)
+  // For illustration, ensure they are Maps keyed by normalized team abbr
+  ctx.advByTeam = new Map(); // fill from your existing historical loader
+  ctx.liveByTeam = new Map(); // fill from your existing live loader
+}
 
-        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
-        const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
-            getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
-            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
-        ]);
+// --- NHL definitive prediction pipeline (simplified wrapper around your existing steps)
+async function runNhlPipeline(dateStr, scheduleGames, oddsMap) {
+  const enriched = [];
 
-        if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
-            throw new Error("Critical data failure: Could not fetch all required data sources.");
-        }
+  for (const g of scheduleGames) {
+    const H = normalizeTeamAbbrev(g.homeAbbr);
+    const A = normalizeTeamAbbrev(g.awayAbbr);
 
-        // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = (teamStandingsData || []).reduce((acc, team) => {
-            const abbr = normalizeTeamAbbrev(team.teamAbbrev?.default || team.abbreviation);
-            if (abbr) {
-                const gamesPlayed = safeNum(team.gamesPlayed);
-                acc[abbr] = {
-                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: `${team.streakCode}${team.streakCount}`,
-                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
-                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0, // Standings API doesn't provide this
-                };
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
+    // attach probable goalies
+    const { homeGoalie, awayGoalie } = await fetchProbableGoalies(dateStr, H, A);
 
-        // Create a lookup map from the betting odds data, keyed by a standardized name.
-        // FIX: Use the more robust canonicalTeamNameMap and teamToAbbrMap for creating odds keys.
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            const homeAbbr = homeCanonical ? teamToAbbrMap[homeCanonical] : null;
-            const awayAbbr = awayCanonical ? teamToAbbrMap[awayCanonical] : null;
+    const base = {
+      // your existing fields: model probs, odds, picks...
+      matchup: `${A}@${H}`,
+      odds: oddsMap.get(`${A}@${H}`) || null
+    };
 
-            if (homeAbbr && awayAbbr) {
-                const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game;
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+    const gameForEnrich = { dateStr, homeAbbr: H, awayAbbr: A, homeGoalie, awayGoalie };
 
-        // --- Step 3: Iterate through the OFFICIAL SCHEDULE (our "source of truth") ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
-        const predictions = [];
-        let unmatchedCount = 0;
+    const finalPred = enrichPrediction(ctx, gameForEnrich, base);
+    enriched.push(finalPred);
+  }
 
-        for (const officialGame of officialGames) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.name?.default || officialGame.homeTeam?.abbrev);
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.name?.default || officialGame.awayTeam?.abbrev);
-
-            if (!homeAbbr || !awayAbbr) {
-                unmatchedCount++;
-                continue;
-            }
-
-            const oddsKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[oddsKey];
-            const homeStats = liveTeamStats[homeAbbr];
-            const awayStats = liveTeamStats[awayAbbr];
-
-            if (!homeStats || !awayStats || !oddsGame) {
-                unmatchedCount++;
-                continue;
-            }
-
-            const context = {
-                teamStats: { [homeAbbr]: homeStats, [awayAbbr]: awayStats },
-                allGames: oddsData,
-                h2h: { home: '0-0', away: '0-0' },
-                // FIX: Correctly pass the probable starter IDs for the specific game.
-                probableStarters: {
-                    homeId: officialGame.homeTeam?.probableStarterId,
-                    awayId: officialGame.awayTeam?.probableStarterId
-                },
-                historicalGoalieData,
-                homeAbbr,
-                awayAbbr,
-            };
-
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
-            
-            if (predictionData) {
-                // FIX: Ensure the 'game' object is never null to prevent crashes in other routes.
-                const gameForPush = oddsGame || {
-                    id: officialGame.id,
-                    home_team: homeAbbr,
-                    away_team: awayAbbr,
-                    commence_time: officialGame.startTimeUTC,
-                };
-                predictions.push({ game: gameForPush, prediction: predictionData });
-            }
-        }
-        
-        if (unmatchedCount > 0) {
-            console.log(`📊 Prediction summary: ${predictions.length}/${officialGames.length} games processed. Skipped ${unmatchedCount}.`);
-        }
-        console.log(`✅ Generated ${predictions.length} predictions.`);
-        return predictions;
-
-    } catch (error) {
-        console.error("Critical error during the new prediction pipeline:", error.message);
-        return []; 
-    }
+  return enriched;
 }
 
 // =================================================================
 // SECTION 7: API ROUTES & SERVER LOGIC
 // =================================================================
-
-app.get('/api/predictions', async (req, res) => {
-    const { sport } = req.query;
-    console.log(`[HIT] GET /api/predictions received for sport: ${sport}`);
-    if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
-
-    try {
-        const predictions = await getPredictionsForSport(sport);
-        if (predictions.length === 0 && !dataCache.has(`odds_${sport}`)) {
-            return res.json({ message: `No upcoming games for ${sport}.`, predictions: [] });
-        }
-        res.json(predictions);
-    } catch (error) {
-        console.error(`[CRITICAL] Prediction Error for ${sport}:`, error.message);
-        res.status(500).json({ error: `Failed to get predictions for ${sport}`});
-    }
-});
 
 async function getAllDailyPredictions() {
     let allPredictions = [];
@@ -1837,10 +1718,42 @@ app.get('*', (req, res) => {
 
 // --- Server Startup ---
 const server = http.createServer(app);
-server.listen(PORT, '0.0.0.0', () => { // Bind to 0.0.0.0 for compatibility with containers
-    console.log(`Server running on port ${PORT}`);
-    // Connect to the database in the background after the server has started
-    connectToDb().catch(error => {
-        console.error("Background database connection failed:", error);
-    });
+app.listen(PORT, async () => {
+  console.log(`Server running on port ${PORT}`);
+  try {
+    await connectToDb();
+    console.log("Connected to MongoDB");
+    await hydrateIndexes();
+    console.log("Indexes hydrated");
+  } catch (e) {
+    console.error("Startup init failed:", e);
+  }
+});
+app.get("/api/predictions", async (req, res) => {
+  try {
+    const sport = String(req.query.sport || "icehockey_nhl");
+    if (sport !== "icehockey_nhl") {
+      // return other sports using existing logic
+      return res.json({ sport, predictions: [] });
+    }
+
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
+    // Build scheduleGames and oddsMap with your existing functions
+    const scheduleGames = await /* yourScheduleLoader */ Promise.resolve([
+      // { homeAbbr: 'DET', awayAbbr: 'EDM' }, ...
+    ]);
+    const oddsMap = new Map(); // fill from your existing odds loader with keys A@H
+
+    const predictions = await runNhlPipeline(dateStr, scheduleGames, oddsMap);
+
+    return res.json({ sport, date: dateStr, count: predictions.length, predictions });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "failed" });
+  }
 });
