@@ -218,7 +218,7 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -1361,17 +1361,23 @@ async function getPredictionsForSport(sportKey) {
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            let predictionData = await runAdvancedNhlPredictionEngine(oddsGame || { home_team: homeAbbr, away_team: awayAbbr }, context);
             
             if (predictionData) {
                 // FIX: Ensure the 'game' object is never null to prevent crashes in other routes.
+                const enrichedData = await enrichNhlPrediction({
+                    ...predictionData,
+                    homeAbbr,
+                    awayAbbr,
+                    mongoGoalieStats: goaliesHistCollection // Pass the collection here
+                });
                 const gameForPush = oddsGame || {
                     id: officialGame.id,
                     home_team: homeAbbr,
                     away_team: awayAbbr,
                     commence_time: officialGame.startTimeUTC,
                 };
-                predictions.push({ game: gameForPush, prediction: predictionData });
+                predictions.push({ game: gameForPush, prediction: enrichedData });
             }
         }
         
