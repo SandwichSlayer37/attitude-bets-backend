@@ -146,7 +146,7 @@ async function getHistoricalGoalieData(goaliesHistCollection, season, fetchData)
     }, 86400000);
 }
 
-async function getGoalieData(matchup, mongoGoalieStats) {
+async function getGoalieData(matchup, goaliesHistCollection) { // Renamed mongoGoalieStats to goaliesHistCollection for clarity
   const { homeAbbr, awayAbbr } = matchup;
   let lineup = await getGoalieLineup(homeAbbr, awayAbbr);
 
@@ -154,12 +154,12 @@ async function getGoalieData(matchup, mongoGoalieStats) {
     console.warn(`⚠️ [GoalieIndex] No goalie lineup found for ${homeAbbr} vs ${awayAbbr}`);
   }
 
-  // Pull Moneypuck data from Mongo
-  const homeStats = lineup.homeGoalie && mongoGoalieStats
-    ? await mongoGoalieStats.findOne({ name: lineup.homeGoalie })
+  // Pull Moneypuck data from Mongo using the correct collection
+  const homeStats = lineup.homeGoalie && goaliesHistCollection
+    ? await goaliesHistCollection.findOne({ name: lineup.homeGoalie })
     : null;
-  const awayStats = lineup.awayGoalie && mongoGoalieStats
-    ? await mongoGoalieStats.findOne({ name: lineup.awayGoalie })
+  const awayStats = lineup.awayGoalie && goaliesHistCollection
+    ? await goaliesHistCollection.findOne({ name: lineup.awayGoalie })
     : null;
 
   return {
@@ -171,3 +171,17 @@ async function getGoalieData(matchup, mongoGoalieStats) {
 }
 
 module.exports = { buildGoalieIndex, findGoalie, computeLastNGAA, computeGaa, pickFirstNumber, pickFirstString, getHistoricalGoalieData, getGoalieData };
+
+// NEW: Helper to map goalie name to playerId (needed for live stats lookup in server.js)
+function getGoaliePlayerIdByName(goalieName, historicalGoalieData) {
+    if (!goalieName || !historicalGoalieData) return null;
+    // historicalGoalieData is a map like { playerId: { name, gsax } }
+    for (const playerId in historicalGoalieData) {
+        if (historicalGoalieData[playerId].name === goalieName) {
+            return playerId;
+        }
+    }
+    return null;
+}
+
+module.exports.getGoaliePlayerIdByName = getGoaliePlayerIdByName; // Export the new helper

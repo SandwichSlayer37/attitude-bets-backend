@@ -10,8 +10,8 @@ const NHL_BASE = "https://api-web.nhle.com/v1";
  * Falls back to NHL roster inference if ESPN doesn't provide data.
  */
 async function getGoalieLineup(homeAbbr, awayAbbr) {
-  const espnHome = toEspnAbbr(homeAbbr.toUpperCase());
-  const espnAway = toEspnAbbr(awayAbbr.toUpperCase());
+  const espnHome = toEspnAbbr(homeAbbr); // homeAbbr is already normalized NHL abbr
+  const espnAway = toEspnAbbr(awayAbbr); // awayAbbr is already normalized NHL abbr
   const cacheKey = `goalie-lineup-${espnHome}-${espnAway}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
