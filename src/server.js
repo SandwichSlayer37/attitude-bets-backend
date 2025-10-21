@@ -8,7 +8,6 @@ const axios = require('axios');
 const Snoowrap = require('snoowrap');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { enrichNhlPrediction } = require('./Utils/enrichPrediction.js');
 
 // =================================================================
 // SECTION 1: CONFIGURATION & INITIALIZATION
@@ -219,7 +218,7 @@ function mergeHistoricalCurrent(historical, current) {
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
 
-const analysisModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const analysisModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 const queryNhlStatsTool = {
   functionDeclarations: [
@@ -265,7 +264,7 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: "gemini-1.5-flash",
     tools: [queryNhlStatsTool],
 });
 
@@ -544,10 +543,9 @@ async function getLiveTeamStats() {
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
                     streak: `${team.streakCode}${team.streakCount}`,
-                    // FIX: Correctly calculate G/GP and GA/GP in the fallback
-                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0, 
-                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0, 
-                    faceoffWinPct: 0 // Faceoff % is unavailable here
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    faceoffWinPct: 0, // Not available in this API
                 };
             }
             return acc;
@@ -1254,7 +1252,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
     factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
     factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`};
-    Object.keys(factors).forEach(factorName => { if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) { const factorKey = { 'Historical Goalie Edge (GSAx)': 'historicalGoalie', 'Team Finishing Skill': 'finishingSkill', 'Team Discipline (PIMs)': 'discipline', '5-on-5 xG%': 'fiveOnFiveXg', 'High-Danger Battle': 'highDangerBattle', 'Special Teams Duel': 'specialTeamsDuel', 'PDO (Luck Factor)': 'pdo', 'Faceoff Advantage': 'faceoffAdvantage', 'Current Goalie Form': 'goalie', 'Injury Impact': 'injury', 'Fatigue': 'fatigue', 'H2H (Season)': 'h2h', 'Hot Streak': 'hotStreak', 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 'Defensive Form (GA/GP)': 'defensiveForm' }[factorName]; if (factorKey && weights[factorKey]) { homeScore += factors[factorName].value * weights[factorKey]; } } });
+    Object.keys(factors).forEach(factorName => { if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) { const factorKey = { 'Historical Goalie Edge (GSAx)': 'historicalGoalie', 'Team Finishing Skill': 'finishingSkill', 'Team Discipline (PIMs)': 'discipline', 'Top Line Power (xG%)': 'topLinePower', '5-on-5 xG%': 'fiveOnFiveXg', 'High-Danger Battle': 'highDangerBattle', 'Special Teams Duel': 'specialTeamsDuel', 'PDO (Luck Factor)': 'pdo', 'Faceoff Advantage': 'faceoffAdvantage', 'Current Goalie Form': 'goalie', 'Injury Impact': 'injury', 'Fatigue': 'fatigue', 'H2H (Season)': 'h2h', 'Hot Streak': 'hotStreak', 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 'Defensive Form (GA/GP)': 'defensiveForm' }[factorName]; if (factorKey && weights[factorKey]) { homeScore += factors[factorName].value * weights[factorKey]; } } });
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
@@ -1362,24 +1360,17 @@ async function getPredictionsForSport(sportKey) {
                 awayAbbr,
             };
 
-            let predictionData = await runAdvancedNhlPredictionEngine(oddsGame || { home_team: homeAbbr, away_team: awayAbbr }, context);
+            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
             
             if (predictionData) {
                 // FIX: Ensure the 'game' object is never null to prevent crashes in other routes.
-                // FIX: Correctly pass the mongo collection to the enrichment function.
-                const enrichedData = await enrichNhlPrediction({
-                    ...predictionData,
-                    homeAbbr,
-                    awayAbbr,
-                    mongoGoalieStats: goaliesHistCollection 
-                });
                 const gameForPush = oddsGame || {
                     id: officialGame.id,
                     home_team: homeAbbr,
                     away_team: awayAbbr,
                     commence_time: officialGame.startTimeUTC,
                 };
-                predictions.push({ game: gameForPush, prediction: enrichedData });
+                predictions.push({ game: gameForPush, prediction: predictionData });
             }
         }
         
