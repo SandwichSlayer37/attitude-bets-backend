@@ -39,7 +39,7 @@ const {
 } = process.env;
 
 // --- SDK & Client Initialization ---
-let db, genAI;
+let db, genAI, recordsCollection, predictionsCollection, dailyFeaturesCollection, nhlStatsCollection, goaliesHistCollection, linesHistCollection, skatersHistCollection, teamsHistCollection, teamMappingsCollection;
 let ctx = {
   goalieIdx: null,
   advByTeam: null,
@@ -268,6 +268,19 @@ async function connectToDb() {
   const client = new MongoClient(MONGO_URI, { maxPoolSize: 5 });
   await client.connect();
   db = client.db(); // default database from URL
+
+  // Initialize collections
+  recordsCollection = db.collection('records');
+  predictionsCollection = db.collection('predictions');
+  dailyFeaturesCollection = db.collection('daily_features');
+  nhlStatsCollection = db.collection('nhl_advanced_stats');
+  goaliesHistCollection = db.collection('goalies'); // As per new goalieIndex.js
+  linesHistCollection = db.collection('nhl_line_stats_historical');
+  skatersHistCollection = db.collection('nhl_skater_stats_historical');
+  teamsHistCollection = db.collection('nhl_teams_data_historical');
+  teamMappingsCollection = db.collection('team_mappings');
+
+  console.log("MongoDB collections initialized.");
 }
 
 // =================================================================
@@ -1232,6 +1245,40 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
 
+async function getPredictionsForSport(sportKey) {
+    if (sportKey !== "icehockey_nhl") {
+        // In the future, you can add logic for other sports here.
+        return [];
+    }
+
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
+    // Placeholder loaders - replace with your actual data fetching logic
+    // This simulates fetching the schedule and odds for the day.
+    const yourScheduleLoader = async () => {
+        const { data } = await axios.get(`https://api-web.nhle.com/v1/schedule/${dateStr}`);
+        return (data.games || []).map(g => ({
+            homeAbbr: g.homeTeam.abbrev,
+            awayAbbr: g.awayTeam.abbrev,
+        }));
+    };
+
+    const yourOddsLoader = async () => {
+        // Your existing getOdds logic can be adapted here
+        return new Map(); // Returning an empty map for now
+    };
+
+    const scheduleGames = await yourScheduleLoader();
+    const oddsMap = await yourOddsLoader();
+
+    const predictions = await runNhlPipeline(dateStr, scheduleGames, oddsMap);
+    return predictions;
+}
+
 async function hydrateIndexes() {
   // Build goalie index from Mongo (Moneypuck dump)
   ctx.goalieIdx = await buildGoalieIndex(db);
@@ -1400,7 +1447,7 @@ ${JSON.stringify(ARBITER_SCHEMA, null, 2)}
 
 app.get('/api/records', async (req, res) => {
     try {
-        if (!recordsCollection) { await connectToDb(); }
+        if (!recordsCollection) return res.status(503).json({ error: "Database not ready." });
         const records = await recordsCollection.find({}).toArray();
         const recordsObj = records.reduce((obj, item) => {
             obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
@@ -1710,31 +1757,6 @@ app.listen(PORT, async () => {
     console.log("Indexes hydrated");
   } catch (e) {
     console.error("Startup init failed:", e);
-  }
-});
-app.get("/api/predictions", async (req, res) => {
-  try {
-    const sport = String(req.query.sport || "icehockey_nhl");
-    if (sport !== "icehockey_nhl") {
-      // return other sports using existing logic
-      return res.json({ sport, predictions: [] });
-    }
-
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
-    const dateStr = `${yyyy}-${mm}-${dd}`;
-
-    // Build scheduleGames and oddsMap with your existing functions
-    const scheduleGames = await /* yourScheduleLoader */ Promise.resolve([
-      // { homeAbbr: 'DET', awayAbbr: 'EDM' }, ...
-    ]);
-    const oddsMap = new Map(); // fill from your existing odds loader with keys A@H
-
-    const predictions = await runNhlPipeline(dateStr, scheduleGames, oddsMap);
-
-    return res.json({ sport, date: dateStr, count: predictions.length, predictions });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "failed" });
