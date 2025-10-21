@@ -14,6 +14,12 @@ async function enrichNhlPrediction(matchup) {
     matchup.keyFactors = {};
   }
   
+  matchup.keyFactors["Goalie Matchup"] = {
+    homeGoalie: goalieData.homeGoalie || "N/A",
+    awayGoalie: goalieData.awayGoalie || "N/A",
+    source: goalieData.source
+  };
+
   matchup.keyFactors["Current Goalie Form"] = {
     home: goalieData.homeForm.toFixed(2),
     away: goalieData.awayForm.toFixed(2),
