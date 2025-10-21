@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
 const path = require('path');
@@ -1700,7 +1701,6 @@ app.get('*', (req, res) => {
 });
 
 // --- Server Startup ---
-const server = http.createServer(app);
 app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   try {
