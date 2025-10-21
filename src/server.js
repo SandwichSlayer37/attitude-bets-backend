@@ -87,26 +87,6 @@ const TEAM_NAME_TO_ABBREV = {
   "Winnipeg Jets": "WPG"
 };
 
-function normalizeTeamAbbrev(raw = "") {
-  if (!raw) return "";
-  const key = raw.trim().toUpperCase();
-  // First handle name-based normalization
-  for (const [name, abbr] of Object.entries(TEAM_NAME_TO_ABBREV)) {
-    if (key === name.toUpperCase()) return abbr;
-  }
-  // Then handle existing abbreviations or aliases
-  const aliasMap = {
-    LA: "LAK",
-    LV: "VGK",
-    TB: "TBL",
-    MON: "MTL",
-    NJ: "NJD",
-    SJ: "SJS",
-    PHX: "ARI"
-  };
-  return aliasMap[key] || key;
-}
-
 async function saveNewAbbreviation(unrecognized, canonical) {
     if (!teamMappingsCollection) return;
     try {
@@ -276,7 +256,7 @@ const queryNhlStatsTool = {
 };
 
 const chatModel = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: "gemini-1.5-flash",
     tools: [queryNhlStatsTool],
 });
 
