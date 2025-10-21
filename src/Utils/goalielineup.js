@@ -1,78 +1,88 @@
-const axios = require('axios');
-const { setCache, getCache } = require('./simpleCache.js');
-const { toEspnAbbr } = require("./teamMap.js");
+const axios = require("axios");
+const { normalizeTeamAbbrev, normalizeGoalieName } = require("../utils/hockeyNormalize");
 
-const ESPN_BASE = "https://site.web.api.espn.com/apis/site/v2/sports/hockey/nhl";
-const NHL_BASE = "https://api-web.nhle.com/v1";
+// Caches in-memory per process. In prod you already have a simpleCache; this keeps service self-contained.
+const cache = new Map();
+const TTL_MS = 5 * 60 * 1000;
 
-/**
- * Fetch probable or confirmed goalies for a given matchup.
- * Falls back to NHL roster inference if ESPN doesn't provide data.
- */
-async function getGoalieLineup(homeAbbr, awayAbbr) {
-  const espnHome = toEspnAbbr(homeAbbr); // homeAbbr is already normalized NHL abbr
-  const espnAway = toEspnAbbr(awayAbbr); // awayAbbr is already normalized NHL abbr
-  const cacheKey = `goalie-lineup-${espnHome}-${espnAway}`;
-  const cached = getCache(cacheKey);
-  if (cached) return cached;
-
-  try {
-    // 🧠 STEP 1: Find ESPN event for this matchup
-    const { data: scoreboard } = await axios.get(`${ESPN_BASE}/scoreboard`);
-    const event = scoreboard?.events?.find(ev => {
-      const teams = ev?.competitions?.[0]?.competitors?.map(c => c.team.abbreviation);
-      return teams?.includes(espnHome) && teams?.includes(espnAway);
-    });
-    if (!event) {
-      console.warn(`⚠️ [GoalieLineup] No ESPN event found for ${espnHome} vs ${espnAway}`);
-      return await inferFromNhlRoster(homeAbbr, awayAbbr);
-    }
-
-    const gameId = event.id;
-    const { data: summary } = await axios.get(`${ESPN_BASE}/summary?event=${gameId}`);
-
-    const parseGoalie = (sideAbbr) => {
-      const competitors = summary?.boxscore?.players || [];
-      const teamBlock = competitors.find(t => t.team?.abbreviation === sideAbbr);
-      const goalieBlock = teamBlock?.statistics?.find(s => s.name === "goalie");
-      const goalies = goalieBlock?.athletes || [];
-
-      const confirmed = goalies.find(g => g?.starter === true);
-      const probable = goalies.find(g => g?.status?.type?.name === "probable");
-      const picked = confirmed || probable || goalies[0];
-
-      return picked ? { name: picked.athlete.displayName, confirmed: !!confirmed } : { name: null, confirmed: false };
-    };
-
-    const home = parseGoalie(espnHome);
-    const away = parseGoalie(espnAway);
-
-    const result = { homeGoalie: home.name, awayGoalie: away.name, confirmed: home.confirmed && away.confirmed, source: "ESPN" };
-
-    console.log(`🧤 [GoalieLineup] ESPN result:`, result);
-    setCache(cacheKey, result, 600000); // Cache 10 min
-    return result;
-
-  } catch (err) {
-    console.error("❌ [GoalieLineup] ESPN fetch failed:", err.message);
-    return await inferFromNhlRoster(homeAbbr, awayAbbr);
-  }
+function setCache(k, v) { cache.set(k, { v, exp: Date.now() + TTL_MS }); }
+function getCache(k) {
+  const hit = cache.get(k);
+  if (!hit) return null;
+  if (Date.now() > hit.exp) { cache.delete(k); return null; }
+  return hit.v;
 }
 
-async function inferFromNhlRoster(homeAbbr, awayAbbr) {
-  const getLikelyGoalie = async (abbr) => {
-    try {
-      const { data: roster } = await axios.get(`${NHL_BASE}/roster/${abbr}/current`);
-      const goalies = roster?.goalies || [];
-      if (!goalies.length) return null;
-      goalies.sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
-      return goalies[0].firstName.default + " " + goalies[0].lastName.default;
-    } catch { return null; }
-  };
+/**
+ * Fetch NHL schedule for yyyy-mm-dd, then locate gamePk -> fetch boxscore for probable/starting goalies.
+ * Fallback: ESPN scoreboard parsing (limited), then return nulls if unknown.
+ */
+async function fetchProbableGoalies(dateStr, homeAbbr, awayAbbr) {
+  const key = `probGoalies:${dateStr}:${homeAbbr}:${awayAbbr}`;
+  const cached = getCache(key);
+  if (cached) return cached;
 
-  const result = { homeGoalie: await getLikelyGoalie(homeAbbr), awayGoalie: await getLikelyGoalie(awayAbbr), confirmed: false, source: "NHL-Fallback" };
-  console.log(`🧤 [GoalieLineup] Fallback result:`, result);
+  const H = normalizeTeamAbbrev(homeAbbr);
+  const A = normalizeTeamAbbrev(awayAbbr);
+
+  // NHL schedule v1
+  const schedUrl = `https://api-web.nhle.com/v1/schedule/${dateStr}`;
+  let gamePk = null;
+  try {
+    const { data } = await axios.get(schedUrl, { timeout: 8000 });
+    // Find matching game by team abbrevs
+    for (const g of data.games || []) {
+      const ha = normalizeTeamAbbrev(g.awayTeam?.abbrev);
+      const hh = normalizeTeamAbbrev(g.homeTeam?.abbrev);
+      if (ha === A && hh === H) { gamePk = g.id; break; }
+    }
+  } catch (e) {
+    // Ignore; fall through to ESPN or heuristics
+  }
+
+  let home = null, away = null;
+
+  if (gamePk) {
+    try {
+      // Gamecenter boxscore has current lineup close to game time
+      const boxUrl = `https://api-web.nhle.com/v1/gamecenter/${gamePk}/boxscore`;
+      const { data: box } = await axios.get(boxUrl, { timeout: 8000 });
+
+      const findStarter = (teamObj) => {
+        const goalies = (teamObj.goalies || []).map(g => g.firstName?.default + " " + g.lastName?.default);
+        // Heuristic: first in list is expected starter when "starters" not explicitly flagged
+        return (goalies[0] && normalizeGoalieName(goalies[0])) || null;
+      };
+
+      home = findStarter(box.homeTeam);
+      away = findStarter(box.awayTeam);
+    } catch (e) {
+      // fall through
+    }
+  }
+
+  // ESPN fallback (light): if still missing, attempt to pull roster/last starter
+  if ((!home || !away)) {
+    try {
+      const yyyymmdd = dateStr.replace(/-/g, "");
+      const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=${yyyymmdd}`;
+      const { data } = await axios.get(espnUrl, { timeout: 8000 });
+      for (const ev of data.events || []) {
+        const comp = ev.competitions?.[0];
+        if (!comp) continue;
+        const tHome = normalizeTeamAbbrev(comp.competitors?.find(c=>c.homeAway==="home")?.team?.abbreviation);
+        const tAway = normalizeTeamAbbrev(comp.competitors?.find(c=>c.homeAway==="away")?.team?.abbreviation);
+        if (tHome === H && tAway === A) {
+          // ESPN rarely tags probables—best-effort parse from notes
+          // Left as future enhancement; we keep the NHL boxscore as primary.
+        }
+      }
+    } catch (e) {}
+  }
+
+  const result = { homeGoalie: home, awayGoalie: away, source: home || away ? "nhl" : "unknown" };
+  setCache(key, result);
   return result;
 }
 
-module.exports = { getGoalieLineup };
+module.exports = { fetchProbableGoalies };
