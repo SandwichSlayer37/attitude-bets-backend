@@ -12,7 +12,7 @@ try {
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
 const { buildGoalieIndex } = require("./Utils/goalieIndex");
-const { fetchProbableGoalies } = require("./services/goalielineup");
+const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
 const app = express();
