@@ -1757,8 +1757,5 @@ app.listen(PORT, async () => {
     console.log("Indexes hydrated");
   } catch (e) {
     console.error("Startup init failed:", e);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "failed" });
   }
 });
