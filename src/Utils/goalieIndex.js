@@ -1,4 +1,6 @@
 // src/utils/goalieIndex.js
+const { getGoalieLineup } = require("./goalieLineup.js");
+const { slugifyName } = require('./hockeyNormalize.js');
 
 const GSAX_FIELDS = ['gsax', 'gsaX', 'goals_saved_above_expected', 'goalsSavedAboveExpected', 'gsaxTotal'];
 const GAA_FIELDS  = ['gaa', 'GAA', 'goalsAgainstAverage'];
@@ -68,7 +70,7 @@ function computeLastNGAA(liveGoalie, N = 5) {
  * - historicalGoalies: array (Mongo) — include GSAX/GAA fields in various shapes
  * - historicalCsv: array from CSV (optional)
  */
-function buildGoalieIndex({ liveGoalies = [], historicalGoalies = [], historicalCsv = [] }, slugifyName) {
+function buildGoalieIndex({ liveGoalies = [], historicalGoalies = [], historicalCsv = [] }) {
   const byId = new Map();
   const bySlug = new Map();
 
@@ -131,8 +133,12 @@ async function getHistoricalGoalieData(goaliesHistCollection, season, fetchData)
                 }
             ];
             const results = await goaliesHistCollection.aggregate(pipeline).toArray();
-            console.log(`✅ Successfully processed historical data for ${results.length} goalies.`);
-            return results.map(g => ({ playerId: g._id, name: g.name, gsax: g.gsax }));
+            const goalieDataMap = results.reduce((acc, goalie) => {
+                acc[goalie._id] = { name: goalie.name, gsax: goalie.gsax };
+                return acc;
+            }, {});
+            console.log(`✅ Successfully processed historical data for ${Object.keys(goalieDataMap).length} goalies.`);
+            return goalieDataMap;
         } catch (error) {
             console.error(`Error fetching historical goalie data for season ${season}:`, error);
             return {};
@@ -140,4 +146,28 @@ async function getHistoricalGoalieData(goaliesHistCollection, season, fetchData)
     }, 86400000);
 }
 
-module.exports = { buildGoalieIndex, findGoalie, computeLastNGAA, computeGaa, pickFirstNumber, pickFirstString, getHistoricalGoalieData };
+async function getGoalieData(matchup, mongoGoalieStats) {
+  const { homeAbbr, awayAbbr } = matchup;
+  let lineup = await getGoalieLineup(homeAbbr, awayAbbr);
+
+  if (!lineup.homeGoalie && !lineup.awayGoalie) {
+    console.warn(`⚠️ [GoalieIndex] No goalie lineup found for ${homeAbbr} vs ${awayAbbr}`);
+  }
+
+  // Pull Moneypuck data from Mongo
+  const homeStats = lineup.homeGoalie && mongoGoalieStats
+    ? await mongoGoalieStats.findOne({ name: lineup.homeGoalie })
+    : null;
+  const awayStats = lineup.awayGoalie && mongoGoalieStats
+    ? await mongoGoalieStats.findOne({ name: lineup.awayGoalie })
+    : null;
+
+  return {
+    homeGoalie: lineup.homeGoalie, awayGoalie: lineup.awayGoalie,
+    source: lineup.source, confirmed: lineup.confirmed,
+    homeGSAx: homeStats?.gsaX || 0, awayGSAx: awayStats?.gsaX || 0,
+    homeForm: homeStats?.recentForm3 || 0, awayForm: awayStats?.recentForm3 || 0
+  };
+}
+
+module.exports = { buildGoalieIndex, findGoalie, computeLastNGAA, computeGaa, pickFirstNumber, pickFirstString, getHistoricalGoalieData, getGoalieData };
