@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { normalizeTeamAbbrev, normalizeGoalieName } = require("../utils/hockeyNormalize");
+const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize");
 
 // Caches in-memory per process. In prod you already have a simpleCache; this keeps service self-contained.
 const cache = new Map();
