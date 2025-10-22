@@ -115,25 +115,29 @@ function __cached(key, ttlMs, fetcher) {
 async function getHistoricalGoalieData(season) {
     const cacheKey = `historical_goalie_data_${season}_v3`; // New cache key
     return fetchData(cacheKey, async () => {
+        if (!goaliesHistCollection) { // Check once at the beginning
+            console.error("[ERROR] goaliesHistCollection is not initialized for historical goalie data.");
+            return {};
+        }
         try {
-            if (!goaliesHistCollection) {
-                console.error("[ERROR] goaliesHistCollection is not initialized.");
-                return {};
-            }
             const pipeline = [
-                { $match: { season: season } },
+                { $match: { season: season } }, // Filter by season
                 {
                     $group: {
                         _id: "$playerId",
                         name: { $first: "$name" },
-                        goals: { $sum: "$goals" },
-                        xGoals: { $sum: "$xGoals" },
+                        goals: { $sum: { $toDouble: "$goals" } },
+                        xGoals: { $sum: { $toDouble: "$xGoals" } },
                     }
                 }
             ];
             // FIX: Querying the correct collection now
+            // FIX: Querying the correct collection 'goalies_hist'
             const results = await goaliesHistCollection.aggregate(pipeline).toArray();
 
+            if (!results || results.length === 0) { // Check for empty array too
+                return {};
+            }
             const goalieDataMap = results.reduce((acc, goalie) => {
                 acc[goalie._id] = { name: goalie.name, gsax: goalie.xGoals - goalie.goals };
                 return acc;
@@ -141,8 +145,8 @@ async function getHistoricalGoalieData(season) {
 
             console.log(`✅ Successfully processed historical data for ${Object.keys(goalieDataMap).length} goalies.`);
             return goalieDataMap;
-        } catch (error) {
-            console.error(`Error fetching historical goalie data for season ${season}:`, error);
+        } catch (error) { // Keep the critical error log
+            console.error(`[CRITICAL] Error fetching historical goalie data for season ${season}:`, error);
             return {};
         }
     }, 86400000);
@@ -1198,9 +1202,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
     const homeHistGoalie = probableStarters.homeId && historicalGoalieData ? historicalGoalieData[probableStarters.homeId] : null;
     const awayHistGoalie = probableStarters.awayId && historicalGoalieData ? historicalGoalieData[probableStarters.awayId] : null;
+    const homeHistGoalie = (probableStarters.homeId && historicalGoalieData) ? historicalGoalieData[probableStarters.homeId] : null;
+    const awayHistGoalie = (probableStarters.awayId && historicalGoalieData) ? historicalGoalieData[probableStarters.awayId] : null;
     
     const homeGSAx = homeHistGoalie?.gsax || 0;
     const awayGSAx = awayHistGoalie?.gsax || 0;
+    const homeGSAx = homeHistGoalie ? safeNum(homeHistGoalie.gsax) : 0;
+    const awayGSAx = awayHistGoalie ? safeNum(awayHistGoalie.gsax) : 0;
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
 
     let goalieValue = 0;
