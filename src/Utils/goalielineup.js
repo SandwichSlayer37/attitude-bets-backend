@@ -34,10 +34,10 @@ async function fetchProbableGoalies(dateStr, homeAbbr, awayAbbr) {
     for (const g of data.games || []) {
       const ha = normalizeTeamAbbrev(g.awayTeam?.abbrev);
       const hh = normalizeTeamAbbrev(g.homeTeam?.abbrev);
-      if (ha === A && hh === H) { gamePk = g.id; break; }
+      if (ha === A && hh === H) { gamePk = g.id; break; } // Found game
     }
   } catch (e) {
-    // Ignore; fall through to ESPN or heuristics
+    console.warn(`[GOALIE] NHL schedule fetch failed for ${dateStr}:`, e.message);
   }
 
   let home = null, away = null;
@@ -57,7 +57,7 @@ async function fetchProbableGoalies(dateStr, homeAbbr, awayAbbr) {
       home = findStarter(box.homeTeam);
       away = findStarter(box.awayTeam);
     } catch (e) {
-      // fall through
+      console.warn(`[GOALIE] NHL boxscore fetch failed for gamePk ${gamePk}:`, e.message);
     }
   }
 
@@ -77,7 +77,9 @@ async function fetchProbableGoalies(dateStr, homeAbbr, awayAbbr) {
           // Left as future enhancement; we keep the NHL boxscore as primary.
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn(`[GOALIE] ESPN fallback fetch failed for ${dateStr}:`, e.message);
+    }
   }
 
   const result = { homeGoalie: home, awayGoalie: away, source: home || away ? "nhl" : "unknown" };

@@ -1,5 +1,5 @@
 // Takes a raw matchup prediction and enriches with Key Factors.
-const { normalizeTeamAbbrev, normalizeGoalieName, buildKey } = require("./hockeyNormalize");
+const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize"); // Removed buildKey as it's not used here
 const { neutralGoalieMetrics } = require("./goalieIndex");
 
 function explain(reason, ctx = {}) {
