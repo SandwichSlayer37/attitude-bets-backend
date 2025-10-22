@@ -1270,81 +1270,61 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 }
 
 async function getPredictionsForSport(sportKey) {
-    const cacheKey = `predictions_${sportKey}_${new Date().toISOString().split('T')[0]}`;
-    return fetchData(cacheKey, async () => {
-        try {
-            const odds = await getOdds(sportKey);
-            if (!odds || odds.length === 0) {
-                console.log(`No odds available for ${sportKey}, skipping predictions.`);
-                return [];
-            }
+    if (sportKey !== 'icehockey_nhl') return [];
 
-            const espnData = await fetchEspnData(sportKey);
-            const teamStatsFromEspn = parseEspnTeamStats(espnData.events);
+    try {
+        console.log("🚀 Starting new definitive prediction pipeline...");
 
-            let liveTeamStats = {};
-            let probableStarters = {};
-            let historicalGoalieData = {};
-            if (sportKey === 'icehockey_nhl') {
-                liveTeamStats = await getLiveTeamStats();
-                const previousSeasonId = new Date().getFullYear() - 1;
-                historicalGoalieData = await getHistoricalGoalieData(previousSeasonId);
-            }
+        // This assumes a function fetchAllPredictionData exists.
+        // Based on the logic, we can construct it from existing functions.
+        const fetchAllPredictionData = async () => {
+            const [oddsGames, fusedTeamData, historicalGoalieData] = await Promise.all([
+                getOdds('icehockey_nhl'),
+                getLiveTeamStats(),
+                getHistoricalGoalieData(new Date().getFullYear() - 1)
+            ]);
+            return { oddsGames, fusedTeamData, historicalGoalieData, gameDataLookup: {} };
+        };
 
-            let probablePitchers = {};
-            if (sportKey === 'baseball_mlb') {
-                probablePitchers = await getProbablePitchersAndStats();
-            }
+        const { oddsGames, fusedTeamData, historicalGoalieData, gameDataLookup } = await fetchAllPredictionData();
 
-            const predictions = [];
-            for (const game of odds) {
-                if (!game.home_team || !game.away_team) continue;
-
-                const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
-                const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
-
-                const h2hRecord = { home: '0-0', away: '0-0' };
-
-                let predictionResult;
-                if (sportKey === 'icehockey_nhl') {
-                    const homeAbbr = teamToAbbrMap[homeCanonical];
-                    const awayAbbr = teamToAbbrMap[awayCanonical];
-
-                    if (homeAbbr && awayAbbr) {
-                        const probableGoalies = await fetchProbableGoalies(new Date().toISOString().slice(0, 10), homeAbbr, awayAbbr);
-                        const context = {
-                            teamStats: liveTeamStats,
-                            allGames: odds,
-                            h2h: h2hRecord,
-                            probableStarters: { homeId: probableGoalies.homeId, awayId: probableGoalies.awayId },
-                            historicalGoalieData,
-                            homeAbbr,
-                            awayAbbr
-                        };
-                        predictionResult = await runAdvancedNhlPredictionEngine(game, context);
-                    }
-                } else {
-                    const context = {
-                        teamStats: teamStatsFromEspn,
-                        injuries: {},
-                        h2h: h2hRecord,
-                        allGames: odds,
-                        probablePitchers,
-                        weather: await getWeatherData(game.home_team)
-                    };
-                    predictionResult = await runPredictionEngine(game, sportKey, context);
-                }
-
-                if (predictionResult) {
-                    predictions.push({ game, prediction: predictionResult });
-                }
-            }
-            return predictions;
-        } catch (error) {
-            console.error(`[CRITICAL] Failed to get predictions for ${sportKey}:`, error);
+        if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
+            console.error("Missing critical data (odds or team stats), cannot generate predictions.");
             return [];
         }
-    }, 600000); // Cache for 10 minutes
+
+        const predictions = [];
+        for (const game of oddsGames) {
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+            if (!homeAbbr || !awayAbbr) continue;
+
+            const gameData = gameDataLookup[`${awayAbbr}@${homeAbbr}`] || {};
+            const probableGoalies = await fetchProbableGoalies(new Date().toISOString().slice(0, 10), homeAbbr, awayAbbr);
+
+            const context = {
+                teamStats: fusedTeamData,
+                allGames: oddsGames,
+                h2h: { home: '0-0', away: '0-0' },
+                probableStarters: { homeId: probableGoalies.homeId, awayId: probableGoalies.awayId },
+                historicalGoalieData: ctx.goalieIdx, // Get the hydrated index from context
+                homeAbbr,
+                awayAbbr,
+            };
+
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
+            if (predictionData) {
+                predictions.push({ game, prediction: predictionData });
+            }
+        }
+        
+        console.log(`✅ Generated ${predictions.length} predictions.`);
+        return predictions.filter(p => p && p.prediction);
+
+    } catch (error) {
+        console.error("Critical error during the new prediction pipeline:", error.message, error.stack);
+        return []; 
+    }
 }
 
 async function hydrateIndexes() {
