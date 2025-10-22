@@ -24,7 +24,7 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
-const { buildGoalieIndex } = require("./Utils/goalieIndex");
+const { buildGoalieIndex } = require("./Utils/goalieIndex.js");
 const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
@@ -1352,15 +1352,15 @@ async function getPredictionsForSport(sportKey) {
 }
 
 async function hydrateIndexes() {
-    // Build goalie index from Mongo (Moneypuck dump)
-    ctx.goalieIdx = await buildGoalieIndex(db);
-
-    // FIX: Populate liveByTeam with data from the resilient getLiveTeamStats function
-    const liveTeamStats = await getLiveTeamStats();
-    ctx.liveByTeam = new Map(Object.entries(liveTeamStats));
-
-    // advByTeam is still a placeholder, but live data is now correctly hydrated.
-    ctx.advByTeam = new Map(); // TODO: Fill from your historical loader
+  try {
+    console.log('[INIT] Hydrating indexes...');
+    // This now fetches from the API and populates simpleCache, not ctx
+    await buildGoalieIndex();
+    // You might want to re-add ctx population here if other parts of your app need it
+    console.log('[INIT] Indexes hydrated successfully.');
+  } catch (err) {
+    console.error('Failed to hydrate indexes:', err);
+  }
 }
 
 // --- NHL definitive prediction pipeline (simplified wrapper around your existing steps)
@@ -1798,46 +1798,6 @@ app.get('/readyz', (req, res) => {
     res.status(isReady ? 200 : 503).send(isReady ? 'ready' : 'not_ready');
 });
 
-app.get("/api/predictions", async (req, res) => {
-    try {
-        const sport = String(req.query.sport || "icehockey_nhl");
-        if (sport !== "icehockey_nhl") {
-            return res.json({ sport, predictions: [] });
-        }
-
-        const today = new Date();
-        const yyyy = today.getFullYear();
-        const mm = String(today.getMonth() + 1).padStart(2, "0");
-        const dd = String(today.getDate()).padStart(2, "0");
-        const dateStr = `${yyyy}-${mm}-${dd}`;
-
-        // --- FIX: Integrate actual data loaders ---
-        const scheduleResponse = await axios.get(`https://api-web.nhle.com/v1/schedule/${dateStr}`);
-        const scheduleGames = (scheduleResponse.data.games || []).map(g => ({
-            homeAbbr: g.homeTeam.abbrev,
-            awayAbbr: g.awayTeam.abbrev,
-        }));
-
-        const oddsData = await getOdds(sport);
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(game.home_team);
-            const awayAbbr = normalizeTeamAbbrev(game.away_team);
-            if (homeAbbr && awayAbbr) {
-                acc.set(`${awayAbbr}@${homeAbbr}`, game);
-            }
-            return acc;
-        }, new Map());
-        // --- End of Integration ---
-
-        const predictions = await runNhlPipeline(dateStr, scheduleGames, oddsMap);
-
-        return res.json({ sport, date: dateStr, count: predictions.length, predictions });
-    } catch (e) {
-        console.error("Prediction route failed:", e.message);
-        res.status(500).json({ error: "Prediction generation failed." });
-    }
-});
-
 app.get('/api/fusion-preview', async (req, res) => {
     try {
       const liveTeamStats = await getLiveTeamStats();
@@ -1905,4 +1865,22 @@ app.get('/readyz', (req, res) => {
     // More advanced check could query DB status
     const isReady = db && db.topology.isConnected();
     res.status(isReady ? 200 : 503).send(isReady ? 'ready' : 'not_ready');
+});
+
+app.get('/api/predictions', async (req, res) => {
+  const sport = req.query.sport;
+  console.log(`[HIT] /api/predictions sport=${sport}`);
+  try {
+    // Note: getPredictionsForSport returns an array of predictions for a single sport
+    const predictions = await getPredictionsForSport(sport);
+    if (!predictions || !Array.isArray(predictions) || predictions.length === 0) {
+      // It's valid to have no games, so we return an empty array, not an error.
+      // The UI should handle an empty array gracefully.
+      return res.status(200).json([]);
+    }
+    res.status(200).json(predictions);
+  } catch (err) {
+    console.error('[ERR] Prediction route failed:', err);
+    res.status(500).json({ error: 'prediction_pipeline_failed', message: err.message });
+  }
 });
