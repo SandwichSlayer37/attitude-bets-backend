@@ -1,24 +1,25 @@
 {
-  "name": "attitude-sports-bets",
+  "name": "attitude-bets-backend",
   "version": "1.0.0",
-  "description": "Attitude Sports Bets API",
-  "main": "attitude-bets-backend/src/server.js",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node attitude-bets-backend/src/server.js"
-  },
-  "dependencies": {
-    "@google/generative-ai": "^0.13.0",
-    "axios": "^1.7.7",
-    "cors": "^2.8.5",
-    "csv-parser": "^3.2.0",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.1",
-    "lodash": "^4.17.21",
-    "mongodb": "^6.7.0",
-    "mongoose": "^8.8.0",
-    "snoowrap": "^1.23.0"
+    "start": "node src/server.js",
+    "build": "echo \"no build step\"",
+    "render-build": "npm ci --include=dev"
   },
   "engines": {
     "node": "22.x"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.17.0",
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongodb": "^6.8.0",
+    "morgan": "^1.10.0",
+    "snoowrap": "^1.23.0"
   }
 }
