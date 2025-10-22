@@ -45,7 +45,8 @@ let ctx = {
   advByTeam: null,
   liveByTeam: null
 };
-
+let recordsCollection, predictionsCollection, teamMappingsCollection, goaliesHistCollection, teamsHistCollection, nhlStatsCollection, linesHistCollection;
+ 
 // --- Express Middleware ---
 // IMPORTANT: Middleware must be configured BEFORE routes are defined.
 app.use(express.static(path.join(__dirname, '..', 'Public')));
@@ -268,6 +269,14 @@ async function connectToDb() {
   const client = new MongoClient(MONGO_URI, { maxPoolSize: 5 });
   await client.connect();
   db = client.db(); // default database from URL
+  // Initialize collection variables
+  recordsCollection = db.collection('records');
+  predictionsCollection = db.collection('predictions');
+  teamMappingsCollection = db.collection('team_mappings');
+  goaliesHistCollection = db.collection('goalies_hist');
+  teamsHistCollection = db.collection('teams_hist');
+  nhlStatsCollection = db.collection('nhl_advanced_stats');
+  linesHistCollection = db.collection('lines_hist');
 }
 
 // =================================================================
@@ -1230,6 +1239,84 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const confidence = Math.abs(50 - homeScore);
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
+}
+
+async function getPredictionsForSport(sportKey) {
+    const cacheKey = `predictions_${sportKey}_${new Date().toISOString().split('T')[0]}`;
+    return fetchData(cacheKey, async () => {
+        try {
+            const odds = await getOdds(sportKey);
+            if (!odds || odds.length === 0) {
+                console.log(`No odds available for ${sportKey}, skipping predictions.`);
+                return [];
+            }
+
+            const espnData = await fetchEspnData(sportKey);
+            const teamStatsFromEspn = parseEspnTeamStats(espnData.events);
+
+            let liveTeamStats = {};
+            let probableStarters = {};
+            let historicalGoalieData = {};
+            if (sportKey === 'icehockey_nhl') {
+                liveTeamStats = await getLiveTeamStats();
+                const previousSeasonId = new Date().getFullYear() - 1;
+                historicalGoalieData = await getHistoricalGoalieData(previousSeasonId);
+            }
+
+            let probablePitchers = {};
+            if (sportKey === 'baseball_mlb') {
+                probablePitchers = await getProbablePitchersAndStats();
+            }
+
+            const predictions = [];
+            for (const game of odds) {
+                if (!game.home_team || !game.away_team) continue;
+
+                const homeCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()] || game.home_team;
+                const awayCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()] || game.away_team;
+
+                const h2hRecord = { home: '0-0', away: '0-0' };
+
+                let predictionResult;
+                if (sportKey === 'icehockey_nhl') {
+                    const homeAbbr = teamToAbbrMap[homeCanonical];
+                    const awayAbbr = teamToAbbrMap[awayCanonical];
+
+                    if (homeAbbr && awayAbbr) {
+                        const probableGoalies = await fetchProbableGoalies(new Date().toISOString().slice(0, 10), homeAbbr, awayAbbr);
+                        const context = {
+                            teamStats: liveTeamStats,
+                            allGames: odds,
+                            h2h: h2hRecord,
+                            probableStarters: { homeId: probableGoalies.homeId, awayId: probableGoalies.awayId },
+                            historicalGoalieData,
+                            homeAbbr,
+                            awayAbbr
+                        };
+                        predictionResult = await runAdvancedNhlPredictionEngine(game, context);
+                    }
+                } else {
+                    const context = {
+                        teamStats: teamStatsFromEspn,
+                        injuries: {},
+                        h2h: h2hRecord,
+                        allGames: odds,
+                        probablePitchers,
+                        weather: await getWeatherData(game.home_team)
+                    };
+                    predictionResult = await runPredictionEngine(game, sportKey, context);
+                }
+
+                if (predictionResult) {
+                    predictions.push({ game, prediction: predictionResult });
+                }
+            }
+            return predictions;
+        } catch (error) {
+            console.error(`[CRITICAL] Failed to get predictions for ${sportKey}:`, error);
+            return [];
+        }
+    }, 600000); // Cache for 10 minutes
 }
 
 async function hydrateIndexes() {
