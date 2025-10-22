@@ -1,10 +1,22 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const morgan = require('morgan');
 const http = require('http');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
 const path = require('path');
+const Snoowrap = require('snoowrap');
+
+// =================================================================
+// SECTION 0: GLOBAL ERROR HANDLING (MUST BE AT THE TOP)
+// =================================================================
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[FATAL] Unhandled Rejection:', { reason, promise: p });
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+});
 
 let GoogleGenerativeAI = null;
 try {
@@ -17,8 +29,18 @@ const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
 const app = express();
+
+// Trust proxy (Render), helpful for correct req.ip/logging
+app.set('trust proxy', 1);
+
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
+app.use(morgan('dev')); // request logs
+
+app.use((req, res, next) => {
+  req.reqId = Math.random().toString(36).slice(2);
+  next();
+});
 
 // =================================================================
 // SECTION 1: CONFIGURATION & INITIALIZATION
@@ -1762,11 +1784,11 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 });
 
 // Health check route for Render to confirm the service is running
-app.get('/api/health', (req, res) => {
-    res.status(200).json({
-        status: 'ok',
-        message: 'Service is healthy'
-    });
+app.get('/healthz', (req, res) => res.status(200).send('ok'));
+app.get('/readyz', (req, res) => {
+    // More advanced check could query DB status
+    const isReady = db && db.topology.isConnected();
+    res.status(isReady ? 200 : 503).send(isReady ? 'ready' : 'not_ready');
 });
 
 app.get("/api/predictions", async (req, res) => {
@@ -1828,6 +1850,52 @@ app.get('/api/fusion-preview', async (req, res) => {
     }
 });
 
+app.get('/api/debug/game', async (req, res) => {
+  try {
+    const { home, away, date } = req.query; // e.g., ?home=NYR&away=BOS&date=2024-10-10
+    if (!home || !away) return res.status(400).json({ error: 'home and away team abbreviations are required' });
+
+    const dateStr = date || new Date().toISOString().slice(0, 10);
+    const homeAbbr = normalizeTeamAbbrev(home);
+    const awayAbbr = normalizeTeamAbbrev(away);
+
+    console.log(`[DEBUG] Game lookup for ${awayAbbr}@${homeAbbr} on ${dateStr}`);
+
+    // 1. Fetch probable goalies
+    const lineup = await fetchProbableGoalies(dateStr, homeAbbr, awayAbbr);
+
+    // 2. Hydrate goalie history from the main context
+    const goalieHistory = ctx.goalieIdx;
+
+    // 3. Get live team stats from context
+    const liveStats = {
+        home: ctx.liveByTeam.get(homeAbbr),
+        away: ctx.liveByTeam.get(awayAbbr)
+    };
+
+    // 4. Get advanced historical stats from context
+    const advStats = {
+        home: ctx.advByTeam.get(homeAbbr),
+        away: ctx.advByTeam.get(awayAbbr)
+    };
+
+    // 5. Enrich the prediction to get key factors
+    const gameForEnrich = { dateStr, homeAbbr, awayAbbr, homeGoalie: lineup.homeGoalie, awayGoalie: lineup.awayGoalie };
+    const enriched = enrichPrediction(ctx, gameForEnrich, { matchup: `${awayAbbr}@${homeAbbr}` });
+
+    return res.json({
+      params: { homeAbbr, awayAbbr, dateStr },
+      lineup,
+      liveStats,
+      advStats,
+      keyFactors: enriched.keyFactors,
+    });
+  } catch (err) {
+    console.error('[DEBUG] /api/debug/game failed', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1843,4 +1911,11 @@ app.listen(PORT, async () => {
   } catch (e) {
     console.error("Startup init failed:", e);
   }
+});
+
+// Global error middleware (must be AFTER all other app.use and routes)
+app.use((err, req, res, next) => {
+  console.error(`[ERR] Global handler (reqId=${req?.reqId || 'n/a'})`, { message: err.message, stack: err.stack });
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
