@@ -1,5 +1,5 @@
 {
-  "name": "attitude-bets-backend",
+  "name": "attitude-sports-bets",
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
@@ -7,19 +7,19 @@
   "scripts": {
     "start": "node src/server.js",
     "build": "echo \"no build step\"",
-    "render-build": "npm ci --include=dev"
+    "render-build": "npm ci"
   },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.17.0",
     "axios": "^1.7.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "mongodb": "^6.8.0",
     "morgan": "^1.10.0",
-    "snoowrap": "^1.23.0"
+    "@google/generative-ai": "^0.17.0",  // if you actually import it anywhere
+    "snoowrap": "^1.23.0" // if you use it
   }
 }
