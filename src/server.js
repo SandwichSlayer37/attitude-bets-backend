@@ -1857,52 +1857,6 @@ app.get('/api/fusion-preview', async (req, res) => {
     }
 });
 
-app.get('/api/debug/game', async (req, res) => { // Existing debug endpoint, adding reqId to log
-  try {
-    const { home, away, date } = req.query; // e.g., ?home=NYR&away=BOS&date=2024-10-10
-    if (!home || !away) return res.status(400).json({ error: 'home and away team abbreviations are required' });
-
-    const dateStr = date || new Date().toISOString().slice(0, 10); // Use current date if not provided
-    const homeAbbr = normalizeTeamAbbrev(home);
-    const awayAbbr = normalizeTeamAbbrev(away);
-
-    console.log(`[DEBUG] Game lookup for ${awayAbbr}@${homeAbbr} on ${dateStr}`);
-
-    // 1. Fetch probable goalies
-    const lineup = await fetchProbableGoalies(dateStr, homeAbbr, awayAbbr);
-
-    // 2. Hydrate goalie history from the main context
-    const goalieHistory = ctx.goalieIdx;
-
-    // 3. Get live team stats from context
-    const liveStats = {
-        home: ctx.liveByTeam.get(homeAbbr),
-        away: ctx.liveByTeam.get(awayAbbr)
-    };
-
-    // 4. Get advanced historical stats from context
-    const advStats = {
-        home: ctx.advByTeam.get(homeAbbr),
-        away: ctx.advByTeam.get(awayAbbr)
-    };
-
-    // 5. Enrich the prediction to get key factors
-    const gameForEnrich = { dateStr, homeAbbr, awayAbbr, homeGoalie: lineup.homeGoalie, awayGoalie: lineup.awayGoalie };
-    const enriched = enrichPrediction(ctx, gameForEnrich, { matchup: `${awayAbbr}@${homeAbbr}` });
-
-    return res.json({
-      params: { homeAbbr, awayAbbr, dateStr },
-      lineup,
-      liveStats,
-      advStats,
-      keyFactors: enriched.keyFactors,
-    });
-  } catch (err) {
-    console.error(`[DEBUG] /api/debug/game (reqId=${req.reqId}) failed`, err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1920,11 +1874,6 @@ app.listen(PORT, async () => {
   }
 });
 
-// Health check route for Render to confirm the service is running
-app.get('/healthz', (req, res) => res.status(200).send('ok'));
-app.get('/readyz', (req, res) => res.status(200).send('ready')); // Simplified readyz
-
-// Wrap /api/predictions safely
 app.get('/api/predictions', async (req, res) => {
   const sport = String(req.query.sport || 'icehockey_nhl');
   console.log(`[HIT] /api/predictions (reqId=${req.reqId}) sport=${sport}`);
@@ -1932,12 +1881,13 @@ app.get('/api/predictions', async (req, res) => {
 
   try {
     // getPredictionsForSport returns { allPredictions, gameCounts }
-    const data = await getPredictionsForSport(sport);
-    if (!data || !Array.isArray(data.allPredictions)) {
-      throw new Error('Prediction data is undefined or not an array');
+    const data = await getAllDailyPredictions(); // Use the function that gets all sports
+    if (!data || !Array.isArray(data.allPredictions) || data.allPredictions.length === 0) {
+      // It's valid to have no games, but we should log it. Let's throw only on undefined/null.
+      if (!data) throw new Error('No prediction data returned from pipeline');
     }
-    console.log(`[OK] /api/predictions (reqId=${req.reqId}) predictions length=${data.allPredictions.length} in ${Date.now()-t0}ms`);
-    res.status(200).json(data); // Return the full data object including gameCounts
+    console.log(`[OK] /api/predictions (reqId=${req.reqId}) predictions length=${data?.allPredictions?.length || 0} in ${Date.now()-t0}ms`);
+    res.status(200).json(data);
   } catch (err) {
     console.error(`[ERR] /api/predictions (reqId=${req.reqId}) route failed:`, err);
     res.status(500).json({ error: 'prediction_pipeline_failed', message: err.message });
@@ -1951,14 +1901,28 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
 
-// Original /api/health route is now replaced by /healthz and /readyz
-// app.get('/api/health', (req, res) => {
-//     res.status(200).json({
-//         status: 'ok',
-//         message: 'Service is healthy'
-//     });
-// });
+app.get('/api/debug/game', async (req,res)=>{
+  try {
+    const id=req.query.id;
+    // Assuming you have a function to get a single game's prediction data
+    // This is a placeholder for your actual implementation
+    const getPredictionsForGame = async (gameId) => {
+        const { allPredictions } = await getAllDailyPredictions();
+        const gamePrediction = allPredictions.find(p => p.game.id === gameId);
+        if (!gamePrediction) {
+            return { error: 'Game not found' };
+        }
+        return gamePrediction;
+    };
+    const g=await getPredictionsForGame(id);
+    res.json(g);
+  }catch(e){res.status(500).json({error:e.message});}
+});
 
-// Original /api/predictions route logic is now integrated into the new safe wrapper
-// The runNhlPipeline logic is still used internally by getPredictionsForSport
-// No direct changes to runNhlPipeline itself in this diff
+// Health check route for Render to confirm the service is running
+app.get('/healthz', (req, res) => res.status(200).send('ok'));
+app.get('/readyz', (req, res) => {
+    // More advanced check could query DB status
+    const isReady = db && db.topology.isConnected();
+    res.status(isReady ? 200 : 503).send(isReady ? 'ready' : 'not_ready');
+});
