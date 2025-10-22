@@ -19,7 +19,7 @@
     "express": "^4.19.2",
     "mongodb": "^6.8.0",
     "morgan": "^1.10.0",
-    "@google/generative-ai": "^0.17.0",  // if you actually import it anywhere
-    "snoowrap": "^1.23.0" // if you use it
+    "@google/generative-ai": "^0.17.0",
+    "snoowrap": "^1.23.0"
   }
 }
