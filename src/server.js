@@ -1756,25 +1756,6 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
     }
 });
 
-app.get('/api/fusion-preview', async (req, res) => {
-    try {
-      
-      const allAbbrevs = Object.keys(snapshot.teamStats);
-      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-      const target = filter.length ? filter : allAbbrevs;
-      const fused = {};
-      for (const abbr of target) {
-        const curr = snapshot.teamStats[abbr];
-        if (!curr) continue;
-        const hist = await fetchHistoricalTeamContext(abbr);
-        fused[abbr] = mergeHistoricalCurrent(hist, curr);
-      }
-      res.json({ date: snapshot.date, count: Object.keys(fused).length, teams: fused });
-    } catch (e) {
-      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
-    }
-});
-
 // Health check route for Render to confirm the service is running
 app.get('/api/health', (req, res) => {
     res.status(200).json({
@@ -1783,22 +1764,6 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
-});
-
-// --- Server Startup ---
-app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
-  try {
-    await connectToDb();
-    console.log("Connected to MongoDB");
-    await hydrateIndexes();
-    console.log("Indexes hydrated");
-  } catch (e) {
-    console.error("Startup init failed:", e);
-  }
-});
 app.get("/api/predictions", async (req, res) => {
     try {
         const sport = String(req.query.sport || "icehockey_nhl");
@@ -1837,4 +1802,40 @@ app.get("/api/predictions", async (req, res) => {
         console.error("Prediction route failed:", e.message);
         res.status(500).json({ error: "Prediction generation failed." });
     }
+});
+
+app.get('/api/fusion-preview', async (req, res) => {
+    try {
+      const liveTeamStats = await getLiveTeamStats();
+      const allAbbrevs = Object.keys(liveTeamStats);
+      const filter = (req.query.teams || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const target = filter.length ? filter : allAbbrevs;
+      const fused = {};
+      for (const abbr of target) {
+        const curr = liveTeamStats[abbr];
+        if (!curr) continue;
+        const hist = await fetchHistoricalTeamContext(abbr);
+        fused[abbr] = mergeHistoricalCurrent(hist, curr);
+      }
+      res.json({ date: new Date().toISOString(), count: Object.keys(fused).length, teams: fused });
+    } catch (e) {
+      res.status(500).json({ error: 'Fusion failed', message: e?.message || String(e) });
+    }
+});
+
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
+});
+
+// --- Server Startup ---
+app.listen(PORT, async () => {
+  console.log(`Server running on port ${PORT}`);
+  try {
+    await connectToDb();
+    console.log("Connected to MongoDB");
+    await hydrateIndexes();
+    console.log("Indexes hydrated");
+  } catch (e) {
+    console.error("Startup init failed:", e);
+  }
 });
