@@ -24,7 +24,7 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
-const { buildGoalieIndex } = require("./Utils/goalieIndex.js");
+const { buildGoalieIndex } = require('./Utils/goalieIndex');
 const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
@@ -299,17 +299,13 @@ const chatModel = genAI ? genAI.getGenerativeModel({
 }) : null;
 
 async function connectToDb() {
-  const client = new MongoClient(MONGO_URI, { maxPoolSize: 5 });
+  const client = new MongoClient(process.env.DATABASE_URL);
   await client.connect();
-  db = client.db(); // default database from URL
-  // Initialize collection variables
-  recordsCollection = db.collection('records');
-  predictionsCollection = db.collection('predictions');
-  teamMappingsCollection = db.collection('team_mappings');
-  goaliesHistCollection = db.collection('goalies_hist');
-  teamsHistCollection = db.collection('teams_hist');
-  nhlStatsCollection = db.collection('nhl_advanced_stats');
-  linesHistCollection = db.collection('lines_hist');
+  console.log('Connected to MongoDB');
+  db = client.db(process.env.DB_NAME || 'attitudebets');
+  // Re-initialize collections after connecting
+  recordsCollection = db.collection('records'); predictionsCollection = db.collection('predictions'); teamMappingsCollection = db.collection('team_mappings'); goaliesHistCollection = db.collection('goalies_hist'); teamsHistCollection = db.collection('teams_hist'); nhlStatsCollection = db.collection('nhl_advanced_stats'); linesHistCollection = db.collection('lines_hist');
+  return db;
 }
 
 // =================================================================
@@ -1354,14 +1350,11 @@ async function getPredictionsForSport(sportKey) {
 async function hydrateIndexes() {
   try {
     console.log('[INIT] Hydrating all application indexes...');
-    // Build goalie index from Mongo (Moneypuck dump)
+    // connectToDb now returns the db instance and sets global collections
+    await connectToDb();
     ctx.goalieIdx = await buildGoalieIndex(db);
 
-    // Populate liveByTeam with data from the resilient getLiveTeamStats function
-    const liveTeamStats = await getLiveTeamStats();
-    ctx.liveByTeam = new Map(Object.entries(liveTeamStats));
-
-    ctx.advByTeam = new Map(); // TODO: Fill from your historical loader
+    // Optionally hydrate other team or skater indexes later here
     console.log('[INIT] Indexes hydrated successfully.');
   } catch (err) {
     console.error('Failed to hydrate indexes:', err);
@@ -1830,10 +1823,7 @@ app.get('*', (req, res) => {
 app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   try {
-    await connectToDb();
-    console.log("Connected to MongoDB");
     await hydrateIndexes();
-    console.log("Indexes hydrated");
   } catch (e) {
     console.error("Startup init failed:", e);
   }
