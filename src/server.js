@@ -1323,13 +1323,15 @@ async function getPredictionsForSport(sportKey) {
 }
 
 async function hydrateIndexes() {
-  // Build goalie index from Mongo (Moneypuck dump)
-  ctx.goalieIdx = await buildGoalieIndex(db);
+    // Build goalie index from Mongo (Moneypuck dump)
+    ctx.goalieIdx = await buildGoalieIndex(db);
 
-  // Build/refresh your existing live/adv maps (assume you already have code that produces these Maps)
-  // For illustration, ensure they are Maps keyed by normalized team abbr
-  ctx.advByTeam = new Map(); // fill from your existing historical loader
-  ctx.liveByTeam = new Map(); // fill from your existing live loader
+    // FIX: Populate liveByTeam with data from the resilient getLiveTeamStats function
+    const liveTeamStats = await getLiveTeamStats();
+    ctx.liveByTeam = new Map(Object.entries(liveTeamStats));
+
+    // advByTeam is still a placeholder, but live data is now correctly hydrated.
+    ctx.advByTeam = new Map(); // TODO: Fill from your historical loader
 }
 
 // --- NHL definitive prediction pipeline (simplified wrapper around your existing steps)
