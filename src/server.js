@@ -1874,26 +1874,6 @@ app.listen(PORT, async () => {
   }
 });
 
-app.get('/api/predictions', async (req, res) => {
-  const sport = String(req.query.sport || 'icehockey_nhl');
-  console.log(`[HIT] /api/predictions (reqId=${req.reqId}) sport=${sport}`);
-  const t0 = Date.now();
-
-  try {
-    // getPredictionsForSport returns { allPredictions, gameCounts }
-    const data = await getAllDailyPredictions(); // Use the function that gets all sports
-    if (!data || !Array.isArray(data.allPredictions) || data.allPredictions.length === 0) {
-      // It's valid to have no games, but we should log it. Let's throw only on undefined/null.
-      if (!data) throw new Error('No prediction data returned from pipeline');
-    }
-    console.log(`[OK] /api/predictions (reqId=${req.reqId}) predictions length=${data?.allPredictions?.length || 0} in ${Date.now()-t0}ms`);
-    res.status(200).json(data);
-  } catch (err) {
-    console.error(`[ERR] /api/predictions (reqId=${req.reqId}) route failed:`, err);
-    res.status(500).json({ error: 'prediction_pipeline_failed', message: err.message });
-  }
-});
-
 // Global error middleware (must be AFTER all other app.use and routes)
 app.use((err, req, res, next) => {
   console.error(`[ERR] Global handler (reqId=${req?.reqId || 'n/a'})`, { message: err.message, stack: err.stack });
