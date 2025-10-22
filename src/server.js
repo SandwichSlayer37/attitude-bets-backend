@@ -1269,6 +1269,76 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
 
+// This is the master function for fetching all external data with fallbacks.
+async function fetchAllPredictionData() {
+    const lastCompletedSeason = new Date().getFullYear() - 1;
+
+    const fetchDataWithFallback = async (fetcher, name) => {
+        try {
+            const data = await fetcher();
+            if ((!data || (Array.isArray(data) && data.length === 0) || (typeof data === 'object' && Object.keys(data).length === 0 && data.constructor === Object)) && name !== 'Odds') {
+                 console.warn(`[WARN] Fetch for ${name} returned no data.`);
+                 return null;
+            }
+            console.log(`✅ Successfully fetched ${name}.`);
+            return data;
+        } catch (error) {
+            console.error(`[CRITICAL] Failed to fetch ${name}: ${error.message}`);
+            return null;
+        }
+    };
+
+    const liveTeamStatsFetcher = async () => {
+        try {
+            const { data } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All');
+            if (!data || data.length === 0) throw new Error("Primary club-stats API returned empty.");
+            
+            console.log(`✅ Successfully fetched live stats from primary API.`);
+            return data.reduce((acc, team) => {
+                acc[team.abbreviation] = { record: `${team.wins}-${team.losses}-${team.otLosses}`, streak: `${team.streakCode}${team.streakCount}`, goalsForPerGame: team.goalsForPerGame, goalsAgainstPerGame: team.goalsAgainstPerGame, faceoffWinPct: team.faceoffWinPct };
+                return acc;
+            }, {});
+        } catch (e) {
+            console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
+            const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+            if (!data || !data.standings) throw new Error("Fallback standings API also failed.");
+            
+            console.log(`✅ Successfully fetched live stats from fallback API.`);
+            return data.standings.reduce((acc, team) => {
+                const abbr = team.teamAbbrev.default;
+                if (abbr) {
+                    const gamesPlayed = safeNum(team.gamesPlayed);
+                    acc[abbr] = { record: `${team.wins}-${team.losses}-${team.otLosses}`, streak: `${team.streakCode}${team.streakCount}`, goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0, goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0, faceoffWinPct: 0 };
+                }
+                return acc;
+            }, {});
+        }
+    };
+    
+    const liveGoalieStatsFetcher = async () => { /* ... (existing function) ... */ };
+
+    const [oddsGames, fusedTeamData, historicalGoalieData, scheduleData, liveGoalieStatsMap] = await Promise.all([
+        fetchDataWithFallback(() => getOdds('icehockey_nhl'), 'Odds'),
+        fetchDataWithFallback(liveTeamStatsFetcher, 'Live Team Stats'),
+        fetchDataWithFallback(() => getHistoricalGoalieData(lastCompletedSeason), 'Historical Goalie Data'),
+        fetchDataWithFallback(async () => (await axios.get('https://api-web.nhle.com/v1/schedule/now')).data, 'NHL Schedule'),
+        fetchDataWithFallback(liveGoalieStatsFetcher, 'Live Goalie Stats')
+    ]);
+
+    const gameDataLookup = {};
+    if (scheduleData && scheduleData.gameWeek) {
+        scheduleData.gameWeek.flatMap(day => day.games).forEach(game => {
+            const homeAbbr = game.homeTeam.abbrev;
+            const awayAbbr = game.awayTeam.abbrev;
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            gameDataLookup[matchupKey] = { homeId: game.homeTeam.probableStarterId, awayId: game.awayTeam.probableStarterId };
+        });
+        console.log(`✅ Created game data lookup map with ${Object.keys(gameDataLookup).length} games.`);
+    }
+
+    return { oddsGames, fusedTeamData, historicalGoalieData, gameDataLookup, liveGoalieStatsMap };
+}
+
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1844,6 +1914,61 @@ app.get('/api/fusion-preview', async (req, res) => {
     }
 });
 
+// --- API ROUTES ---
+
+app.get('/api/predictions', async (req, res) => {
+    const { sport } = req.query;
+    if (!sport) return res.status(400).json({ error: "Sport parameter is required." });
+
+    try {
+        const predictions = await getPredictionsForSport(sport);
+        if (predictions.length === 0) {
+            // Check if there are just no games scheduled today
+            const odds = await getOdds(sport);
+            if (odds.length === 0) {
+                 return res.json({ message: `No upcoming games for ${sport}.` });
+            }
+        }
+        res.json(predictions);
+    } catch(error) {
+        console.error(`Prediction Error for ${sport}:`, error.message);
+        res.status(500).json({ error: `Failed to get predictions for ${sport}`});
+    }
+});
+
+app.get('/api/records', async (req, res) => {
+    try {
+        const records = await recordsCollection.find({}).toArray();
+        const recordsObj = records.reduce((obj, item) => {
+            obj[item.sport] = { wins: item.wins, losses: item.losses, totalProfit: item.totalProfit };
+            return obj;
+        }, {});
+        res.json(recordsObj);
+    } catch (e) {
+        res.status(500).json({ error: "Could not retrieve records from database." });
+    }
+});
+
+app.get('/api/special-picks', async (req, res) => {
+    try {
+        const predictions = await getPredictionsForSport('icehockey_nhl'); // Assuming picks are for NHL
+        
+        let pickOfTheDay = null;
+        if (predictions.length > 0) {
+            // Simple logic: find the pick with the highest confidence
+            pickOfTheDay = predictions.sort((a, b) => b.prediction.confidence - a.prediction.confidence)[0];
+        }
+
+        // Add parlay or other logic here if needed in the future
+        res.json({ pickOfTheDay, parlay: null });
+    } catch (error) {
+        console.error("Special Picks Error:", error);
+        res.status(500).json({ error: 'Failed to generate special picks.' });
+    }
+});
+
+// Add other routes like /api/ai-analysis, /api/player-spotlight etc. here as needed
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
@@ -1863,48 +1988,4 @@ app.use((err, req, res, next) => {
   console.error(`[ERR] Global handler (reqId=${req?.reqId || 'n/a'})`, { message: err.message, stack: err.stack });
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
-});
-
-app.get('/api/debug/game', async (req,res)=>{
-  try {
-    const id=req.query.id;
-    // Assuming you have a function to get a single game's prediction data
-    // This is a placeholder for your actual implementation
-    const getPredictionsForGame = async (gameId) => {
-        const { allPredictions } = await getAllDailyPredictions();
-        const gamePrediction = allPredictions.find(p => p.game.id === gameId);
-        if (!gamePrediction) {
-            return { error: 'Game not found' };
-        }
-        return gamePrediction;
-    };
-    const g=await getPredictionsForGame(id);
-    res.json(g);
-  }catch(e){res.status(500).json({error:e.message});}
-});
-
-// Health check route for Render to confirm the service is running
-app.get('/healthz', (req, res) => res.status(200).send('ok'));
-app.get('/readyz', (req, res) => {
-    // More advanced check could query DB status
-    const isReady = db && db.topology.isConnected();
-    res.status(isReady ? 200 : 503).send(isReady ? 'ready' : 'not_ready');
-});
-
-app.get('/api/predictions', async (req, res) => {
-  const sport = req.query.sport;
-  console.log(`[HIT] /api/predictions sport=${sport}`);
-  try {
-    // Note: getPredictionsForSport returns an array of predictions for a single sport
-    const predictions = await getPredictionsForSport(sport);
-    if (!predictions || !Array.isArray(predictions) || predictions.length === 0) {
-      // It's valid to have no games, so we return an empty array, not an error.
-      // The UI should handle an empty array gracefully.
-      return res.status(200).json([]);
-    }
-    res.status(200).json(predictions);
-  } catch (err) {
-    console.error('[ERR] Prediction route failed:', err);
-    res.status(500).json({ error: 'prediction_pipeline_failed', message: err.message });
-  }
 });
