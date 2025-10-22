@@ -1,23 +1,34 @@
 // Index of goalie metrics from Mongo (Moneypuck historical).
 // Expect a collection 'goalies' with docs like: { name, teamAbbr, season, gsax, rollingForm (0..5) ... }
 
-const { normalizeGoalieName, normalizeTeamAbbrev } = require("./hockeyNormalize");
+const { normalizeGoalieName, normalizeTeamAbbrev } = require('./hockeyNormalize');
 
+/**
+ * Build a Goalie Index from MongoDB historical data.
+ * Uses the collection 'nhl_goalie_stats_historical'
+ */
 async function buildGoalieIndex(db) {
-  const coll = db.collection("goalies_hist"); // Use the correct collection name
-  // Pull last 3 seasons for resiliency
+  if (!db) throw new Error('Database instance missing in buildGoalieIndex');
+
+  console.log('[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...');
+  const coll = db.collection('nhl_goalie_stats_historical');
+
   const cursor = coll.find({}, { projection: { _id: 0 } });
   const all = await cursor.toArray();
 
-  const byName = new Map(); // NAME -> merged metrics
-  const byTeam = new Map(); // TEAM -> array of goalies (latest season first)
+  if (!all.length) {
+    console.warn('[GOALIE INDEX] ⚠️ No goalie documents found — check MongoDB connection or collection name.');
+    return { byName: new Map(), byTeam: new Map() };
+  }
+
+  const byName = new Map();
+  const byTeam = new Map();
 
   for (const g of all) {
     const name = normalizeGoalieName(g.name);
-    const team = normalizeTeamAbbrev(g.team); // CSV might use 'team' instead of 'teamAbbr'
+    const team = normalizeTeamAbbrev(g.team);
     if (!name || !team) continue;
 
-    // Merge: prefer latest season stats
     const cur = byName.get(name) || {};
     const merged = { ...cur, ...g, teamAbbr: team };
     byName.set(name, merged);
@@ -26,12 +37,19 @@ async function buildGoalieIndex(db) {
     byTeam.get(team).push(merged);
   }
 
-  // Sort team lists by most recent (if season present)
+  // Sort each team’s goalies by most recent season
   for (const arr of byTeam.values()) {
     arr.sort((a, b) => (b.season || 0) - (a.season || 0));
   }
 
-  console.log(`[GOALIE INDEX] Hydrated ${byName.size} goalies from DB.`);
+  console.log(`[GOALIE INDEX] ✅ Hydrated ${byName.size} goalies from nhl_goalie_stats_historical`);
+
+  // Diagnostic mode: log a few samples for verification
+  const sample = Array.from(byName.values()).slice(0, 3);
+  console.log('[GOALIE INDEX] Sample data preview:', sample.map(g =>
+    `${g.name} (${g.team}) - Season: ${g.season}, Games: ${g.games_played}`
+  ));
+
   return { byName, byTeam };
 }
 

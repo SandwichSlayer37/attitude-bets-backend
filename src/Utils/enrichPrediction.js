@@ -91,10 +91,12 @@ function enrichPrediction(ctx, game, base) {
     },
     {
       label: "Historical Goalie Edge (GSAx)",
-      home: nonNullNum(homeGm?.gsax, 0.0),
-      away: nonNullNum(awayGm?.gsax, 0.0),
+      home: nonNullNum((homeGm?.xGoals || 0) - (homeGm?.goals || 0), 0.0),
+      away: nonNullNum((awayGm?.xGoals || 0) - (awayGm?.goals || 0), 0.0),
       units: "goals saved above expected",
-      explanation: (homeG && awayG) ? "Pulled from Moneypuck historical." : "Fallback due to missing goalie match."
+      explanation: (homeG && awayG)
+        ? `Based on ${homeG.name} (${homeG.teamAbbr}) vs ${awayG.name} (${awayG.teamAbbr})`
+        : 'No goalie data available'
     },
     {
       label: "5-on-5 xG%",
