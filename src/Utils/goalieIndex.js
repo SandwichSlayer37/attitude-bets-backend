@@ -57,4 +57,14 @@ function neutralGoalieMetrics() {
   return { gsax: 0.0, rollingForm: 2.5, explain: "Neutral goalie fallback" };
 }
 
-module.exports = { buildGoalieIndex, neutralGoalieMetrics };
+module.exports = {
+    buildGoalieIndex,
+    neutralGoalieMetrics,
+    // FIX: Add the missing findByPlayerId function to the exports
+    findByPlayerId: (playerId) => {
+        if (!playerId) return null;
+        // Assuming goalieIndex is a Map populated by buildGoalieIndex and stored in ctx
+        // This function will be used against the hydrated index.
+        return ctx.goalieIdx.byName.get(String(playerId));
+    }
+};
