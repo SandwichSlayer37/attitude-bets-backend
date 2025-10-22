@@ -1353,10 +1353,15 @@ async function getPredictionsForSport(sportKey) {
 
 async function hydrateIndexes() {
   try {
-    console.log('[INIT] Hydrating indexes...');
-    // This now fetches from the API and populates simpleCache, not ctx
-    await buildGoalieIndex();
-    // You might want to re-add ctx population here if other parts of your app need it
+    console.log('[INIT] Hydrating all application indexes...');
+    // Build goalie index from Mongo (Moneypuck dump)
+    ctx.goalieIdx = await buildGoalieIndex(db);
+
+    // Populate liveByTeam with data from the resilient getLiveTeamStats function
+    const liveTeamStats = await getLiveTeamStats();
+    ctx.liveByTeam = new Map(Object.entries(liveTeamStats));
+
+    ctx.advByTeam = new Map(); // TODO: Fill from your historical loader
     console.log('[INIT] Indexes hydrated successfully.');
   } catch (err) {
     console.error('Failed to hydrate indexes:', err);
