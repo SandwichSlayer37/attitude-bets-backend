@@ -23,6 +23,7 @@ function nonNullNum(v, fb = 0) {
  *  - base: { modelProb, odds, ... }
  */
 function enrichPrediction(ctx, game, base) {
+  try {
   const H = normalizeTeamAbbrev(game.homeAbbr);
   const A = normalizeTeamAbbrev(game.awayAbbr);
 
@@ -133,6 +134,10 @@ function enrichPrediction(ctx, game, base) {
   ];
 
   return { ...base, keyFactors };
+  } catch (e) {
+    console.warn('[KF-EXPLAIN] Enrichment failure:', e.message);
+    return { ...base, keyFactors: [], goalieStats: {}, hybridRating: 0 };
+  }
 }
 
 module.exports = { enrichPrediction };
