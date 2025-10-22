@@ -1200,13 +1200,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeLiveGoalieStats = await fetchLiveGoalieData(probableStarters.homeId);
     const awayLiveGoalieStats = await fetchLiveGoalieData(probableStarters.awayId);
 
-    const homeHistGoalie = probableStarters.homeId && historicalGoalieData ? historicalGoalieData[probableStarters.homeId] : null;
-    const awayHistGoalie = probableStarters.awayId && historicalGoalieData ? historicalGoalieData[probableStarters.awayId] : null;
     const homeHistGoalie = (probableStarters.homeId && historicalGoalieData) ? historicalGoalieData[probableStarters.homeId] : null;
     const awayHistGoalie = (probableStarters.awayId && historicalGoalieData) ? historicalGoalieData[probableStarters.awayId] : null;
-    
-    const homeGSAx = homeHistGoalie?.gsax || 0;
-    const awayGSAx = awayHistGoalie?.gsax || 0;
     const homeGSAx = homeHistGoalie ? safeNum(homeHistGoalie.gsax) : 0;
     const awayGSAx = awayHistGoalie ? safeNum(awayHistGoalie.gsax) : 0;
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
