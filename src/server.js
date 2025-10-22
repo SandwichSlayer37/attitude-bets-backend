@@ -1389,18 +1389,41 @@ async function getPredictionsForSport(sportKey) {
 
         // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
         const predictions = [];
+        const skippedGames = []; // For debugging
+
+        const tryNormalize = (teamName) => {
+          if (!teamName) return null;
+          const key = teamName.toLowerCase().trim();
+        
+          const mapped =
+            teamToAbbrMap[key] ||
+            teamToAbbrMap[canonicalTeamNameMap[key]] ||
+            teamToAbbrMap[teamName.replace(/\s+/g, '')] ||
+            teamToAbbrMap[teamName.replace('.', '').replace('St ', 'St. ')];
+        
+          if (!mapped) {
+            console.warn(`[WARN] Could not map team name: ${teamName}`);
+          }
+        
+          return normalizeTeamAbbrev(mapped || teamName.slice(0, 3).toUpperCase());
+        };
+
         for (const oddsGame of oddsData) {
             // Convert odds team names to their abbreviations to create a matching key
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[oddsGame.home_team.toLowerCase()]]);
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[oddsGame.away_team.toLowerCase()]]);
+            const homeAbbr = tryNormalize(oddsGame.home_team);
+            const awayAbbr = tryNormalize(oddsGame.away_team);
 
-            if (!homeAbbr || !awayAbbr) continue;
+            if (!homeAbbr || !awayAbbr) {
+                skippedGames.push(oddsGame);
+                continue;
+            }
 
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
             const officialGame = scheduleMap[matchupKey]; // Find the match in our new map
 
             if (!officialGame) {
                 console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
+                skippedGames.push(oddsGame);
                 continue;
             }
             
@@ -1423,6 +1446,10 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
+        if (skippedGames.length > 0) {
+            console.log("[DEBUG] Skipped odds games:", skippedGames.map(g => `${g.away_team} @ ${g.home_team}`));
+        }
+
         console.log(`✅ Generated ${predictions.length} predictions.`);
         return predictions;
 
@@ -1975,5 +2002,3 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
-
-
