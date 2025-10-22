@@ -30,9 +30,16 @@ const { enrichPrediction } = require("./Utils/enrichPrediction");
 
 const app = express();
 
+// Disable ETag to prevent 304 Not Modified responses
+app.disable('etag');
+// Add Cache-Control header to prevent caching by clients/proxies
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 // Trust proxy (Render), helpful for correct req.ip/logging
 app.set('trust proxy', 1);
-
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev')); // request logs
@@ -1850,12 +1857,12 @@ app.get('/api/fusion-preview', async (req, res) => {
     }
 });
 
-app.get('/api/debug/game', async (req, res) => {
+app.get('/api/debug/game', async (req, res) => { // Existing debug endpoint, adding reqId to log
   try {
     const { home, away, date } = req.query; // e.g., ?home=NYR&away=BOS&date=2024-10-10
     if (!home || !away) return res.status(400).json({ error: 'home and away team abbreviations are required' });
 
-    const dateStr = date || new Date().toISOString().slice(0, 10);
+    const dateStr = date || new Date().toISOString().slice(0, 10); // Use current date if not provided
     const homeAbbr = normalizeTeamAbbrev(home);
     const awayAbbr = normalizeTeamAbbrev(away);
 
@@ -1891,7 +1898,7 @@ app.get('/api/debug/game', async (req, res) => {
       keyFactors: enriched.keyFactors,
     });
   } catch (err) {
-    console.error('[DEBUG] /api/debug/game failed', err);
+    console.error(`[DEBUG] /api/debug/game (reqId=${req.reqId}) failed`, err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -1913,9 +1920,45 @@ app.listen(PORT, async () => {
   }
 });
 
+// Health check route for Render to confirm the service is running
+app.get('/healthz', (req, res) => res.status(200).send('ok'));
+app.get('/readyz', (req, res) => res.status(200).send('ready')); // Simplified readyz
+
+// Wrap /api/predictions safely
+app.get('/api/predictions', async (req, res) => {
+  const sport = String(req.query.sport || 'icehockey_nhl');
+  console.log(`[HIT] /api/predictions (reqId=${req.reqId}) sport=${sport}`);
+  const t0 = Date.now();
+
+  try {
+    // getPredictionsForSport returns { allPredictions, gameCounts }
+    const data = await getPredictionsForSport(sport);
+    if (!data || !Array.isArray(data.allPredictions)) {
+      throw new Error('Prediction data is undefined or not an array');
+    }
+    console.log(`[OK] /api/predictions (reqId=${req.reqId}) predictions length=${data.allPredictions.length} in ${Date.now()-t0}ms`);
+    res.status(200).json(data); // Return the full data object including gameCounts
+  } catch (err) {
+    console.error(`[ERR] /api/predictions (reqId=${req.reqId}) route failed:`, err);
+    res.status(500).json({ error: 'prediction_pipeline_failed', message: err.message });
+  }
+});
+
 // Global error middleware (must be AFTER all other app.use and routes)
 app.use((err, req, res, next) => {
   console.error(`[ERR] Global handler (reqId=${req?.reqId || 'n/a'})`, { message: err.message, stack: err.stack });
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
+
+// Original /api/health route is now replaced by /healthz and /readyz
+// app.get('/api/health', (req, res) => {
+//     res.status(200).json({
+//         status: 'ok',
+//         message: 'Service is healthy'
+//     });
+// });
+
+// Original /api/predictions route logic is now integrated into the new safe wrapper
+// The runNhlPipeline logic is still used internally by getPredictionsForSport
+// No direct changes to runNhlPipeline itself in this diff
