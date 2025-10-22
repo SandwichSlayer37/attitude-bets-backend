@@ -1343,79 +1343,67 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        console.log("🚀 Starting definitive prediction pipeline...");
+        console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
+        // --- Step 1: Fetch all data sources in parallel ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStatsData] = await Promise.all([
+        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
             axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
             getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            // This fetcher now has a built-in fallback for live team stats
-            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => { 
-                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-                return data.standings;
-            })
+            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
         ]);
 
-        if (!scheduleData?.gameWeek || !teamStatsData || !oddsData) {
+        if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
         // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => {
-            const abbr = team.abbreviation || team.teamAbbrev?.default;
+        const liveTeamStats = teamStandingsData.reduce((acc, team) => {
+            const abbr = team.teamAbbrev.default;
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount || ''}` : 'N/A',
-                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
-                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
-                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
+                    streak: `${team.streakCode}${team.streakCount}`,
+                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
+                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
+                    faceoffWinPct: 0,
                 };
             }
             return acc;
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeTeamCanonical = canonicalTeamNameMap[game.home_team.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[game.away_team.toLowerCase()];
-            if (homeTeamCanonical && awayTeamCanonical) {
-                const key = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-                acc[key] = game;
+        // NEW: Create a lookup map from the official schedule, keyed by abbreviations. This is our "source of truth".
+        const scheduleMap = (scheduleData.gameWeek.flatMap(day => day.games) || []).reduce((acc, game) => {
+            const homeAbbr = game.homeTeam?.abbrev;
+            const awayAbbr = game.awayTeam?.abbrev;
+            if (homeAbbr && awayAbbr) {
+                const key = `${awayAbbr}@${homeAbbr}`; // e.g., "FLA@BUF"
+                acc[key] = game; // Store the entire official game object
             }
             return acc;
         }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
+        console.log(`✅ Created schedule map with ${Object.keys(scheduleMap).length} games.`);
 
-        // --- Step 3: Iterate through the official schedule (our "source of truth") ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+        // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
         const predictions = [];
-        let processedCount = 0;
+        for (const oddsGame of oddsData) {
+            // Convert odds team names to their abbreviations to create a matching key
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[oddsGame.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[oddsGame.away_team.toLowerCase()]]);
 
-        for (const officialGame of officialGames) {
-            const homeTeamName = officialGame.homeTeam?.name?.default;
-            const awayTeamName = officialGame.awayTeam?.name?.default;
-            if (!homeTeamName || !awayTeamName) continue;
+            if (!homeAbbr || !awayAbbr) continue;
 
-            const homeTeamCanonical = canonicalTeamNameMap[homeTeamName.toLowerCase()];
-            const awayTeamCanonical = canonicalTeamNameMap[awayTeamName.toLowerCase()];
-            if (!homeTeamCanonical || !awayTeamCanonical) continue;
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const officialGame = scheduleMap[matchupKey]; // Find the match in our new map
 
-            const matchupKey = `${awayTeamCanonical} @ ${homeTeamCanonical}`;
-            const oddsGame = oddsMap[matchupKey];
-            
-            if (!oddsGame) {
-                continue; 
+            if (!officialGame) {
+                console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
+                continue;
             }
-
-            processedCount++;
-            const homeAbbr = officialGame.homeTeam.abbrev;
-            const awayAbbr = officialGame.awayTeam.abbrev;
-
+            
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
@@ -1435,7 +1423,6 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
-        console.log(`📊 Prediction summary: ${processedCount}/${officialGames.length} official games processed. Skipped ${officialGames.length - processedCount} games with no matching odds.`);
         console.log(`✅ Generated ${predictions.length} predictions.`);
         return predictions;
 
@@ -1988,6 +1975,5 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
-
 
 
