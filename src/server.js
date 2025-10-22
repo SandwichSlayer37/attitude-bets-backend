@@ -1343,7 +1343,7 @@ async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
     try {
-        console.log("🚀 Starting new definitive prediction pipeline...");
+        console.log("🚀 Starting definitive prediction pipeline...");
 
         // --- Step 1: Fetch all data sources in parallel with robust error handling ---
         const lastCompletedSeason = new Date().getFullYear() - 1;
@@ -1373,7 +1373,7 @@ async function getPredictionsForSport(sportKey) {
                     streak: team.streakCode ? `${team.streakCode}${team.streakCount || ''}` : 'N/A',
                     goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
                     goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
-                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1), // Handle decimal vs whole number
+                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
                 };
             }
             return acc;
@@ -1409,7 +1409,7 @@ async function getPredictionsForSport(sportKey) {
             const oddsGame = oddsMap[matchupKey];
             
             if (!oddsGame) {
-                continue; // Skip if no odds are available for this official game
+                continue; 
             }
 
             processedCount++;
@@ -1988,5 +1988,6 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
+
 
 
