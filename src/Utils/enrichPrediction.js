@@ -6,7 +6,7 @@ async function addGoalieFactors(ctx, keyFactors) {
   const { officialGame, goalieIdx, homeAbbr, awayAbbr } = ctx;
   const { home: homeGoalie, away: awayGoalie } = await resolveStartingGoalies(officialGame, goalieIdx);
 
-  // --- Current Goalie Form ---
+  // --- Current Goalie Form (based on historical games played) ---
   let currentForm = 0.0;
   let formExplain = "No goalie form data available.";
 
@@ -16,7 +16,7 @@ async function addGoalieFactors(ctx, keyFactors) {
   }
 
   keyFactors.push({
-    name: "Current Goalie Form",
+    label: "Current Goalie Form",
     value: currentForm.toFixed(2),
     explain: formExplain
   });
@@ -26,8 +26,8 @@ async function addGoalieFactors(ctx, keyFactors) {
   let edgeExplain = "No goalie data available.";
 
   if (homeGoalie?.gsax !== undefined && awayGoalie?.gsax !== undefined) {
-    const homeGsax = homeGoalie.gsax ?? 0;
-    const awayGsax = awayGoalie.gsax ?? 0;
+    const homeGsax = homeGoalie.gsax;
+    const awayGsax = awayGoalie.gsax;
     goalieEdge = awayGsax - homeGsax;
     edgeExplain = `${awayGoalie.name} (${awayAbbr}) vs ${homeGoalie.name} (${homeAbbr})`;
     console.log(`[GOALIE EDGE] ${edgeExplain} → ΔGSAx: ${goalieEdge.toFixed(2)}`);
@@ -36,7 +36,7 @@ async function addGoalieFactors(ctx, keyFactors) {
   }
 
   keyFactors.push({
-    name: "Historical Goalie Edge (GSAx)",
+    label: "Historical Goalie Edge (GSAx)",
     value: goalieEdge.toFixed(2),
     explain: edgeExplain
   });

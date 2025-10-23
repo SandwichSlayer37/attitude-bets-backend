@@ -8,34 +8,32 @@ const { normalizeGoalieName, normalizeTeamAbbrev } = require('./hockeyNormalize'
  * Uses the collection 'nhl_goalie_stats_historical'
  */
 async function buildGoalieIndex(db) {
-  if (!db) throw new Error('Database instance missing in buildGoalieIndex');
-
   console.log('[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...');
   const coll = db.collection('nhl_goalie_stats_historical');
-
   const cursor = coll.find({}, { projection: { _id: 0 } });
   const all = await cursor.toArray();
 
   if (!all.length) {
     console.warn('[GOALIE INDEX] ⚠️ No goalie documents found — check MongoDB connection or collection name.');
-    return { byName: new Map(), byTeam: new Map(), byId: new Map() };
+    return { byName: new Map(), byTeam: new Map() };
   }
 
   const byName = new Map();
   const byTeam = new Map();
 
   for (const g of all) {
-    const name = normalizeGoalieName(g.goalie_name || g.name);
+    const name = normalizeGoalieName(g.name);
     const team = normalizeTeamAbbrev(g.team);
-    const gsax = g.gsax ?? g.goals_saved_above_expected ?? (g.xGoals - g.goals) ?? 0;
-
     if (!name || !team) continue;
 
-    const goalie = { ...g, name, teamAbbr: team, gsax };
-    byName.set(name.toLowerCase(), goalie);
+    const gsax = (g.xGoals ?? 0) - (g.goals ?? 0);
+    const rollingForm = g.games_played > 0 ? Math.min(5, (g.games_played / 82) * 5) : 2.5;
+
+    const merged = { ...g, name, teamAbbr: team, gsax, rollingForm };
+    byName.set(name, merged);
 
     if (!byTeam.has(team)) byTeam.set(team, []);
-    byTeam.get(team).push(goalie);
+    byTeam.get(team).push(merged);
   }
 
   // Sort each team’s goalies by most recent season
@@ -44,9 +42,9 @@ async function buildGoalieIndex(db) {
   }
 
   console.log(`[GOALIE INDEX] ✅ Hydrated ${byName.size} goalies from nhl_goalie_stats_historical`);
-  const sample = Array.from(byName.values()).slice(0, 3)
-    .map(g => `${g.name} (${g.teamAbbr}) - GSAx: ${g.gsax.toFixed(2)}`);
-  console.log("[GOALIE INDEX] Sample data preview:", sample);
+  console.log("[GOALIE INDEX] Sample data preview:", Array.from(byName.values()).slice(0, 3).map(g =>
+    `${g.name} (${g.teamAbbr}) - GSAx: ${g.gsax.toFixed(2)}`
+  ));
 
   return { byName, byTeam };
 }
