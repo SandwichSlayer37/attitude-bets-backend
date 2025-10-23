@@ -2,25 +2,43 @@
 const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize"); // Removed buildKey as it's not used here
 const { resolveStartingGoalies } = require("./goalielineup");
 
-async function addGoalieEdge(ctx, keyFactors) {
+async function addGoalieFactors(ctx, keyFactors) {
   const { officialGame, goalieIdx, homeAbbr, awayAbbr } = ctx;
   const { home: homeGoalie, away: awayGoalie } = await resolveStartingGoalies(officialGame, goalieIdx);
 
-  let goalieEdge = 0;
-  let explain = "No goalie data available.";
+  // --- Current Goalie Form ---
+  let currentForm = 0.0;
+  let formExplain = "No goalie form data available.";
 
-  if (homeGoalie && awayGoalie) {
-    const gsaxHome = homeGoalie.gsax ?? 0;
-    const gsaxAway = awayGoalie.gsax ?? 0;
-    goalieEdge = gsaxHome - gsaxAway;
-    explain = `${homeGoalie.name} (${homeAbbr}) vs ${awayGoalie.name} (${awayAbbr})`;
-    console.log(`[GOALIE EDGE] ${explain} → ΔGSAx: ${goalieEdge.toFixed(2)}`);
+  if (homeGoalie?.rollingForm !== undefined && awayGoalie?.rollingForm !== undefined) {
+    currentForm = (awayGoalie.rollingForm ?? 0) - (homeGoalie.rollingForm ?? 0);
+    formExplain = `${awayGoalie.name} (${awayAbbr}) vs ${homeGoalie.name} (${homeAbbr})`;
+  }
+
+  keyFactors.push({
+    name: "Current Goalie Form",
+    value: currentForm.toFixed(2),
+    explain: formExplain
+  });
+
+  // --- Historical Goalie Edge (GSAx) ---
+  let goalieEdge = 0.0;
+  let edgeExplain = "No goalie data available.";
+
+  if (homeGoalie?.gsax !== undefined && awayGoalie?.gsax !== undefined) {
+    const homeGsax = homeGoalie.gsax ?? 0;
+    const awayGsax = awayGoalie.gsax ?? 0;
+    goalieEdge = awayGsax - homeGsax;
+    edgeExplain = `${awayGoalie.name} (${awayAbbr}) vs ${homeGoalie.name} (${homeAbbr})`;
+    console.log(`[GOALIE EDGE] ${edgeExplain} → ΔGSAx: ${goalieEdge.toFixed(2)}`);
+  } else {
+    console.warn(`[WARN] Missing goalie GSAx data for ${awayAbbr} or ${homeAbbr}`);
   }
 
   keyFactors.push({
     name: "Historical Goalie Edge (GSAx)",
     value: goalieEdge.toFixed(2),
-    explain,
+    explain: edgeExplain
   });
 }
 
@@ -126,7 +144,7 @@ async function enrichPrediction(ctx, game, base, keyFactors) {
   ];
 
   // Add goalie edge to the list
-  await addGoalieEdge(ctx, allKeyFactors);
+  await addGoalieFactors(ctx, allKeyFactors);
 
   return { ...base, keyFactors: allKeyFactors };
   } catch (e) {
@@ -135,4 +153,4 @@ async function enrichPrediction(ctx, game, base, keyFactors) {
   }
 }
 
-module.exports = { enrichPrediction };
+module.exports = { enrichPrediction, addGoalieFactors };
