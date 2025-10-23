@@ -1,62 +1,70 @@
 const axios = require("axios");
 const { getCache, setCache } = require("./simpleCache");
+const { normalizeGoalieName, normalizeTeamAbbrev } = require("./hockeyNormalize");
 
 async function resolveStartingGoalies(officialGame, goalieIdx) {
-  const { homeTeam, awayTeam } = officialGame;
+  const { homeTeam, awayTeam } = officialGame || {};
   const starters = { home: null, away: null };
 
-  // --- A: NHL API probable starters ---
-  const probableHomeName = homeTeam?.probableStarterName;
-  const probableAwayName = awayTeam?.probableStarterName;
+  if (!homeTeam || !awayTeam) return starters;
 
-  if (probableHomeName) starters.home = goalieIdx.byName.get(probableHomeName.toLowerCase());
-  if (probableAwayName) starters.away = goalieIdx.byName.get(probableAwayName.toLowerCase());
+  // --- A. NHL probable starters ---
+  const probableHome = homeTeam.probableStarterName || homeTeam.probableStarter;
+  const probableAway = awayTeam.probableStarterName || awayTeam.probableStarter;
 
-  // --- B: Fallback – most recent starter by games_played ---
-  const getLikelyStarter = (teamAbbr) => {
+  if (probableHome)
+    starters.home = goalieIdx.byName.get(probableHome.toLowerCase()) || null;
+  if (probableAway)
+    starters.away = goalieIdx.byName.get(probableAway.toLowerCase()) || null;
+
+  // --- B. Fallback: last known starter by most games played ---
+  const mostPlayedGoalie = (teamAbbr) => {
     const goalies = goalieIdx.byTeam.get(teamAbbr);
     if (!goalies?.length) return null;
     return goalies.sort((a, b) => (b.games_played || 0) - (a.games_played || 0))[0];
   };
 
-  if (!starters.home) starters.home = getLikelyStarter(homeTeam?.abbrev);
-  if (!starters.away) starters.away = getLikelyStarter(awayTeam?.abbrev);
+  const homeAbbr = normalizeTeamAbbrev(homeTeam.abbrev);
+  const awayAbbr = normalizeTeamAbbrev(awayTeam.abbrev);
 
-  // --- C: ESPN fallback, with 15-min cache ---
+  if (!starters.home) starters.home = mostPlayedGoalie(homeAbbr);
+  if (!starters.away) starters.away = mostPlayedGoalie(awayAbbr);
+
+  // --- C. ESPN fallback (with caching) ---
   if ((!starters.home || !starters.away)) {
-    let espnData = getCache("espn_scoreboard");
-    if (!espnData) {
+    let espnCache = getCache("espn_lineups");
+    if (!espnCache) {
       try {
-        const res = await axios.get("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard");
-        espnData = res.data;
-        setCache("espn_scoreboard", espnData, 900); // cache 15 min
-        console.log("[ESPN Fallback] Cached new scoreboard data.");
+        const espnRes = await axios.get("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard");
+        espnCache = espnRes.data;
+        setCache("espn_lineups", espnCache, 900); // cache for 15 min
       } catch (err) {
-        console.warn("[ESPN Fallback] Failed to fetch ESPN data:", err.message);
+        console.warn("[ESPN Fallback] Failed to fetch ESPN lineups:", err.message);
       }
     }
 
-    if (espnData?.events?.length) {
-      const espnGame = espnData.events.find(e =>
-        e.competitions?.[0]?.competitors?.some(c => c.team?.abbreviation === homeTeam?.abbrev)
-      );
+    if (espnCache?.events?.length) {
+      for (const ev of espnCache.events) {
+        const comp = ev.competitions?.[0];
+        if (!comp) continue;
 
-      if (espnGame) {
-        for (const c of espnGame.competitions[0].competitors) {
-          const goalieName = c.probables?.find(p => p.position?.abbreviation === "G")?.athlete?.displayName;
-          if (goalieName) {
-            const normalized = goalieName.toLowerCase();
-            if (c.homeAway === "home") starters.home = goalieIdx.byName.get(normalized) || starters.home;
-            else starters.away = goalieIdx.byName.get(normalized) || starters.away;
-          }
+        for (const team of comp.competitors || []) {
+          const abbr = normalizeTeamAbbrev(team.team?.abbreviation);
+          const goalieProbable = team.probables?.find(
+            (p) => p.position?.abbreviation === "G"
+          );
+          const goalieName = goalieProbable?.athlete?.displayName;
+
+          if (!goalieName) continue;
+
+          if (abbr === homeAbbr)
+            starters.home = goalieIdx.byName.get(goalieName.toLowerCase()) || starters.home;
+          if (abbr === awayAbbr)
+            starters.away = goalieIdx.byName.get(goalieName.toLowerCase()) || starters.away;
         }
       }
     }
   }
-
-  // Final fallback if both failed
-  if (!starters.home) starters.home = getLikelyStarter(homeTeam?.abbrev);
-  if (!starters.away) starters.away = getLikelyStarter(awayTeam?.abbrev);
 
   return starters;
 }

@@ -1,34 +1,27 @@
-const { normalizeTeamAbbrev } = require("./teamMap");
+const deburr = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-// Normalize human names: remove accents/punct, collapse spaces, upper
-function normalizePersonName(name) {
-  if (!name) return null;
-  return name
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Za-z\s'-]/g, "")
+function normalizeTeamAbbrev(raw = "") {
+  if (!raw) return "";
+  const s = deburr(raw).toUpperCase().trim();
+  const map = {
+    "MONTRÉAL": "MTL",
+    "MONTREAL": "MTL",
+    "UTAH MAMMOTH": "UTA", // for expansion team
+    "T.B": "TBL",
+    "TB": "TBL",
+    // add others as needed
+  };
+  return map[s] || s.slice(0, 3);
+}
+
+function normalizeGoalieName(name = "") {
+  return deburr(name)
+    .replace(/\./g, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .toUpperCase();
-}
-
-// Some common goalie aliases mapping (expand when you find misses)
-const GOALIE_ALIASES = new Map([
-  ["ALEX LYON", "ALEX LYGON"], // example of bad feeds—edit as discovered
-]);
-
-function normalizeGoalieName(name) {
-  const n = normalizePersonName(name);
-  if (!n) return null;
-  return GOALIE_ALIASES.get(n) || n;
-}
-
-function buildKey(gameObj, homeAbbr, awayAbbr) {
-  return `${normalizeTeamAbbrev(awayAbbr)}@${normalizeTeamAbbrev(homeAbbr)}`;
+    .trim();
 }
 
 module.exports = {
   normalizeTeamAbbrev,
   normalizeGoalieName,
-  normalizePersonName,
-  buildKey
 };

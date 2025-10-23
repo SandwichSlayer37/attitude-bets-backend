@@ -1,7 +1,28 @@
 // Takes a raw matchup prediction and enriches with Key Factors.
 const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize"); // Removed buildKey as it's not used here
 const { resolveStartingGoalies } = require("./goalielineup");
-const { neutralGoalieMetrics } = require("./goalieIndex");
+
+async function addGoalieEdge(ctx, keyFactors) {
+  const { officialGame, goalieIdx, homeAbbr, awayAbbr } = ctx;
+  const { home: homeGoalie, away: awayGoalie } = await resolveStartingGoalies(officialGame, goalieIdx);
+
+  let goalieEdge = 0;
+  let explain = "No goalie data available.";
+
+  if (homeGoalie && awayGoalie) {
+    const gsaxHome = homeGoalie.gsax ?? 0;
+    const gsaxAway = awayGoalie.gsax ?? 0;
+    goalieEdge = gsaxHome - gsaxAway;
+    explain = `${homeGoalie.name} (${homeAbbr}) vs ${awayGoalie.name} (${awayAbbr})`;
+    console.log(`[GOALIE EDGE] ${explain} → ΔGSAx: ${goalieEdge.toFixed(2)}`);
+  }
+
+  keyFactors.push({
+    name: "Historical Goalie Edge (GSAx)",
+    value: goalieEdge.toFixed(2),
+    explain,
+  });
+}
 
 function explain(reason, ctx = {}) {
   console.warn(`[KF-EXPLAIN] ${reason}`, ctx);
@@ -23,7 +44,7 @@ function nonNullNum(v, fb = 0) {
  *  - game: { dateStr, homeAbbr, awayAbbr, homeGoalie, awayGoalie }
  *  - base: { modelProb, odds, ... }
  */
-async function enrichPrediction(ctx, game, base) {
+async function enrichPrediction(ctx, game, base, keyFactors) {
   try {
   const H = normalizeTeamAbbrev(game.homeAbbr);
   const A = normalizeTeamAbbrev(game.awayAbbr);
@@ -45,16 +66,8 @@ async function enrichPrediction(ctx, game, base) {
   const liveHomeSafe = liveHome || {};
   const liveAwaySafe = liveAway || {};
 
-  // Goalie block
-  const { home: homeGoalie, away: awayGoalie } = await resolveStartingGoalies(ctx.officialGame, ctx.goalieIdx);
-  if (!homeGoalie || !awayGoalie) {
-    explain('missing_goalie_from_index', { matchup: `${A}@${H}`, foundHome: !!homeGoalie, foundAway: !!awayGoalie });
-  }
-  const homeGm = homeGoalie || neutralGoalieMetrics();
-  const awayGm = awayGoalie || neutralGoalieMetrics();
-
   // Key factors—always produce numbers, never “N/A”
-  const keyFactors = [
+  const allKeyFactors = [
     {
       label: "Hybrid Data (Live + Historical Player Ratings)",
       home: nonNullNum(advHomeSafe.hybridRating, 50),
@@ -74,22 +87,6 @@ async function enrichPrediction(ctx, game, base) {
       away: nonNullNum(advAwaySafe.injuryImpact, 0),
       units: "players",
       explanation: "Number of materially impactful absences (est.)."
-    },
-    {
-      label: "Current Goalie Form",
-      home: nonNullNum(homeGm?.rollingForm, 2.5),
-      away: nonNullNum(awayGm?.rollingForm, 2.5),
-      units: "0..5",
-      explanation: homeGoalie ? `Starter identified: ${homeGoalie.name}` : "Starter unknown—neutral form applied."
-    },
-    {
-      label: "Historical Goalie Edge (GSAx)",
-      home: nonNullNum(homeGm.gsax, 0.0),
-      away: nonNullNum(awayGm.gsax, 0.0),
-      units: "goals saved above expected",
-      explanation: (homeGoalie && awayGoalie)
-        ? `${homeGoalie.name} (${H}) vs ${awayGoalie.name} (${A})`
-        : 'No goalie data available'
     },
     {
       label: "5-on-5 xG%",
@@ -128,7 +125,10 @@ async function enrichPrediction(ctx, game, base) {
     }
   ];
 
-  return { ...base, keyFactors };
+  // Add goalie edge to the list
+  await addGoalieEdge(ctx, allKeyFactors);
+
+  return { ...base, keyFactors: allKeyFactors };
   } catch (e) {
     console.warn('[KF-EXPLAIN] Enrichment failure:', e.message);
     return { ...base, keyFactors: [], goalieStats: {}, hybridRating: 0 };

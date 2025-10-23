@@ -18,32 +18,24 @@ async function buildGoalieIndex(db) {
 
   if (!all.length) {
     console.warn('[GOALIE INDEX] ⚠️ No goalie documents found — check MongoDB connection or collection name.');
-    return { byName: new Map(), byTeam: new Map() };
+    return { byName: new Map(), byTeam: new Map(), byId: new Map() };
   }
 
   const byName = new Map();
   const byTeam = new Map();
-  const byId = new Map(); // Create a new map for lookups by ID
 
   for (const g of all) {
-    const name = normalizeGoalieName(g.name);
+    const name = normalizeGoalieName(g.goalie_name || g.name);
     const team = normalizeTeamAbbrev(g.team);
+    const gsax = g.gsax ?? g.goals_saved_above_expected ?? (g.xGoals - g.goals) ?? 0;
+
     if (!name || !team) continue;
 
-    const cur = byName.get(name) || {};
-    // Standardize GSAx calculation from multiple possible field names
-    const gsax = g.gsax ?? (g.xGoals - g.goals) ?? (g.expectedGoalsAgainst - g.actualGoalsAgainst) ?? 0;
-    const merged = { ...cur, ...g, teamAbbr: team, gsax };
-
-    byName.set(name, merged);
-    
-    // Populate the byId map
-    if (g.playerId) {
-      byId.set(String(g.playerId), merged);
-    }
+    const goalie = { ...g, name, teamAbbr: team, gsax };
+    byName.set(name.toLowerCase(), goalie);
 
     if (!byTeam.has(team)) byTeam.set(team, []);
-    byTeam.get(team).push(merged);
+    byTeam.get(team).push(goalie);
   }
 
   // Sort each team’s goalies by most recent season
@@ -52,27 +44,11 @@ async function buildGoalieIndex(db) {
   }
 
   console.log(`[GOALIE INDEX] ✅ Hydrated ${byName.size} goalies from nhl_goalie_stats_historical`);
+  const sample = Array.from(byName.values()).slice(0, 3)
+    .map(g => `${g.name} (${g.teamAbbr}) - GSAx: ${g.gsax.toFixed(2)}`);
+  console.log("[GOALIE INDEX] Sample data preview:", sample);
 
-  // Diagnostic mode: log a few samples with GSAx for verification
-  const sample = Array.from(byName.values()).slice(0, 3);
-  console.log('[GOALIE INDEX] Sample data preview:', sample.map(g =>
-    `${g.name} (${g.team}) - GSAx: ${g.gsax.toFixed(2)}`
-  ));
-
-  return { byName, byTeam, byId };
+  return { byName, byTeam };
 }
 
-function neutralGoalieMetrics() {
-  return { gsax: 0.0, rollingForm: 2.5, explain: "Neutral goalie fallback" };
-}
-
-module.exports = {
-    buildGoalieIndex,
-    neutralGoalieMetrics,
-    // FIX: Add the missing findByPlayerId function to the exports
-    findByPlayerId: (playerId) => {
-        if (!playerId) return null;
-        // Correctly look up from the 'byId' map using the stringified player ID.
-        return ctx.goalieIdx.byId.get(String(playerId));
-    }
-};
+module.exports = { buildGoalieIndex };
