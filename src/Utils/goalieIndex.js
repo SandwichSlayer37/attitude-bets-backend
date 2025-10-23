@@ -23,6 +23,7 @@ async function buildGoalieIndex(db) {
 
   const byName = new Map();
   const byTeam = new Map();
+  const byId = new Map(); // Create a new map for lookups by ID
 
   for (const g of all) {
     const name = normalizeGoalieName(g.name);
@@ -30,8 +31,16 @@ async function buildGoalieIndex(db) {
     if (!name || !team) continue;
 
     const cur = byName.get(name) || {};
-    const merged = { ...cur, ...g, teamAbbr: team };
+    // Standardize GSAx calculation from multiple possible field names
+    const gsax = g.gsax ?? (g.xGoals - g.goals) ?? (g.expectedGoalsAgainst - g.actualGoalsAgainst) ?? 0;
+    const merged = { ...cur, ...g, teamAbbr: team, gsax };
+
     byName.set(name, merged);
+    
+    // Populate the byId map
+    if (g.playerId) {
+      byId.set(String(g.playerId), merged);
+    }
 
     if (!byTeam.has(team)) byTeam.set(team, []);
     byTeam.get(team).push(merged);
@@ -44,13 +53,13 @@ async function buildGoalieIndex(db) {
 
   console.log(`[GOALIE INDEX] ✅ Hydrated ${byName.size} goalies from nhl_goalie_stats_historical`);
 
-  // Diagnostic mode: log a few samples for verification
+  // Diagnostic mode: log a few samples with GSAx for verification
   const sample = Array.from(byName.values()).slice(0, 3);
   console.log('[GOALIE INDEX] Sample data preview:', sample.map(g =>
-    `${g.name} (${g.team}) - Season: ${g.season}, Games: ${g.games_played}`
+    `${g.name} (${g.team}) - GSAx: ${g.gsax.toFixed(2)}`
   ));
 
-  return { byName, byTeam };
+  return { byName, byTeam, byId };
 }
 
 function neutralGoalieMetrics() {
@@ -63,8 +72,7 @@ module.exports = {
     // FIX: Add the missing findByPlayerId function to the exports
     findByPlayerId: (playerId) => {
         if (!playerId) return null;
-        // Assuming goalieIndex is a Map populated by buildGoalieIndex and stored in ctx
-        // This function will be used against the hydrated index.
-        return ctx.goalieIdx.byName.get(String(playerId));
+        // Correctly look up from the 'byId' map using the stringified player ID.
+        return ctx.goalieIdx.byId.get(String(playerId));
     }
 };

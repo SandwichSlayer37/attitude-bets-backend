@@ -1,19 +1,19 @@
 // src/utils/simpleCache.js
-const cache = new Map();
+const cache = {};
 
-function setCache(key, value, ttlMs = 60000) {
-  cache.set(key, { value, expires: Date.now() + ttlMs });
+function setCache(key, value, ttlSeconds = 600) {
+  cache[key] = { value, expires: Date.now() + ttlSeconds * 1000 };
   return value;
 }
 
 function getCache(key) {
-  const hit = cache.get(key);
-  if (!hit) return null;
-  if (Date.now() > hit.expires) {
-    cache.delete(key);
+  const item = cache[key];
+  if (!item) return null;
+  if (Date.now() > item.expires) {
+    delete cache[key];
     return null;
   }
-  return hit.value;
+  return item.value;
 }
 
 module.exports = { setCache, getCache };

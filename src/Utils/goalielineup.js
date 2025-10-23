@@ -1,90 +1,64 @@
 const axios = require("axios");
-const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize");
+const { getCache, setCache } = require("./simpleCache");
 
-// Caches in-memory per process. In prod you already have a simpleCache; this keeps service self-contained.
-const cache = new Map();
-const TTL_MS = 5 * 60 * 1000;
+async function resolveStartingGoalies(officialGame, goalieIdx) {
+  const { homeTeam, awayTeam } = officialGame;
+  const starters = { home: null, away: null };
 
-function setCache(k, v) { cache.set(k, { v, exp: Date.now() + TTL_MS }); }
-function getCache(k) {
-  const hit = cache.get(k);
-  if (!hit) return null;
-  if (Date.now() > hit.exp) { cache.delete(k); return null; }
-  return hit.v;
-}
+  // --- A: NHL API probable starters ---
+  const probableHomeName = homeTeam?.probableStarterName;
+  const probableAwayName = awayTeam?.probableStarterName;
 
-/**
- * Fetch NHL schedule for yyyy-mm-dd, then locate gamePk -> fetch boxscore for probable/starting goalies.
- * Fallback: ESPN scoreboard parsing (limited), then return nulls if unknown.
- */
-async function fetchProbableGoalies(dateStr, homeAbbr, awayAbbr) {
-  const key = `probGoalies:${dateStr}:${homeAbbr}:${awayAbbr}`;
-  const cached = getCache(key);
-  if (cached) return cached;
+  if (probableHomeName) starters.home = goalieIdx.byName.get(probableHomeName.toLowerCase());
+  if (probableAwayName) starters.away = goalieIdx.byName.get(probableAwayName.toLowerCase());
 
-  const H = normalizeTeamAbbrev(homeAbbr);
-  const A = normalizeTeamAbbrev(awayAbbr);
+  // --- B: Fallback – most recent starter by games_played ---
+  const getLikelyStarter = (teamAbbr) => {
+    const goalies = goalieIdx.byTeam.get(teamAbbr);
+    if (!goalies?.length) return null;
+    return goalies.sort((a, b) => (b.games_played || 0) - (a.games_played || 0))[0];
+  };
 
-  // NHL schedule v1
-  const schedUrl = `https://api-web.nhle.com/v1/schedule/${dateStr}`;
-  let gamePk = null;
-  try {
-    const { data } = await axios.get(schedUrl, { timeout: 8000 });
-    // Find matching game by team abbrevs
-    for (const g of data.games || []) {
-      const ha = normalizeTeamAbbrev(g.awayTeam?.abbrev);
-      const hh = normalizeTeamAbbrev(g.homeTeam?.abbrev);
-      if (ha === A && hh === H) { gamePk = g.id; break; } // Found game
+  if (!starters.home) starters.home = getLikelyStarter(homeTeam?.abbrev);
+  if (!starters.away) starters.away = getLikelyStarter(awayTeam?.abbrev);
+
+  // --- C: ESPN fallback, with 15-min cache ---
+  if ((!starters.home || !starters.away)) {
+    let espnData = getCache("espn_scoreboard");
+    if (!espnData) {
+      try {
+        const res = await axios.get("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard");
+        espnData = res.data;
+        setCache("espn_scoreboard", espnData, 900); // cache 15 min
+        console.log("[ESPN Fallback] Cached new scoreboard data.");
+      } catch (err) {
+        console.warn("[ESPN Fallback] Failed to fetch ESPN data:", err.message);
+      }
     }
-  } catch (e) {
-    console.warn(`[GOALIE] NHL schedule fetch failed for ${dateStr}:`, e.message);
-  }
 
-  let home = null, away = null;
+    if (espnData?.events?.length) {
+      const espnGame = espnData.events.find(e =>
+        e.competitions?.[0]?.competitors?.some(c => c.team?.abbreviation === homeTeam?.abbrev)
+      );
 
-  if (gamePk) {
-    try {
-      // Gamecenter boxscore has current lineup close to game time
-      const boxUrl = `https://api-web.nhle.com/v1/gamecenter/${gamePk}/boxscore`;
-      const { data: box } = await axios.get(boxUrl, { timeout: 8000 });
-
-      const findStarter = (teamObj) => {
-        const goalies = (teamObj.goalies || []).map(g => g.firstName?.default + " " + g.lastName?.default);
-        // Heuristic: first in list is expected starter when "starters" not explicitly flagged
-        return (goalies[0] && normalizeGoalieName(goalies[0])) || null;
-      };
-
-      home = findStarter(box.homeTeam);
-      away = findStarter(box.awayTeam);
-    } catch (e) {
-      console.warn(`[GOALIE] NHL boxscore fetch failed for gamePk ${gamePk}:`, e.message);
-    }
-  }
-
-  // ESPN fallback (light): if still missing, attempt to pull roster/last starter
-  if ((!home || !away)) {
-    try {
-      const yyyymmdd = dateStr.replace(/-/g, "");
-      const espnUrl = `https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=${yyyymmdd}`;
-      const { data } = await axios.get(espnUrl, { timeout: 8000 });
-      for (const ev of data.events || []) {
-        const comp = ev.competitions?.[0];
-        if (!comp) continue;
-        const tHome = normalizeTeamAbbrev(comp.competitors?.find(c=>c.homeAway==="home")?.team?.abbreviation);
-        const tAway = normalizeTeamAbbrev(comp.competitors?.find(c=>c.homeAway==="away")?.team?.abbreviation);
-        if (tHome === H && tAway === A) {
-          // ESPN rarely tags probables—best-effort parse from notes
-          // Left as future enhancement; we keep the NHL boxscore as primary.
+      if (espnGame) {
+        for (const c of espnGame.competitions[0].competitors) {
+          const goalieName = c.probables?.find(p => p.position?.abbreviation === "G")?.athlete?.displayName;
+          if (goalieName) {
+            const normalized = goalieName.toLowerCase();
+            if (c.homeAway === "home") starters.home = goalieIdx.byName.get(normalized) || starters.home;
+            else starters.away = goalieIdx.byName.get(normalized) || starters.away;
+          }
         }
       }
-    } catch (e) {
-      console.warn(`[GOALIE] ESPN fallback fetch failed for ${dateStr}:`, e.message);
     }
   }
 
-  const result = { homeGoalie: home, awayGoalie: away, source: home || away ? "nhl" : "unknown" };
-  setCache(key, result);
-  return result;
+  // Final fallback if both failed
+  if (!starters.home) starters.home = getLikelyStarter(homeTeam?.abbrev);
+  if (!starters.away) starters.away = getLikelyStarter(awayTeam?.abbrev);
+
+  return starters;
 }
 
-module.exports = { fetchProbableGoalies };
+module.exports = { resolveStartingGoalies };

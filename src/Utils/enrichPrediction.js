@@ -1,5 +1,6 @@
 // Takes a raw matchup prediction and enriches with Key Factors.
 const { normalizeTeamAbbrev, normalizeGoalieName } = require("./hockeyNormalize"); // Removed buildKey as it's not used here
+const { resolveStartingGoalies } = require("./goalielineup");
 const { neutralGoalieMetrics } = require("./goalieIndex");
 
 function explain(reason, ctx = {}) {
@@ -22,7 +23,7 @@ function nonNullNum(v, fb = 0) {
  *  - game: { dateStr, homeAbbr, awayAbbr, homeGoalie, awayGoalie }
  *  - base: { modelProb, odds, ... }
  */
-function enrichPrediction(ctx, game, base) {
+async function enrichPrediction(ctx, game, base) {
   try {
   const H = normalizeTeamAbbrev(game.homeAbbr);
   const A = normalizeTeamAbbrev(game.awayAbbr);
@@ -45,20 +46,12 @@ function enrichPrediction(ctx, game, base) {
   const liveAwaySafe = liveAway || {};
 
   // Goalie block
-  const homeGoalieName = normalizeGoalieName(game.homeGoalie);
-  const awayGoalieName = normalizeGoalieName(game.awayGoalie);
-
-  const homeG = homeGoalieName ? ctx.goalieIdx.byName.get(homeGoalieName) :
-                (ctx.goalieIdx.byTeam.get(H)?.[0] || null);
-  const awayG = awayGoalieName ? ctx.goalieIdx.byName.get(awayGoalieName) :
-                (ctx.goalieIdx.byTeam.get(A)?.[0] || null);
-
-  if (!homeG || !awayG) {
-    explain('missing_goalie_from_index', { matchup: `${A}@${H}`, homeGoalieName, awayGoalieName, foundHome: !!homeG, foundAway: !!awayG });
+  const { home: homeGoalie, away: awayGoalie } = await resolveStartingGoalies(ctx.officialGame, ctx.goalieIdx);
+  if (!homeGoalie || !awayGoalie) {
+    explain('missing_goalie_from_index', { matchup: `${A}@${H}`, foundHome: !!homeGoalie, foundAway: !!awayGoalie });
   }
-
-  const homeGm = homeG || neutralGoalieMetrics();
-  const awayGm = awayG || neutralGoalieMetrics();
+  const homeGm = homeGoalie || neutralGoalieMetrics();
+  const awayGm = awayGoalie || neutralGoalieMetrics();
 
   // Key factors—always produce numbers, never “N/A”
   const keyFactors = [
@@ -87,15 +80,15 @@ function enrichPrediction(ctx, game, base) {
       home: nonNullNum(homeGm?.rollingForm, 2.5),
       away: nonNullNum(awayGm?.rollingForm, 2.5),
       units: "0..5",
-      explanation: homeG ? `Starter identified: ${homeG.name}` : "Starter unknown—neutral form applied."
+      explanation: homeGoalie ? `Starter identified: ${homeGoalie.name}` : "Starter unknown—neutral form applied."
     },
     {
       label: "Historical Goalie Edge (GSAx)",
-      home: nonNullNum((homeGm?.xGoals || 0) - (homeGm?.goals || 0), 0.0),
-      away: nonNullNum((awayGm?.xGoals || 0) - (awayGm?.goals || 0), 0.0),
+      home: nonNullNum(homeGm.gsax, 0.0),
+      away: nonNullNum(awayGm.gsax, 0.0),
       units: "goals saved above expected",
-      explanation: (homeG && awayG)
-        ? `Based on ${homeG.name} (${homeG.teamAbbr}) vs ${awayG.name} (${awayG.teamAbbr})`
+      explanation: (homeGoalie && awayGoalie)
+        ? `${homeGoalie.name} (${H}) vs ${awayGoalie.name} (${A})`
         : 'No goalie data available'
     },
     {
