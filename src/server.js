@@ -1430,6 +1430,7 @@ async function getPredictionsForSport(sportKey) {
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
+                officialGame: officialGame, // Pass the official game object
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
                      homeId: officialGame.homeTeam.probableStarterId,
