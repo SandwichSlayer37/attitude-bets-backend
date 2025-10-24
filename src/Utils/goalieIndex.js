@@ -31,10 +31,10 @@ async function buildGoalieIndex() {
     console.log('[GOALIE INDEX] Sample data preview:', sample);
 }
 
-async function hydrateGoalieIndex() {
+async function hydrateGoalieIndex(db) {
     console.log('[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...');
     try {
-        await buildGoalieIndex();
+        await buildGoalieIndex(db);
     } catch (error) {
         console.error('[GOALIE INDEX] 🚨 Failed to build goalie index:', error);
     }
