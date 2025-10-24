@@ -1,14 +1,12 @@
 // Index of goalie metrics from Mongo (Moneypuck historical).
 // Expect a collection 'goalies' with docs like: { name, teamAbbr, season, gsax, rollingForm (0..5) ... }
 
-const { getDb } = require('../db');
 // FIX: Import the new normalizeGoalieName function
 const { normalizeGoalieName } = require('./hockeyNormalize'); 
 
 let goalieIndex = new Map();
 
-async function buildGoalieIndex() {
-    const db = getDb();
+async function buildGoalieIndex(db) {
     const goalies = await db.collection('nhl_goalie_stats_historical').find({}).toArray();
     goalieIndex.clear();
     
@@ -34,7 +32,7 @@ async function buildGoalieIndex() {
 async function hydrateGoalieIndex(db) {
     console.log('[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...');
     try {
-        await buildGoalieIndex(db);
+        await buildGoalieIndex(db); // Pass the db object down
     } catch (error) {
         console.error('[GOALIE INDEX] 🚨 Failed to build goalie index:', error);
     }
