@@ -1345,15 +1345,12 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        const { oddsGames, fusedTeamData, gameDataLookup, historicalGoalieData } = await fetchAllPredictionData();
+        const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
 
         if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
             throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
         }
 
-        // --- NEW: Fetch live game details from ESPN ---
-        const espnData = await fetchEspnData('icehockey_nhl');
-        
         const predictions = [];
         for (const game of oddsGames) {
             const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
@@ -1366,21 +1363,13 @@ async function getPredictionsForSport(sportKey) {
                 console.warn(`[SKIP] No schedule game found for odds game: ${game.away_team} @ ${game.home_team}.`);
                 continue;
             }
-
-            // --- NEW: Attach live ESPN data to the game object ---
-            const espnGame = espnData.events.find(e => {
-                const home = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                const away = e.competitions[0].competitors.find(c => c.homeAway === 'away');
-                return normalizeTeamAbbrev(home.team.abbreviation) === homeAbbr && normalizeTeamAbbrev(away.team.abbreviation) === awayAbbr;
-            });
-            if(espnGame) game.espnData = espnGame;
             
+            // This context object is now correctly structured for the prediction engine
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
-                historicalGoalieData,
                 homeAbbr,
                 awayAbbr,
             };
@@ -1931,11 +1920,60 @@ app.get('*', (req, res) => {
 app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   try {
-    await hydrateIndexes();
+    await hydrateIndexes(); // This will now call the corrected goalie hydration
   } catch (e) {
     console.error("Startup init failed:", e);
   }
 });
+
+async function getPredictionsForSport(sportKey) {
+    if (sportKey !== 'icehockey_nhl') return [];
+
+    try {
+        console.log("🚀 Starting new definitive prediction pipeline...");
+
+        const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
+
+        if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
+            throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
+        }
+
+        const predictions = [];
+        for (const game of oddsGames) {
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+            if (!homeAbbr || !awayAbbr) continue;
+
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const gameData = gameDataLookup[matchupKey];
+            if (!gameData) {
+                console.warn(`[SKIP] No schedule game found for odds game: ${game.away_team} @ ${game.home_team}.`);
+                continue;
+            }
+            
+            const context = {
+                teamStats: fusedTeamData,
+                allGames: oddsGames,
+                h2h: { home: '0-0', away: '0-0' },
+                probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
+                homeAbbr,
+                awayAbbr,
+            };
+
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
+            if (predictionData) {
+                predictions.push({ game, prediction: predictionData });
+            }
+        }
+        
+        console.log(`✅ Generated ${predictions.length} predictions.`);
+        return predictions.filter(p => p && p.prediction);
+
+    } catch (error) {
+        console.error("Critical error during the new prediction pipeline:", error.message);
+        return []; 
+    }
+}
 
 // Global error middleware (must be AFTER all other app.use and routes)
 app.use((err, req, res, next) => {
