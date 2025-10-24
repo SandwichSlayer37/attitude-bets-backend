@@ -66,8 +66,15 @@ const normalizeTeamAbbrev = (abbrev) => {
     return upperAbbrev;
 };
 
+// FIX: Create and export the missing normalizeGoalieName function
+const normalizeGoalieName = (name) => {
+    if (!name) return '';
+    return name.trim(); // A simple trim is a good starting point
+};
+
 module.exports = {
     normalizeTeamAbbrev,
     canonicalTeamNameMap,
-    teamToAbbrMap
+    teamToAbbrMap,
+    normalizeGoalieName // Export the new function
 };
