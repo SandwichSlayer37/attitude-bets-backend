@@ -1345,98 +1345,78 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources in parallel ---
-        const lastCompletedSeason = new Date().getFullYear() - 1;
-        const [oddsData, scheduleData, historicalGoalieData, teamStandingsData] = await Promise.all([
+        // --- Step 1: Fetch all data sources with corrected fallbacks ---
+        const [oddsData, scheduleData, teamStatsData] = await Promise.all([
             getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
             axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
-            getHistoricalGoalieData(lastCompletedSeason).catch(e => { console.error("Failed to fetch historical goalies:", e.message); return {}; }),
-            axios.get('https://api-web.nhle.com/v1/standings/now').then(res => res.data.standings).catch(e => { console.error("Failed to fetch team standings:", e.message); return []; })
+            // This fetcher now has a built-in fallback for live team stats
+            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => { 
+                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
+                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
+                return data.standings;
+            })
         ]);
 
-        if (!scheduleData?.gameWeek || !teamStandingsData || !oddsData) {
+        if (!scheduleData?.gameWeek || !teamStatsData || !oddsData) {
             throw new Error("Critical data failure: Could not fetch all required data sources.");
         }
 
         // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStandingsData.reduce((acc, team) => {
-            const abbr = team.teamAbbrev.default;
+        const liveTeamStats = teamStatsData.reduce((acc, team) => {
+            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: `${team.streakCode}${team.streakCount}`,
-                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
-                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0,
+                    streak: team.streakCode ? `${team.streakCode}${team.streakCount || ''}` : 'N/A',
+                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
+                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
+                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
                 };
             }
             return acc;
         }, {});
         console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
 
-        // NEW: Create a lookup map from the official schedule, keyed by abbreviations. This is our "source of truth".
-        const scheduleMap = (scheduleData.gameWeek.flatMap(day => day.games) || []).reduce((acc, game) => {
-            const homeAbbr = game.homeTeam?.abbrev;
-            const awayAbbr = game.awayTeam?.abbrev;
+        const oddsMap = (oddsData || []).reduce((acc, game) => {
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
             if (homeAbbr && awayAbbr) {
-                const key = `${awayAbbr}@${homeAbbr}`; // e.g., "FLA@BUF"
-                acc[key] = game; // Store the entire official game object
+                const key = `${awayAbbr}@${homeAbbr}`;
+                acc[key] = game;
             }
             return acc;
         }, {});
-        console.log(`✅ Created schedule map with ${Object.keys(scheduleMap).length} games.`);
+        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
 
-        // --- Step 3: Iterate through the ODDS data and use the schedule map to find matches ---
+        // --- Step 3: Iterate through the official schedule (our "source of truth") ---
+        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
         const predictions = [];
-        const skippedGames = []; // For debugging
 
-        const tryNormalize = (teamName) => {
-          if (!teamName) return null;
-          const key = teamName.toLowerCase().trim();
-        
-          const mapped =
-            teamToAbbrMap[key] ||
-            teamToAbbrMap[canonicalTeamNameMap[key]] ||
-            teamToAbbrMap[teamName.replace(/\s+/g, '')] ||
-            teamToAbbrMap[teamName.replace('.', '').replace('St ', 'St. ')];
-        
-          if (!mapped) {
-            console.warn(`[WARN] Could not map team name: ${teamName}`);
-          }
-        
-          return normalizeTeamAbbrev(mapped || teamName.slice(0, 3).toUpperCase());
-        };
-
-        for (const oddsGame of oddsData) {
-            // Convert odds team names to their abbreviations to create a matching key
-            const homeAbbr = tryNormalize(oddsGame.home_team);
-            const awayAbbr = tryNormalize(oddsGame.away_team);
-
-            if (!homeAbbr || !awayAbbr) {
-                skippedGames.push(oddsGame);
-                continue;
-            }
-
-            const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const officialGame = scheduleMap[matchupKey]; // Find the match in our new map
-
-            if (!officialGame) {
-                console.warn(`[WARN] No schedule game found for odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}. Skipping.`);
-                skippedGames.push(oddsGame);
-                continue;
-            }
+        for (const officialGame of (officialGames || [])) {
+            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
+            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
+            if (!homeAbbr || !awayAbbr) continue;
             
+            const matchupKey = `${awayAbbr}@${homeAbbr}`;
+            const oddsGame = oddsMap[matchupKey];
+            const homeStats = liveTeamStats[homeAbbr];
+            const awayStats = liveTeamStats[awayAbbr];
+
+            if (!homeStats || !awayStats || !oddsGame) {
+                console.warn(`[SKIP] Missing data for ${awayAbbr}@${homeAbbr}.`);
+                continue;
+            }
+
+            // This context object is now correctly structured for the prediction engine
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
-                officialGame: officialGame, // Pass the official game object
                 h2h: { home: '0-0', away: '0-0' },
                 probableStarters: {
-                     homeId: officialGame.homeTeam.probableStarterId,
-                     awayId: officialGame.awayTeam.probableStarterId
+                     homeId: officialGame.homeTeam?.probableStarterId,
+                     awayId: officialGame.awayTeam?.probableStarterId
                 },
-                historicalGoalieData,
                 homeAbbr,
                 awayAbbr,
             };
@@ -1447,10 +1427,6 @@ async function getPredictionsForSport(sportKey) {
             }
         }
         
-        if (skippedGames.length > 0) {
-            console.log("[DEBUG] Skipped odds games:", skippedGames.map(g => `${g.away_team} @ ${g.home_team}`));
-        }
-
         console.log(`✅ Generated ${predictions.length} predictions.`);
         return predictions;
 
