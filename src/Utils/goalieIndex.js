@@ -49,4 +49,12 @@ async function buildGoalieIndex(db) {
   return { byName, byTeam };
 }
 
-module.exports = { buildGoalieIndex };
+module.exports = {
+    buildGoalieIndex,
+    // FIX: Add the missing findByPlayerId function to the exports
+    findByPlayerId: (playerId) => {
+        if (!playerId) return null;
+        // This assumes goalieIndex is a Map populated by buildGoalieIndex
+        return goalieIndex.get(String(playerId)); // Ensure we look up by string
+    }
+};
