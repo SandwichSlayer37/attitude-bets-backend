@@ -1,69 +1,46 @@
-const teamAliasMap = {
-    'Anaheim Ducks': ['Ducks', 'ANA'],
-    'Arizona Coyotes': ['Coyotes', 'ARI'],
-    'Boston Bruins': ['Bruins', 'BOS'],
-    'Buffalo Sabres': ['Sabres', 'BUF'],
-    'Calgary Flames': ['Flames', 'CGY'],
-    'Carolina Hurricanes': ['Hurricanes', 'Canes', 'CAR'],
-    'Chicago Blackhawks': ['Blackhawks', 'CHI'],
-    'Colorado Avalanche': ['Avalanche', 'Avs', 'COL'],
-    'Columbus Blue Jackets': ['Blue Jackets', 'CBJ'],
-    'Dallas Stars': ['Stars', 'DAL'],
-    'Detroit Red Wings': ['Red Wings', 'DET'],
-    'Edmonton Oilers': ['Oilers', 'EDM'],
-    'Florida Panthers': ['Panthers', 'FLA'],
-    'Los Angeles Kings': ['Kings', 'LAK', 'Los Angeles'],
-    'Minnesota Wild': ['Wild', 'MIN'],
-    // FIX: Added 'Montreal Canadiens' as an alias to handle the accent mark difference
-    'Montréal Canadiens': ['Canadiens', 'Habs', 'MTL', 'Montreal Canadiens'],
-    'Nashville Predators': ['Predators', 'NSH'],
-    'New Jersey Devils': ['Devils', 'NJD'],
-    'New York Islanders': ['Islanders', 'Isles', 'NYI'],
-    'New York Rangers': ['Rangers', 'NYR'],
-    'Ottawa Senators': ['Senators', 'Sens', 'OTT'],
-    'Philadelphia Flyers': ['Flyers', 'PHI'],
-    'Pittsburgh Penguins': ['Penguins', 'PIT'],
-    'San Jose Sharks': ['Sharks', 'SJS'],
-    'Seattle Kraken': ['Kraken', 'SEA'],
-    'St. Louis Blues': ['Blues', 'STL', 'St Louis Blues'],
-    'Tampa Bay Lightning': ['Lightning', 'Bolts', 'TBL', 'T.B'],
-    'Toronto Maple Leafs': ['Maple Leafs', 'TOR'],
-    'Vancouver Canucks': ['Canucks', 'VAN'],
-    'Vegas Golden Knights': ['Golden Knights', 'VGK'],
-    'Washington Capitals': ['Capitals', 'WSH'],
-    'Winnipeg Jets': ['Jets', 'WPG'],
-    // FIX: Added the new Utah team name
-    'Utah Hockey Club': ['Utah', 'UTA', 'Utah Mammoth'] 
+const teamToAbbrMap = {
+  "montreal canadiens": "MTL",
+  "montréal canadiens": "MTL",
+  "utah mammoth": "UTA",
+  "utah hockey club": "UTA",
+  "tampa bay lightning": "TBL",
+  "st louis blues": "STL",
+  "st. louis blues": "STL",
+  "los angeles kings": "LAK",
+  "new jersey devils": "NJD",
+  "vegas golden knights": "VGK",
+  "new york rangers": "NYR",
+  "new york islanders": "NYI",
+  "anaheim ducks": "ANA",
+  "arizona coyotes": "ARI",
+  "boston bruins": "BOS",
+  "buffalo sabres": "BUF",
+  "calgary flames": "CGY",
+  "carolina hurricanes": "CAR",
+  "chicago blackhawks": "CHI",
+  "colorado avalanche": "COL",
+  "columbus blue jackets": "CBJ",
+  "dallas stars": "DAL",
+  "detroit red wings": "DET",
+  "edmonton oilers": "EDM",
+  "florida panthers": "FLA",
+  "minnesota wild": "MIN",
+  "nashville predators": "NSH",
+  "ottawa senators": "OTT",
+  "philadelphia flyers": "PHI",
+  "pittsburgh penguins": "PIT",
+  "san jose sharks": "SJS",
+  "seattle kraken": "SEA",
+  "toronto maple leafs": "TOR",
+  "vancouver canucks": "VAN",
+  "washington capitals": "WSH",
+  "winnipeg jets": "WPG"
 };
 
-const teamToAbbrMap = {};
-const canonicalTeamNameMap = {};
-
-Object.keys(teamAliasMap).forEach(canonicalName => {
-    const abbr = teamAliasMap[canonicalName][teamAliasMap[canonicalName].length - 1];
-    teamToAbbrMap[canonicalName] = abbr;
-
-    const lowerCanonical = canonicalName.toLowerCase();
-    if (!canonicalTeamNameMap[lowerCanonical]) {
-        canonicalTeamNameMap[lowerCanonical] = canonicalName;
-    }
-    
-    teamAliasMap[canonicalName].forEach(alias => {
-        const lowerAlias = alias.toLowerCase();
-        if (!canonicalTeamNameMap[lowerAlias]) {
-            canonicalTeamNameMap[lowerAlias] = canonicalName;
-        }
-    });
-});
-
-const normalizeTeamAbbrev = (abbrev) => {
-    if (!abbrev) return '';
-    const upperAbbrev = abbrev.toUpperCase();
-    if (upperAbbrev === 'L.A') return 'LAK';
-    if (upperAbbrev === 'N.J') return 'NJD';
-    if (upperAbbrev === 'S.J') return 'SJS';
-    if (upperAbbrev === 'T.B') return 'TBL';
-    return upperAbbrev;
+function normalizeTeamAbbrev(name = "") {
+  if (!name) return "";
+  const cleanedName = name.toLowerCase().replace(/[^\w\s]/gi, "").trim();
+  return teamToAbbrMap[cleanedName] || cleanedName.toUpperCase().slice(0, 3);
 };
 
 // FIX: Create and export the missing normalizeGoalieName function
@@ -74,7 +51,6 @@ const normalizeGoalieName = (name) => {
 
 module.exports = {
     normalizeTeamAbbrev,
-    canonicalTeamNameMap,
     teamToAbbrMap,
     normalizeGoalieName // Export the new function
 };

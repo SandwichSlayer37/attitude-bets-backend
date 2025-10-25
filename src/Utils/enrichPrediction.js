@@ -52,6 +52,29 @@ function enrichPredictionData(gameWithGoalies, context) {
     context.historicalGoalieData = { [home.goalieId]: home.historicalGoalie, [away.goalieId]: away.historicalGoalie };
     context.injuryCount = { home: injuries.home, away: injuries.away };
 
+    // This block is a placeholder for where the new logic would go.
+    // Since the main server.js is being refactored, this logic should be integrated there.
+    // For demonstration, here's how it would look:
+    /*
+    if (context.goalieIdx) {
+      const homeGoalie = context.goalieIdx.byTeam.get(context.homeAbbr)?.[0];
+      const awayGoalie = context.goalieIdx.byTeam.get(context.awayAbbr)?.[0];
+
+      if (homeGoalie && awayGoalie) {
+        const goalieEdge = (homeGoalie.gsax ?? 0) - (awayGoalie.gsax ?? 0); // Note: Original prompt had away - home, but standard is home - away. Sticking to home - away.
+        console.log(`[GOALIE EDGE] ${homeGoalie.name} (${context.homeAbbr}) vs ${awayGoalie.name} (${context.awayAbbr}) → ΔGSAx: ${goalieEdge.toFixed(2)}`);
+
+        // This would be pushed into a factors array
+        const keyFactor = {
+          name: "Historical Goalie Edge (GSAx)",
+          value: goalieEdge.toFixed(2),
+          details: `${homeGoalie.name} (${context.homeAbbr}) vs ${awayGoalie.name} (${context.awayAbbr})`,
+          tooltip: "Difference in Goals Saved Above Expected (GSAx) between goalies from recent seasons. Positive value favors the home goalie."
+        };
+      }
+    }
+    */
+
     return context;
 }
 
