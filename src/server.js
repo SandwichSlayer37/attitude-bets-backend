@@ -24,7 +24,7 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
-const { buildGoalieIndex, findByPlayerId, getGoalieIndex } = require('./Utils/goalieIndex');
+const { buildGoalieIndex, findByPlayerId, getGoalieIndex } = require('./Utils/goalieIndex'); // Correctly import buildGoalieIndex
 const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
@@ -1190,115 +1190,37 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // --- Step 1: Fetch all data sources in parallel with robust error handling ---
-        const [oddsData, scheduleData, teamStatsData, espnData] = await Promise.all([
-            getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-            axios.get('https://api-web.nhle.com/v1/schedule/now').then(res => res.data).catch(e => { console.error("Failed to fetch schedule:", e.message); return null; }),
-            // This fetcher now has a built-in fallback for live team stats
-            axios.get('https://api-web.nhle.com/v1/club-stats/now/All').then(res => res.data).catch(async (e) => { 
-                console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-                const { data } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-                return data.standings;
-            }),
-            fetchEspnData('icehockey_nhl').catch(e => { console.error("Failed to fetch ESPN data:", e.message); return { events: [] }; })
-        ]);
+        const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
 
-        // FIX: Directly get the hydrated goalie index instead of re-fetching.
-        const historicalGoalieData = getGoalieIndex(); // Get the pre-hydrated index
-
-        if (!scheduleData?.gameWeek || !teamStatsData || !oddsData || !historicalGoalieData) {
-            throw new Error("Critical data failure: Could not fetch or access all required data sources.");
+        if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
+            throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
         }
 
-        // --- Step 2: Process and map data for reliable lookups ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => {
-            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
-            if (abbr) {
-                const gamesPlayed = safeNum(team.gamesPlayed);
-                acc[abbr] = {
-                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                    streak: team.streakCode ? `${team.streakCode}${team.streakCount || ''}` : 'N/A',
-                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0), // FIX: Correct fallback calculation
-                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0), // FIX: Correct fallback calculation
-                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
-                };
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
-
-        const oddsMap = (oddsData || []).reduce((acc, game) => {
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]); // FIX: Use full map chain
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]); // FIX: Use full map chain
-            if (homeAbbr && awayAbbr) {
-                const key = `${awayAbbr}@${homeAbbr}`;
-                acc[key] = game;
-            }
-            return acc;
-        }, {});
-        console.log(`✅ Created odds map with ${Object.keys(oddsMap).length} games.`);
-        
-        // --- Step 3: Iterate through the official schedule (our "source of truth") ---
-        const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
         const predictions = [];
-        
-        for (const officialGame of (officialGames || [])) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
+        for (const game of oddsGames) {
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
             if (!homeAbbr || !awayAbbr) continue;
-            
+
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[matchupKey];
-            if (!oddsGame) {
-                console.warn(`[SKIP] No matching odds found for schedule game: ${awayAbbr}@${homeAbbr}`);
+            const gameData = gameDataLookup[matchupKey];
+            if (!gameData) {
+                console.warn(`[SKIP] No schedule game found for odds game: ${game.away_team} @ ${game.home_team}.`);
                 continue;
             }
-
-            // --- Enrichment logic is now consolidated here ---
-            let homeGoalieId = officialGame.homeTeam.probableStarterId;
-            let awayGoalieId = officialGame.awayTeam.probableStarterId;
-            let homeInjuryCount = 0;
-            let awayInjuryCount = 0;
-
-            const espnGame = (espnData.events || []).find(e => {
-                const home = e.competitions[0]?.competitors?.find(c => c.homeAway === 'home');
-                const away = e.competitions[0]?.competitors?.find(c => c.homeAway === 'away');
-                return normalizeTeamAbbrev(home?.team?.abbreviation) === homeAbbr && normalizeTeamAbbrev(away?.team?.abbreviation) === awayAbbr;
-            });
-
-            if (espnGame) {
-                oddsGame.espnData = espnGame; // Attach live game data
-                const competition = espnGame.competitions[0];
-                const homeCompetitor = competition?.competitors?.find(c => c.homeAway === 'home');
-                const awayCompetitor = competition?.competitors?.find(c => c.homeAway === 'away');
-
-                if (!homeGoalieId) {
-                    const probable = homeCompetitor?.leaders?.find(l => l.name === 'probables');
-                    homeGoalieId = probable?.leaders?.[0]?.athlete?.id;
-                }
-                if (!awayGoalieId) {
-                    const probable = awayCompetitor?.leaders?.find(l => l.name === 'probables');
-                    awayGoalieId = probable?.leaders?.[0]?.athlete?.id;
-                }
-                
-                homeInjuryCount = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === homeAbbr).length;
-                awayInjuryCount = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === awayAbbr).length;
-            }
-            // --- End Enrichment ---
-
+            
             const context = {
-                teamStats: liveTeamStats,
-                allGames: oddsData,
+                teamStats: fusedTeamData,
+                allGames: oddsGames,
                 h2h: { home: '0-0', away: '0-0' },
-                probableStarters: { homeId: officialGame.homeTeam?.probableStarterId, awayId: officialGame.awayTeam?.probableStarterId },
-                injuryCount: { home: homeInjuryCount, away: awayInjuryCount },
+                probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
                 homeAbbr,
                 awayAbbr,
             };
 
-            const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
             if (predictionData) {
-                predictions.push({ game: oddsGame, prediction: predictionData });
+                predictions.push({ game, prediction: predictionData });
             }
         }
         
