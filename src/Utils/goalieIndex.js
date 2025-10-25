@@ -62,5 +62,12 @@ async function hydrateGoalieIndex(db) {
 module.exports = {
     hydrateGoalieIndex,
     buildGoalieIndex,
-    getGoalieIndex: () => goalieIndex // Keep for compatibility if needed elsewhere
+    getGoalieIndex: () => goalieIndex,
+    findByPlayerId: (playerId) => {
+        if (!playerId) return null;
+        // The goalieIndex is now a Map where keys are player IDs.
+        // This function provides a clean way to access it.
+        const goalieData = goalieIndex.get(String(playerId));
+        return goalieData || null;
+    },
 };
