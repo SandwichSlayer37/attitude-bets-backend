@@ -1243,8 +1243,28 @@ async function getPredictionsForSport(sportKey) {
         }
 
         // --- Step 2: Process live team stats ---
-        const liveTeamStats = teamStatsData.reduce((acc, team) => { /* ... (existing logic is correct) ... */ });
-        const oddsMap = (oddsData || []).reduce((acc, game) => { /* ... (existing logic is correct) ... */ });
+        const liveTeamStats = teamStatsData.reduce((acc, team) => {
+            const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
+            if (abbr) {
+                const gamesPlayed = safeNum(team.gamesPlayed);
+                acc[abbr] = {
+                    record: `${team.wins}-${team.losses}-${team.otLosses}`,
+                    streak: team.streakCode ? `${team.streakCode}${team.streakCount || ''}` : 'N/A',
+                    goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
+                    goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
+                    faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
+                };
+            }
+            return acc;
+        }, {});
+        const oddsMap = (oddsData || []).reduce((acc, game) => {
+            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
+            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
+            if (homeAbbr && awayAbbr) {
+                acc[`${awayAbbr}@${homeAbbr}`] = game;
+            }
+            return acc;
+        }, {});
 
         // --- Step 3: Iterate through the official schedule and enrich data ---
         const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
