@@ -1235,6 +1235,11 @@ async function getPredictionsForSport(sportKey) {
             fetchEspnData('icehockey_nhl').catch(e => { console.error("Failed to fetch ESPN data:", e.message); return { events: [] }; })
         ]);
 
+        // Bonus: Add Debug Logs Once
+        if (oddsData && oddsData.length > 0) {
+            console.log("🎯 Sample odds data:", oddsData[0]);
+        }
+
         // FIX: Directly get the hydrated goalie index instead of re-fetching.
         const historicalGoalieData = getGoalieIndex();
 
@@ -1271,13 +1276,34 @@ async function getPredictionsForSport(sportKey) {
         const predictions = [];
 
         for (const officialGame of (officialGames || [])) {
-            const oddsGame = officialGame; // Assuming oddsGame is the same as officialGame for this logic
-            const homeAbbr = normalizeTeamAbbrev(oddsGame.home_team);
-            const awayAbbr = normalizeTeamAbbrev(oddsGame.away_team);
+            const oddsGame = officialGame;
+            const homeTeamName =
+              oddsGame.home_team ||
+              oddsGame.home?.name ||
+              oddsGame.home?.team ||
+              oddsGame.home ||
+              oddsGame.teams?.home?.name ||
+              null;
+
+            const awayTeamName =
+              oddsGame.away_team ||
+              oddsGame.away?.name ||
+              oddsGame.away?.team ||
+              oddsGame.away ||
+              oddsGame.teams?.away?.name ||
+              null;
+
+            if (!homeTeamName || !awayTeamName) {
+              console.warn(`[WARN] Missing team names in oddsGame:`, oddsGame);
+              continue;
+            }
+
+            const homeAbbr = normalizeTeamAbbrev(homeTeamName);
+            const awayAbbr = normalizeTeamAbbrev(awayTeamName);
 
             if (!homeAbbr || !awayAbbr) {
-              console.warn(`[WARN] Could not normalize team name(s): ${oddsGame.away_team} @ ${oddsGame.home_team}`);
-              continue;
+                console.warn(`[WARN] Could not normalize team name(s): ${awayTeamName} @ ${homeTeamName}`);
+                continue;
             }
             
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
