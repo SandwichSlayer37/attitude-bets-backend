@@ -1365,9 +1365,7 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
-        // MODIFIED: Fetch ESPN data alongside other sources
         const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
-        const espnData = await fetchEspnData('icehockey_nhl');
 
         if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
             throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
@@ -1379,25 +1377,6 @@ async function getPredictionsForSport(sportKey) {
             const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
             if (!homeAbbr || !awayAbbr) continue;
 
-            // MODIFIED: Find the matching ESPN game and enrich the game object
-            const espnGame = espnData.events.find(e => {
-                const home = e.competitions[0].competitors.find(c => c.homeAway === 'home');
-                const away = e.competitions[0].competitors.find(c => c.homeAway === 'away');
-                return normalizeTeamAbbrev(home?.team?.abbreviation) === homeAbbr && normalizeTeamAbbrev(away?.team?.abbreviation) === awayAbbr;
-            });
-
-            // Attach live ESPN data to the game object for the UI
-            if (espnGame) game.espnData = espnGame;
-
-            // Extract injury counts from the ESPN game data
-            const injuryCount = {};
-            if (espnGame?.competitions?.[0]?.injuries) {
-                espnGame.competitions[0].injuries.forEach(injuryReport => {
-                    const teamAbbr = normalizeTeamAbbrev(injuryReport.team.abbreviation);
-                    injuryCount[teamAbbr] = (injuryReport.injuries || []).length;
-                });
-            }
-
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
             const gameData = gameDataLookup[matchupKey];
             if (!gameData) {
@@ -1405,18 +1384,13 @@ async function getPredictionsForSport(sportKey) {
                 continue;
             }
             
-            // MODIFIED: Fallback logic for goalie IDs using ESPN data
-            const homeGoalieId = gameData.homeId || espnGame?.competitions?.[0]?.competitors?.find(c => c.homeAway === 'home')?.leaders?.find(l => l.name === 'probables')?.leaders?.[0]?.athlete?.id;
-            const awayGoalieId = gameData.awayId || espnGame?.competitions?.[0]?.competitors?.find(c => c.homeAway === 'away')?.leaders?.find(l => l.name === 'probables')?.leaders?.[0]?.athlete?.id;
-
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
                 h2h: { home: '0-0', away: '0-0' },
-                probableStarters: { homeId: homeGoalieId, awayId: awayGoalieId },
+                probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
                 homeAbbr,
                 awayAbbr,
-                injuryCount, // Pass the new injury data
             };
 
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
