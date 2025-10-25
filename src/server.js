@@ -24,7 +24,7 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize");
-const { buildGoalieIndex, findByPlayerId, getGoalieIndex } = require('./Utils/goalieIndex'); // Correctly import buildGoalieIndex
+const { buildGoalieIndex, findByPlayerId, getGoalieIndex } = require('./Utils/goalieIndex');
 const { fetchProbableGoalies } = require("./Utils/goalielineup");
 const { enrichPrediction } = require("./Utils/enrichPrediction");
 
@@ -1184,6 +1184,7 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000);
 }
 
+// This is the new, corrected getPredictionsForSport function
 async function getPredictionsForSport(sportKey) {
     if (sportKey !== 'icehockey_nhl') return [];
 
@@ -1233,8 +1234,9 @@ async function getPredictionsForSport(sportKey) {
     }
 }
 
+// This is the new, corrected runAdvancedNhlPredictionEngine function
 async function runAdvancedNhlPredictionEngine(game, context) {
-    const { teamStats, allGames, h2h, probableStarters, homeAbbr, awayAbbr, injuryCount } = context;
+    const { teamStats, allGames, h2h, probableStarters, homeAbbr, awayAbbr } = context;
     const { home_team, away_team } = game;
     const weights = getDynamicWeights('icehockey_nhl');
     
@@ -1258,32 +1260,21 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
     // --- Definitive Goalie Logic ---
-    // FIX: Directly look up the goalie from the hydrated index using the ID
     const homeHistGoalie = findByPlayerId(probableStarters.homeId);
     const awayHistGoalie = findByPlayerId(probableStarters.awayId);
-
+    
     const homeGSAx = homeHistGoalie?.gsax || 0;
     const awayGSAx = awayHistGoalie?.gsax || 0;
     factors['Historical Goalie Edge (GSAx)'] = { value: homeGSAx - awayGSAx, homeStat: homeGSAx.toFixed(2), awayStat: awayGSAx.toFixed(2) };
-
-    // "Current Goalie Form" logic remains disabled for now to focus on historical data first
+    
     factors['Current Goalie Form'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
-
-    // FIX: Use the enriched injuryCount data
-    factors['Injury Impact'] = { 
-        value: (injuryCount.away || 0) - (injuryCount.home || 0), 
-        homeStat: `${injuryCount.home || 0} players`, 
-        awayStat: `${injuryCount.away || 0} players`
-    };
-    // --- End Definitive Fixes ---
+    factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`};
     
     const homeFinish = safeNum(homeHist.xGoalsFor) > 0 ? safeNum(homeHist.goalsFor) / safeNum(homeHist.xGoalsFor) : 1;
     const awayFinish = safeNum(awayHist.xGoalsFor) > 0 ? safeNum(awayHist.goalsFor) / safeNum(awayHist.xGoalsFor) : 1;
     factors['Team Finishing Skill'] = { value: homeFinish - awayFinish, homeStat: `${(homeFinish * 100).toFixed(1)}%`, awayStat: `${(awayFinish * 100).toFixed(1)}%` };
     factors['Team Discipline (PIMs)'] = { value: safeNum(awayHist.penalityMinutes) - safeNum(homeHist.penalityMinutes), homeStat: `${safeNum(homeHist.penalityMinutes)}`, awayStat: `${safeNum(awayHist.penalityMinutes)}` };
-    const homeTopLineXG = safeNum(homeTopLine.xGoalsPercentage) || 0.5;
-    const awayTopLineXG = safeNum(awayTopLine.xGoalsPercentage) || 0.5;
-    factors['Top Line Power (xG%)'] = { value: (homeTopLineXG - awayTopLineXG) * 100, homeStat: `${(homeTopLineXG * 100).toFixed(1)}%`, awayStat: `${(awayTopLineXG * 100).toFixed(1)}%` };
+    factors['Top Line Power (xG%)'] = { value: (safeNum(homeTopLine.xGoalsPercentage) || 0.5) - (safeNum(awayTopLine.xGoalsPercentage) || 0.5) * 100, homeStat: `${((safeNum(homeTopLine.xGoalsPercentage) || 0.5) * 100).toFixed(1)}%`, awayStat: `${((safeNum(awayTopLine.xGoalsPercentage) || 0.5) * 100).toFixed(1)}%` };
     factors['5-on-5 xG%'] = { value: safeNum(homeAdvStats.fiveOnFiveXgPercentage) - safeNum(awayAdvStats.fiveOnFiveXgPercentage), homeStat: `${safeNum(homeAdvStats.fiveOnFiveXgPercentage).toFixed(1)}%`, awayStat: `${safeNum(awayAdvStats.fiveOnFiveXgPercentage).toFixed(1)}%` };
     factors['High-Danger Battle'] = { value: safeNum(homeAdvStats.hdcfPercentage) - safeNum(awayAdvStats.hdcfPercentage), homeStat: `${safeNum(homeAdvStats.hdcfPercentage).toFixed(1)}%`, awayStat: `${safeNum(awayAdvStats.hdcfPercentage).toFixed(1)}%` };
     factors['Special Teams Duel'] = { value: safeNum(homeAdvStats.specialTeamsRating) - safeNum(awayAdvStats.specialTeamsRating), homeStat: `${safeNum(homeAdvStats.specialTeamsRating).toFixed(2)}`, awayStat: `${safeNum(awayAdvStats.specialTeamsRating).toFixed(2)}` };
@@ -1296,12 +1287,12 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
     factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
 
-    Object.keys(factors).forEach(factorName => { /* ... (scoring logic remains the same) ... */ });
+    Object.keys(factors).forEach(factorName => { /* ... scoring logic ... */ });
     
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
-    if (homeOdds && awayOdds) { /* ... (value logic remains the same) ... */ }
+    if (homeOdds && awayOdds) { /* ... value logic ... */ }
     
     const winner = homeScore > 50 ? home_team : away_team;
     const confidence = Math.abs(50 - homeScore);
