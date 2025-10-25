@@ -1271,13 +1271,31 @@ async function getPredictionsForSport(sportKey) {
         const predictions = [];
 
         for (const officialGame of (officialGames || [])) {
-            const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || '');
-            const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || '');
-            if (!homeAbbr || !awayAbbr) continue;
+            const oddsGame = officialGame; // Assuming oddsGame is the same as officialGame for this logic
+            const homeAbbr = normalizeTeamAbbrev(oddsGame.home_team);
+            const awayAbbr = normalizeTeamAbbrev(oddsGame.away_team);
+
+            if (!homeAbbr || !awayAbbr) {
+              console.warn(`[WARN] Could not normalize team name(s): ${oddsGame.away_team} @ ${oddsGame.home_team}`);
+              continue;
+            }
             
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const oddsGame = oddsMap[matchupKey];
-            if (!oddsGame) continue;
+            let scheduleGame = scheduleMap[matchupKey];
+
+            if (!scheduleGame) {
+              console.warn(`[WARN] No official match found for: ${matchupKey}. Trying fuzzy search...`);
+              const possibleMatch = Object.keys(scheduleMap).find(k =>
+                k.includes(homeAbbr) || k.includes(awayAbbr)
+              );
+              if (possibleMatch) {
+                console.log(`[INFO] Fuzzy matched ${matchupKey} → ${possibleMatch}`);
+                scheduleGame = scheduleMap[possibleMatch];
+              } else {
+                console.warn(`[DEBUG] Skipped odds game: ${oddsGame.away_team} @ ${oddsGame.home_team}`);
+                continue;
+              }
+            }
 
             // --- Enrichment logic is now consolidated here ---
             let homeGoalieId = officialGame.homeTeam.probableStarterId;
@@ -1310,6 +1328,7 @@ async function getPredictionsForSport(sportKey) {
             }
             // --- End Enrichment ---
 
+            console.log(`[MATCH] Processing: ${awayAbbr}@${homeAbbr}`);
             const context = {
                 teamStats: liveTeamStats,
                 allGames: oddsData,
