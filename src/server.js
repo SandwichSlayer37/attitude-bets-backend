@@ -1184,7 +1184,8 @@ async function getTeamSeasonAdvancedStats(team, season) {
     }, 86400000);
 }
 async function runAdvancedNhlPredictionEngine(game, context) {
-    const { teamStats, allGames, h2h, probableStarters, historicalGoalieData, homeAbbr, awayAbbr } = context;
+    // MODIFIED: Added injuryCount to the context destructuring
+    const { teamStats, allGames, h2h, probableStarters, historicalGoalieData, homeAbbr, awayAbbr, injuryCount } = context;
     const { home_team, away_team } = game;
     const weights = getDynamicWeights('icehockey_nhl');
     
@@ -1249,8 +1250,11 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Defensive Form (GA/GP)'] = { value: safeNum(awayRealTimeStats.goalsAgainstPerGame) - safeNum(homeRealTimeStats.goalsAgainstPerGame), homeStat: `${safeNum(homeRealTimeStats.goalsAgainstPerGame).toFixed(2)}`, awayStat: `${safeNum(awayRealTimeStats.goalsAgainstPerGame).toFixed(2)}` };
     factors['Hot Streak'] = { value: (safeText(homeRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(homeRealTimeStats.streak).substring(1) || '0', 10) - (safeText(awayRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(awayRealTimeStats.streak).substring(1) || '0', 10), homeStat: safeText(homeRealTimeStats.streak), awayStat: safeText(awayRealTimeStats.streak) };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
-    factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
-    factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`};
+    factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };    
+    // MODIFIED: Replaced placeholder injury logic with dynamic data
+    const homeInjuryImpact = injuryCount[homeAbbr] || 0;
+    const awayInjuryImpact = injuryCount[awayAbbr] || 0;
+    factors['Injury Impact'] = { value: (awayInjuryImpact - homeInjuryImpact), homeStat: `${homeInjuryImpact} players`, awayStat: `${awayInjuryImpact} players`};
     Object.keys(factors).forEach(factorName => { if (factors[factorName] && typeof factors[factorName].value === 'number' && !isNaN(factors[factorName].value)) { const factorKey = { 'Historical Goalie Edge (GSAx)': 'historicalGoalie', 'Team Finishing Skill': 'finishingSkill', 'Team Discipline (PIMs)': 'discipline', 'Top Line Power (xG%)': 'topLinePower', '5-on-5 xG%': 'fiveOnFiveXg', 'High-Danger Battle': 'highDangerBattle', 'Special Teams Duel': 'specialTeamsDuel', 'PDO (Luck Factor)': 'pdo', 'Faceoff Advantage': 'faceoffAdvantage', 'Current Goalie Form': 'goalie', 'Injury Impact': 'injury', 'Fatigue': 'fatigue', 'H2H (Season)': 'h2h', 'Hot Streak': 'hotStreak', 'Record': 'record', 'Offensive Form (G/GP)': 'offensiveForm', 'Defensive Form (GA/GP)': 'defensiveForm' }[factorName]; if (factorKey && weights[factorKey]) { homeScore += factors[factorName].value * weights[factorKey]; } } });
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
@@ -1345,7 +1349,9 @@ async function getPredictionsForSport(sportKey) {
     try {
         console.log("🚀 Starting new definitive prediction pipeline...");
 
+        // MODIFIED: Fetch ESPN data alongside other sources
         const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
+        const espnData = await fetchEspnData('icehockey_nhl');
 
         if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
             throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
@@ -1357,6 +1363,25 @@ async function getPredictionsForSport(sportKey) {
             const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
             if (!homeAbbr || !awayAbbr) continue;
 
+            // MODIFIED: Find the matching ESPN game and enrich the game object
+            const espnGame = espnData.events.find(e => {
+                const home = e.competitions[0].competitors.find(c => c.homeAway === 'home');
+                const away = e.competitions[0].competitors.find(c => c.homeAway === 'away');
+                return normalizeTeamAbbrev(home?.team?.abbreviation) === homeAbbr && normalizeTeamAbbrev(away?.team?.abbreviation) === awayAbbr;
+            });
+
+            // Attach live ESPN data to the game object for the UI
+            if (espnGame) game.espnData = espnGame;
+
+            // Extract injury counts from the ESPN game data
+            const injuryCount = {};
+            if (espnGame?.competitions?.[0]?.injuries) {
+                espnGame.competitions[0].injuries.forEach(injuryReport => {
+                    const teamAbbr = normalizeTeamAbbrev(injuryReport.team.abbreviation);
+                    injuryCount[teamAbbr] = (injuryReport.injuries || []).length;
+                });
+            }
+
             const matchupKey = `${awayAbbr}@${homeAbbr}`;
             const gameData = gameDataLookup[matchupKey];
             if (!gameData) {
@@ -1364,14 +1389,18 @@ async function getPredictionsForSport(sportKey) {
                 continue;
             }
             
-            // This context object is now correctly structured for the prediction engine
+            // MODIFIED: Fallback logic for goalie IDs using ESPN data
+            const homeGoalieId = gameData.homeId || espnGame?.competitions?.[0]?.competitors?.find(c => c.homeAway === 'home')?.leaders?.find(l => l.name === 'probables')?.leaders?.[0]?.athlete?.id;
+            const awayGoalieId = gameData.awayId || espnGame?.competitions?.[0]?.competitors?.find(c => c.homeAway === 'away')?.leaders?.find(l => l.name === 'probables')?.leaders?.[0]?.athlete?.id;
+
             const context = {
                 teamStats: fusedTeamData,
                 allGames: oddsGames,
                 h2h: { home: '0-0', away: '0-0' },
-                probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
+                probableStarters: { homeId: homeGoalieId, awayId: awayGoalieId },
                 homeAbbr,
                 awayAbbr,
+                injuryCount, // Pass the new injury data
             };
 
             const predictionData = await runAdvancedNhlPredictionEngine(game, context);
@@ -1925,55 +1954,6 @@ app.listen(PORT, async () => {
     console.error("Startup init failed:", e);
   }
 });
-
-async function getPredictionsForSport(sportKey) {
-    if (sportKey !== 'icehockey_nhl') return [];
-
-    try {
-        console.log("🚀 Starting new definitive prediction pipeline...");
-
-        const { oddsGames, fusedTeamData, gameDataLookup } = await fetchAllPredictionData();
-
-        if (!oddsGames || oddsGames.length === 0 || !fusedTeamData) {
-            throw new Error("Missing critical data (odds or team stats), cannot generate predictions.");
-        }
-
-        const predictions = [];
-        for (const game of oddsGames) {
-            const homeAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.home_team.toLowerCase()]]);
-            const awayAbbr = normalizeTeamAbbrev(teamToAbbrMap[canonicalTeamNameMap[game.away_team.toLowerCase()]]);
-            if (!homeAbbr || !awayAbbr) continue;
-
-            const matchupKey = `${awayAbbr}@${homeAbbr}`;
-            const gameData = gameDataLookup[matchupKey];
-            if (!gameData) {
-                console.warn(`[SKIP] No schedule game found for odds game: ${game.away_team} @ ${game.home_team}.`);
-                continue;
-            }
-            
-            const context = {
-                teamStats: fusedTeamData,
-                allGames: oddsGames,
-                h2h: { home: '0-0', away: '0-0' },
-                probableStarters: { homeId: gameData.homeId, awayId: gameData.awayId },
-                homeAbbr,
-                awayAbbr,
-            };
-
-            const predictionData = await runAdvancedNhlPredictionEngine(game, context);
-            if (predictionData) {
-                predictions.push({ game, prediction: predictionData });
-            }
-        }
-        
-        console.log(`✅ Generated ${predictions.length} predictions.`);
-        return predictions.filter(p => p && p.prediction);
-
-    } catch (error) {
-        console.error("Critical error during the new prediction pipeline:", error.message);
-        return []; 
-    }
-}
 
 // Global error middleware (must be AFTER all other app.use and routes)
 app.use((err, req, res, next) => {
