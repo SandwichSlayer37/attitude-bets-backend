@@ -41,9 +41,10 @@ async function hydrateGoalieIndex(db) {
 module.exports = {
     hydrateGoalieIndex,
     getGoalieIndex: () => goalieIndex,
-    // FIX: Ensure this function is exported correctly
     findByPlayerId: (playerId) => {
         if (!playerId) return null;
-        return goalieIndex.get(String(playerId)); // Ensure we look up by string
-    }
+        return goalieIndex.get(String(playerId));
+    },
+    // FIX: Add the missing buildGoalieIndex function to the exports
+    buildGoalieIndex 
 };
