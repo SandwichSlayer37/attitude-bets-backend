@@ -1,5 +1,4 @@
 // goalieAliasMap.js
-const { getGoalieIndex } = require("./goalieIndex.js");
 
 // Known spelling or format conflicts
 const manualAliases = {
@@ -13,12 +12,16 @@ const manualAliases = {
 
 let goalieAliasMap = new Map();
 
-async function buildGoalieAliasMap(mongo) {
+// This function now accepts the goalie index directly as a parameter.
+async function buildGoalieAliasMap(goalieData) {
   console.log("[GOALIE ALIAS MAP] Building alias map...");
-  const { index } = await getGoalieIndex(mongo);
+  if (!goalieData || !goalieData.index) {
+      console.warn("[GOALIE ALIAS MAP] ⚠️ No goalie data provided to build map.");
+      return new Map();
+  }
   goalieAliasMap = new Map();
 
-  for (const [id, goalie] of index.entries()) {
+  for (const [id, goalie] of goalieData.index.entries()) {
     const canonicalName = goalie.name.replace(",", "").trim();
     const aliases = manualAliases[canonicalName] || [];
 
@@ -37,10 +40,10 @@ function translateGoalieKey(nameOrId) {
   const str = String(nameOrId).trim().toLowerCase();
 
   for (const [canonical, data] of goalieAliasMap.entries()) {
-    if (data.playerId === str) return canonical;
+    if (String(data.playerId).toLowerCase() === str) return canonical;
     if (data.aliases.map(a => a.toLowerCase()).includes(str)) return canonical;
   }
-  return str;
+  return String(nameOrId).replace(",", "").trim();
 }
 
 module.exports = { buildGoalieAliasMap, translateGoalieKey };
