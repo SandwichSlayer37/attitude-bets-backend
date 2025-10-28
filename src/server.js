@@ -512,50 +512,42 @@ async function getGoalieStats() {
 }
 
 // NEW: Resilient function to fetch live team stats with a fallback
-// NEW: Resilient function to fetch live team stats with a fallback
 async function getLiveTeamStats() {
     try {
-        // FIX: Added a User-Agent header to the primary API call to prevent 404 errors.
-        const { data: teamStatsData } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All', {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-            }
-        });
-        if (!teamStatsData || !Array.isArray(teamStatsData) || teamStatsData.length === 0) {
-            throw new Error("Primary club stats API returned empty or invalid data.");
-        }
+        console.log('[STATS] Fetching live team stats from primary sources...');
+        const [standingsResponse, teamStatsResponse] = await Promise.all([
+            axios.get('https://api-web.nhle.com/v1/standings/now'),
+            axios.get('https://api.nhle.com/stats/rest/en/team/summary?sort=points&cayenneExp=gameTypeId=2') // More reliable endpoint
+        ]);
 
-        const fusedTeamData = teamStatsData.reduce((acc, team) => {
-            acc[team.abbreviation] = {
-                record: `${team.wins}-${team.losses}-${team.otLosses}`,
-                streak: `${team.streakCode}${team.streakCount}`,
-                goalsForPerGame: team.goalsForPerGame,
-                goalsAgainstPerGame: team.goalsAgainstPerGame,
-                faceoffWinPct: team.faceoffWinPct * 100, // Convert decimal to percentage
-            };
-            return acc;
-        }, {});
-        console.log(`✅ Successfully fetched live stats from primary club-stats API.`);
-        return fusedTeamData;
-    } catch (e) {
-        console.warn(`[WARN] Primary club-stats API failed (${e.message}). Falling back to standings API.`);
-        const { data: standingsDataResponse } = await axios.get('https://api-web.nhle.com/v1/standings/now');
-        if (!standingsDataResponse || !standingsDataResponse.standings) throw new Error("Fallback standings API also failed.");
-        
-        return (standingsDataResponse.standings).reduce((acc, team) => {
+        const standingsData = standingsResponse.data.standings;
+        const teamStatsData = teamStatsResponse.data.data;
+
+        const liveStats = {};
+        const statsMap = new Map(teamStatsData.map(team => [normalizeTeamAbbrev(team.teamFullName), team]));
+
+        for (const team of standingsData) {
             const abbr = normalizeTeamAbbrev(team.teamAbbrev.default);
             if (abbr) {
+                const detailedStats = statsMap.get(abbr);
                 const gamesPlayed = safeNum(team.gamesPlayed);
-                acc[abbr] = {
+
+                liveStats[abbr] = {
                     record: `${team.wins}-${team.losses}-${team.otLosses}`,
                     streak: `${team.streakCode}${team.streakCount}`,
-                    goalsForPerGame: gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0,
-                    goalsAgainstPerGame: gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0,
-                    faceoffWinPct: 0, // Not available in this API
+                    goalsForPerGame: detailedStats?.goalsForPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsFor) / gamesPlayed : 0),
+                    goalsAgainstPerGame: detailedStats?.goalsAgainstPerGame ?? (gamesPlayed > 0 ? safeNum(team.goalsAgainst) / gamesPlayed : 0),
+                    faceoffWinPct: detailedStats?.faceoffWinPct ? detailedStats.faceoffWinPct * 100 : 0,
                 };
             }
-            return acc;
-        }, {});
+        }
+        
+        console.log(`[STATS] ✅ Successfully built composite live stats for ${Object.keys(liveStats).length} teams.`);
+        return liveStats;
+
+    } catch (e) {
+        console.error(`❌ [STATS] Critical error fetching live team stats: ${e.message}.`);
+        return {}; // Return empty object on critical failure
     }
 }
 
