@@ -13,8 +13,12 @@ const manualAliases = {
 
 let goalieAliasMap = new Map();
 
-async function buildGoalieAliasMap() {
-  const { index } = await getGoalieIndex();
+async function buildGoalieAliasMap(mongo) {
+  if (!mongo) {
+    throw new Error("[GOALIE ALIAS MAP] ❌ Mongo client not provided.");
+  }
+
+  const { index } = await getGoalieIndex(mongo);
   goalieAliasMap = new Map();
 
   for (const [id, goalie] of index.entries()) {

@@ -6,9 +6,17 @@ function safeNum(val) {
   return isNaN(n) ? 0 : n;
 }
 
-async function getGoalieIndex(db) {
+/**
+ * Build an index of historical goalies from MongoDB.
+ * Requires a connected MongoDB client instance.
+ */
+async function getGoalieIndex(mongo) {
+  if (!mongo) {
+    throw new Error("[GOALIE INDEX] ❌ Mongo client not provided.");
+  }
+
   console.log("[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...");
-  const data = await db.collection("nhl_goalie_stats_historical")
+  const data = await mongo.collection("nhl_goalie_stats_historical")
     .find({ season: { $in: ["2023", "2024"] } })
     .toArray();
 
@@ -31,9 +39,13 @@ async function getGoalieIndex(db) {
   }
 
   console.log(`[GOALIE INDEX] ✅ Hydrated ${data.length} goalies from recent seasons (2023–2024)`);
-  console.log("[GOALIE INDEX] Sample data preview:",
-    data.slice(0, 3).map(g => `${g.name} (${g.team}) - GSAx: ${safeNum(g.xGoals) - safeNum(g.goals)}`)
-  );
+  if (data.length > 0) {
+    console.log("[GOALIE INDEX] Sample data preview:",
+      data.slice(0, 3).map(g => `${g.name} (${g.team}) - GSAx: ${safeNum(g.xGoals) - safeNum(g.goals)}`)
+    );
+  } else {
+    console.warn("[GOALIE INDEX] ⚠️ No goalie data found in Mongo collection.");
+  }
 
   return { index, byTeam };
 }
