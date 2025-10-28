@@ -1341,13 +1341,20 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
 async function hydrateIndexes() {
   try {
+    // Assuming `db` is initialized earlier as your MongoDB client or db handle
     console.log('[INIT] Hydrating all application indexes...');
-    const db = await connectToDb();
-    ctx.goalieIdx = await getGoalieIndex(db);
-    await buildGoalieAliasMap();
+    if (!db) {
+      console.error("[INIT] ❌ MongoDB connection is undefined! Attempting to connect...");
+      await connectToDb(); // This will set the global `db` variable
+    } else {
+      console.log("[INIT] ✅ MongoDB connection verified.");
+    }
+    ctx.goalieIdx = await getGoalieIndex(db);   // ✅ Pass the connection
+    await buildGoalieAliasMap(db);                 // ✅ Pass the connection
 
     // Optionally hydrate other team or skater indexes later here
     console.log('[INIT] Indexes hydrated successfully.');
+    return ctx.goalieIdx;
   } catch (err) {
     console.error('Failed to hydrate indexes:', err);
   }
