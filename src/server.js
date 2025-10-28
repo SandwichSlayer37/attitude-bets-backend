@@ -27,6 +27,7 @@ const { normalizeTeamAbbrev } = require("./Utils/teamMap.js");
 const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
 const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
+const { resolveGoalies } = require('./Utils/goalieResolver.js');
 
 const app = express();
 
@@ -1193,9 +1194,9 @@ async function getPredictionsForSport(sportKey) {
   if (sportKey !== "icehockey_nhl") return [];
 
   try {
-    console.log("🚀 Starting definitive NHL prediction pipeline...");
+    console.log("🚀 Starting definitive NHL prediction pipeline (API-only)...");
 
-    // 1. FETCH ALL DATA SOURCES IN PARALLEL
+    // The scraper call is now removed from Promise.all
     const [oddsData, scheduleResponse, liveStatsResponse, espnData] = await Promise.all([
       getOdds(sportKey).catch(e => { console.error("❌ Failed to fetch odds:", e.message); return []; }),
       axios.get("https://api-web.nhle.com/v1/schedule/now").then(res => res.data).catch(e => { console.error("❌ Failed to fetch NHL schedule:", e.message); return null; }),
@@ -1203,30 +1204,20 @@ async function getPredictionsForSport(sportKey) {
       fetchEspnData("icehockey_nhl").catch(e => { console.error("❌ Failed to fetch ESPN data:", e.message); return { events: [] }; }),
     ]);
 
-    // Ensure critical data is present before continuing
     if (!scheduleResponse?.gameWeek || !oddsData) {
       throw new Error("Critical data failure: Could not fetch NHL schedule or betting odds.");
     }
     
-    // The goalie index is now reliably hydrated at startup and available in `ctx`
     const historicalGoalieData = ctx.goalieIdx;
     if (!historicalGoalieData || !historicalGoalieData.index || historicalGoalieData.index.size === 0) {
         console.warn("⚠️ Goalie Index is not hydrated. Goalie stats will be missing.");
     }
 
-    // 2. CREATE A RELIABLE LOOKUP MAP FROM ODDS DATA
-    const oddsMap = new Map();
-    for (const game of oddsData) {
-      const homeNormalized = normalizeTeamAbbrev(game.home_team);
-      const awayNormalized = normalizeTeamAbbrev(game.away_team);
-      if (homeNormalized && awayNormalized) {
-        const key = `${awayNormalized}@${homeNormalized}`;
-        oddsMap.set(key, game);
-      }
-    }
-    console.log(`✅ Created odds map with ${oddsMap.size} games.`);
+    const oddsMap = new Map(oddsData.map(game => {
+        const key = `${normalizeTeamAbbrev(game.away_team)}@${normalizeTeamAbbrev(game.home_team)}`;
+        return [key, game];
+    }));
 
-    // 3. USE NHL SCHEDULE AS THE SINGLE SOURCE OF TRUTH
     const officialGames = scheduleResponse.gameWeek.flatMap(day => day.games);
     const predictions = [];
 
@@ -1236,68 +1227,32 @@ async function getPredictionsForSport(sportKey) {
       if (!homeAbbr || !awayAbbr) continue;
       
       const gameKey = `${awayAbbr}@${homeAbbr}`;
-
-      // 4. MATCH RELIABLY using the standardized key
       const oddsGame = oddsMap.get(gameKey);
-
-      if (!oddsGame) {
-        console.warn(`[SKIP] No matching odds found for schedule game: ${gameKey}`);
-        continue;
-      }
+      if (!oddsGame) continue;
       
-      console.log(`[MATCH] Found match for ${gameKey}. Preparing context...`);
-
-      // 5. ENRICH THE DATA & build a complete context object
-      const espnGame = (espnData.events || []).find(e => {
-          const home = e.competitions[0]?.competitors?.find(c => c.homeAway === 'home');
-          const away = e.competitions[0]?.competitors?.find(c => c.homeAway === 'away');
-          return normalizeTeamAbbrev(home?.team?.abbreviation) === homeAbbr && normalizeTeamAbbrev(away?.team?.abbreviation) === awayAbbr;
-      });
-
-      const injuryCount = { home: 0, away: 0 };
-      if (espnGame) {
-          const competition = espnGame.competitions[0];
-          injuryCount.home = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === homeAbbr).length;
-          injuryCount.away = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === awayAbbr).length;
-      }
+      // --- GOALIE RESOLUTION LOGIC ---
+      // Use the new, dedicated resolver function
+      const { homeId, awayId, source } = resolveGoalies(officialGame, espnData, historicalGoalieData);
+      console.log(`[GOALIE] Resolved for ${gameKey} via ${source}. HomeID: ${homeId || 'N/A'}, AwayID: ${awayId || 'N/A'}`);
 
       const context = {
-        teamStats: liveStatsResponse,
-        allGames: oddsData,
-        goalieIdx: historicalGoalieData,
-        probableStarters: {
-          homeId: officialGame.homeTeam?.probableStarterId,
-          awayId: officialGame.awayTeam?.probableStarterId,
-        },
-        injuryCount: injuryCount,
-        homeAbbr,
-        awayAbbr,
-        // FIX: Provide a default H2H object to prevent the 'Cannot read properties of undefined (reading 'home')' crash.
-        h2h: { home: '0-0-0', away: '0-0-0' }
+        teamStats: liveStatsResponse, allGames: oddsData, goalieIdx: historicalGoalieData,
+        probableStarters: { homeId, awayId }, // Pass the resolved IDs
+        homeAbbr, awayAbbr, h2h: { home: '0-0-0', away: '0-0-0' }
       };
 
-      // 6. RUN THE PREDICTION ENGINE with the complete context
       const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
-      
       if (predictionData) {
-        // The enrichGoalieData function is useful for adding the final goalie stats to the prediction object itself.
         enrichGoalieData(predictionData, context, homeAbbr, awayAbbr);
-        
-        // Add live game state from ESPN if available
-        if(espnGame) {
-            oddsGame.espnData = { status: espnGame.status, competitions: espnGame.competitions };
-        }
-        
         predictions.push({ game: oddsGame, prediction: predictionData });
       }
     }
 
     console.log(`✅ Generated ${predictions.length} total predictions.`);
-    return predictions.filter(p => p && p.prediction);
-
+    return predictions;
   } catch (error) {
     console.error("❌ Critical error during prediction pipeline:", error);
-    return []; // Return an empty array on failure to prevent frontend crashes
+    return [];
   }
 }
 
