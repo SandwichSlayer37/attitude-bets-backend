@@ -30,7 +30,7 @@ function enrichGoalieData(predictionData, context, homeAbbr, awayAbbr) {
         awayStat: awayGSAx.toFixed(2),
         explain: homeGoalie && awayGoalie
             ? `${homeGoalie.name.split(' ')[1]} vs ${awayGoalie.name.split(' ')[1]}`
-            : "Probable starter not confirmed."
+            : "Probable starter not yet announced by NHL."
     };
     
     // Placeholder for live goalie form - can be expanded later
