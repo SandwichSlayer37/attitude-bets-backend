@@ -24,9 +24,9 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize.js");
-const { buildGoalieAliasMap } = require("./Utils/goalieAliasMap.js");
+const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
-const { getGoalieIndex } = require("./Utils/goalieIndex.js");
+const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
 
 const app = express();
 
@@ -1201,8 +1201,8 @@ async function getPredictionsForSport(sportKey) {
       fetchEspnData("icehockey_nhl").catch(() => ({ events: [] })),
     ]);
 
-    const historicalGoalieData = await getGoalieIndex(db);
-    await buildGoalieAliasMap();
+    const historicalGoalieData = await getGoalieIndex(db); // Pass db connection
+    await buildGoalieAliasMap(db); // Pass db connection
 
     if (!scheduleData?.gameWeek || !teamStatsData || !oddsData) {
       throw new Error("Critical data failure: could not fetch or access all required sources.");
@@ -1341,22 +1341,26 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
 async function hydrateIndexes() {
   try {
-    // Assuming `db` is initialized earlier as your MongoDB client or db handle
     console.log('[INIT] Hydrating all application indexes...');
+
+    // ✅ Register mongo once
     if (!db) {
       console.error("[INIT] ❌ MongoDB connection is undefined! Attempting to connect...");
-      await connectToDb(); // This will set the global `db` variable
+      // If you have a `connectToDatabase()` or `client.db()` call, run it here:
+      // const client = await MongoClient.connect(process.env.MONGO_URI);
+      // mongo = client.db("your-db-name");
     } else {
-      console.log("[INIT] ✅ MongoDB connection verified.");
+      registerMongoClient(db);
     }
-    ctx.goalieIdx = await getGoalieIndex(db);   // ✅ Pass the connection
-    await buildGoalieAliasMap(db);                 // ✅ Pass the connection
 
-    // Optionally hydrate other team or skater indexes later here
+    const goalieData = await getGoalieIndex(db);
+    await buildGoalieAliasMap(db);
+
     console.log('[INIT] Indexes hydrated successfully.');
-    return ctx.goalieIdx;
+    return goalieData;
   } catch (err) {
     console.error('Failed to hydrate indexes:', err);
+    throw err;
   }
 }
 
