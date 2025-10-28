@@ -24,7 +24,7 @@ try {
 } catch { /* optional */ }
 
 const { normalizeTeamAbbrev } = require("./Utils/teamMap.js");
-const { buildGoalieAliasMap } = require("./Utils/goalieAliasMap.js");
+const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
 const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
 
@@ -1365,25 +1365,16 @@ async function runAdvancedNhlPredictionEngine(game, context) {
 
 async function hydrateIndexes() {
   try {
-    console.log('[INIT] Hydrating all application indexes...');
-
-    // ✅ Register mongo once
-    if (!db) {
-      console.error("[INIT] ❌ MongoDB connection is undefined! Attempting to connect...");
-      // If you have a `connectToDatabase()` or `client.db()` call, run it here:
-      // const client = await MongoClient.connect(process.env.MONGO_URI);
-      // mongo = client.db("your-db-name");
-    } else {
-      registerMongoClient(db);
-    }
+    console.log('[HYDRATE] Hydrating all application indexes...');
+    registerMongoClient(db);
 
     const goalieData = await getGoalieIndex(db);
     await buildGoalieAliasMap(db);
 
-    console.log('[INIT] Indexes hydrated successfully.');
-    return goalieData;
+    console.log('[HYDRATE] ✅ Indexes hydrated successfully.');
+    return goalieData; // <-- Make sure it returns the data
   } catch (err) {
-    console.error('Failed to hydrate indexes:', err);
+    console.error('❌ Failed to hydrate indexes:', err);
     throw err;
   }
 }
@@ -1879,14 +1870,16 @@ app.get('*', (req, res) => {
 // SECTION 8: SERVER STARTUP
 // =================================================================
 
+// In server.js
 async function startServer() {
     try {
         console.log('[INIT] Connecting to MongoDB...');
         await connectToDb();
         console.log('[INIT] MongoDB connection successful.');
 
-        // Hydrate indexes now that the DB connection is established
-        await hydrateIndexes();
+        // Hydrate indexes and STORE the result in the context object
+        console.log('[INIT] Hydrating application indexes...');
+        ctx.goalieIdx = await hydrateIndexes();
 
         app.listen(PORT, () => {
             console.log(`✅ Server is now running on port ${PORT} and ready for requests.`);
@@ -1894,7 +1887,7 @@ async function startServer() {
 
     } catch (e) {
         console.error("[FATAL] Could not start the server due to an initialization error:", e);
-        process.exit(1); // Exit the process if essential startup tasks fail
+        process.exit(1);
     }
 }
 
