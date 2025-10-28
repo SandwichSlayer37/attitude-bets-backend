@@ -1320,11 +1320,14 @@ async function hydrateIndexes() {
     console.log('[HYDRATE] Hydrating all application indexes...');
     registerMongoClient(db);
 
+    // Step 1: Get the raw goalie data first.
     const goalieData = await getGoalieIndex(db);
-    await buildGoalieAliasMap(db);
+
+    // Step 2: Pass that data to build the alias map. This creates the linear flow.
+    await buildGoalieAliasMap(goalieData);
 
     console.log('[HYDRATE] ✅ Indexes hydrated successfully.');
-    return goalieData; // <-- Make sure it returns the data
+    return goalieData;
   } catch (err) {
     console.error('❌ Failed to hydrate indexes:', err);
     throw err;
