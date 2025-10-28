@@ -23,8 +23,8 @@ try {
   ({ GoogleGenerativeAI } = require("@google/generative-ai"));
 } catch { /* optional */ }
 
-const { normalizeTeamAbbrev } = require("./Utils/hockeyNormalize.js");
-const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
+const { normalizeTeamAbbrev } = require("./Utils/teamMap.js");
+const { buildGoalieAliasMap } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
 const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
 
@@ -1188,87 +1188,111 @@ async function getPredictionsForSport(sportKey) {
   if (sportKey !== "icehockey_nhl") return [];
 
   try {
-    console.log("🚀 Starting new definitive prediction pipeline...");
+    console.log("🚀 Starting definitive NHL prediction pipeline...");
 
-    const [oddsData, scheduleData, teamStatsData, espnData] = await Promise.all([
-      getOdds(sportKey).catch(e => { console.error("Failed to fetch odds:", e.message); return []; }),
-      axios.get("https://api-web.nhle.com/v1/schedule/now").then(res => res.data).catch(() => null),
-      axios.get("https://api-web.nhle.com/v1/club-stats/now/All").then(res => res.data).catch(async (e) => {
-        console.warn(`[WARN] Primary club-stats API failed: ${e.message}. Falling back to standings API.`);
-        const { data } = await axios.get("https://api-web.nhle.com/v1/standings/now");
-        return data.standings;
-      }),
-      fetchEspnData("icehockey_nhl").catch(() => ({ events: [] })),
+    // 1. FETCH ALL DATA SOURCES IN PARALLEL
+    const [oddsData, scheduleResponse, liveStatsResponse, espnData] = await Promise.all([
+      getOdds(sportKey).catch(e => { console.error("❌ Failed to fetch odds:", e.message); return []; }),
+      axios.get("https://api-web.nhle.com/v1/schedule/now").then(res => res.data).catch(e => { console.error("❌ Failed to fetch NHL schedule:", e.message); return null; }),
+      getLiveTeamStats().catch(e => { console.error("❌ Failed to fetch live team stats:", e.message); return {}; }),
+      fetchEspnData("icehockey_nhl").catch(e => { console.error("❌ Failed to fetch ESPN data:", e.message); return { events: [] }; }),
     ]);
 
-    const historicalGoalieData = await getGoalieIndex(db); // Pass db connection
-    await buildGoalieAliasMap(db); // Pass db connection
-
-    if (!scheduleData?.gameWeek || !teamStatsData || !oddsData) {
-      throw new Error("Critical data failure: could not fetch or access all required sources.");
+    // Ensure critical data is present before continuing
+    if (!scheduleResponse?.gameWeek || !oddsData) {
+      throw new Error("Critical data failure: Could not fetch NHL schedule or betting odds.");
+    }
+    
+    // The goalie index is now reliably hydrated at startup and available in `ctx`
+    const historicalGoalieData = ctx.goalieIdx;
+    if (!historicalGoalieData || !historicalGoalieData.index || historicalGoalieData.index.size === 0) {
+        console.warn("⚠️ Goalie Index is not hydrated. Goalie stats will be missing.");
     }
 
-    const liveTeamStats = teamStatsData.reduce((acc, team) => {
-      const abbr = normalizeTeamAbbrev(team.abbreviation || team.teamAbbrev?.default);
-      const gamesPlayed = Number(team.gamesPlayed) || 0;
-      if (abbr) {
-        acc[abbr] = {
-            record: `${team.wins}-${team.losses}-${team.otLosses}`,
-            streak: team.streakCode ? `${team.streakCode}${team.streakCount || ""}` : "N/A",
-            goalsForPerGame: team.goalsForPerGame ?? (gamesPlayed > 0 ? (safeNum(team.goalsFor) / gamesPlayed) : 0),
-            goalsAgainstPerGame: team.goalsAgainstPerGame ?? (gamesPlayed > 0 ? (safeNum(team.goalsAgainst) / gamesPlayed) : 0),
-            faceoffWinPct: (team.faceoffWinPct ?? 0) * (team.faceoffWinPct < 1 ? 100 : 1),
-        };
+    // 2. CREATE A RELIABLE LOOKUP MAP FROM ODDS DATA
+    const oddsMap = new Map();
+    for (const game of oddsData) {
+      const homeNormalized = normalizeTeamAbbrev(game.home_team);
+      const awayNormalized = normalizeTeamAbbrev(game.away_team);
+      if (homeNormalized && awayNormalized) {
+        const key = `${awayNormalized}@${homeNormalized}`;
+        oddsMap.set(key, game);
       }
-      return acc;
-    }, {});
+    }
+    console.log(`✅ Created odds map with ${oddsMap.size} games.`);
 
-    console.log(`✅ Processed live stats for ${Object.keys(liveTeamStats).length} teams.`);
-
-    const officialGames = scheduleData.gameWeek.flatMap(day => day.games);
+    // 3. USE NHL SCHEDULE AS THE SINGLE SOURCE OF TRUTH
+    const officialGames = scheduleResponse.gameWeek.flatMap(day => day.games);
     const predictions = [];
 
-    for (const officialGame of officialGames || []) {
-      const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev || "");
-      const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev || "");
+    for (const officialGame of officialGames) {
+      const homeAbbr = normalizeTeamAbbrev(officialGame.homeTeam?.abbrev);
+      const awayAbbr = normalizeTeamAbbrev(officialGame.awayTeam?.abbrev);
       if (!homeAbbr || !awayAbbr) continue;
+      
+      const gameKey = `${awayAbbr}@${homeAbbr}`;
+
+      // 4. MATCH RELIABLY using the standardized key
+      const oddsGame = oddsMap.get(gameKey);
+
+      if (!oddsGame) {
+        console.warn(`[SKIP] No matching odds found for schedule game: ${gameKey}`);
+        continue;
+      }
+      
+      console.log(`[MATCH] Found match for ${gameKey}. Preparing context...`);
+
+      // 5. ENRICH THE DATA & build a complete context object
+      const espnGame = (espnData.events || []).find(e => {
+          const home = e.competitions[0]?.competitors?.find(c => c.homeAway === 'home');
+          const away = e.competitions[0]?.competitors?.find(c => c.homeAway === 'away');
+          return normalizeTeamAbbrev(home?.team?.abbreviation) === homeAbbr && normalizeTeamAbbrev(away?.team?.abbreviation) === awayAbbr;
+      });
+
+      const injuryCount = { home: 0, away: 0 };
+      if (espnGame) {
+          const competition = espnGame.competitions[0];
+          injuryCount.home = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === homeAbbr).length;
+          injuryCount.away = (competition.injuries || []).filter(i => normalizeTeamAbbrev(i.team.abbreviation) === awayAbbr).length;
+      }
 
       const context = {
-        teamStats: liveTeamStats,
+        teamStats: liveStatsResponse,
         allGames: oddsData,
         goalieIdx: historicalGoalieData,
         probableStarters: {
           homeId: officialGame.homeTeam?.probableStarterId,
           awayId: officialGame.awayTeam?.probableStarterId,
         },
-        injuryCount: { home: 0, away: 0 },
+        injuryCount: injuryCount,
         homeAbbr,
         awayAbbr,
+        // FIX: Provide a default H2H object to prevent the 'Cannot read properties of undefined (reading 'home')' crash.
+        h2h: { home: '0-0-0', away: '0-0-0' }
       };
 
-      const oddsGame = oddsData.find(g =>
-        normalizeTeamAbbrev(g.home_team) === homeAbbr &&
-        normalizeTeamAbbrev(g.away_team) === awayAbbr
-      );
-
-      if (!oddsGame) {
-        console.warn(`[SKIP] No matching odds found for schedule game: ${awayAbbr}@${homeAbbr}`);
-        continue;
-      }
-
+      // 6. RUN THE PREDICTION ENGINE with the complete context
       const predictionData = await runAdvancedNhlPredictionEngine(oddsGame, context);
+      
       if (predictionData) {
+        // The enrichGoalieData function is useful for adding the final goalie stats to the prediction object itself.
         enrichGoalieData(predictionData, context, homeAbbr, awayAbbr);
+        
+        // Add live game state from ESPN if available
+        if(espnGame) {
+            oddsGame.espnData = { status: espnGame.status, competitions: espnGame.competitions };
+        }
+        
         predictions.push({ game: oddsGame, prediction: predictionData });
       }
     }
 
-    console.log(`✅ Generated ${predictions.length} predictions.`);
+    console.log(`✅ Generated ${predictions.length} total predictions.`);
     return predictions.filter(p => p && p.prediction);
 
   } catch (error) {
-    console.error("Critical error during prediction pipeline:", error.message);
-    return [];
+    console.error("❌ Critical error during prediction pipeline:", error);
+    return []; // Return an empty array on failure to prevent frontend crashes
   }
 }
 
@@ -1362,32 +1386,6 @@ async function hydrateIndexes() {
     console.error('Failed to hydrate indexes:', err);
     throw err;
   }
-}
-
-// --- NHL definitive prediction pipeline (simplified wrapper around your existing steps)
-async function runNhlPipeline(dateStr, scheduleGames, oddsMap) {
-  const enriched = [];
-
-  for (const g of scheduleGames) {
-    const H = normalizeTeamAbbrev(g.homeAbbr);
-    const A = normalizeTeamAbbrev(g.awayAbbr);
-
-    // attach probable goalies
-    const { homeGoalie, awayGoalie } = await fetchProbableGoalies(dateStr, H, A);
-
-    const base = {
-      // your existing fields: model probs, odds, picks...
-      matchup: `${A}@${H}`,
-      odds: oddsMap.get(`${A}@${H}`) || null
-    };
-
-    const gameForEnrich = { dateStr, homeAbbr: H, awayAbbr: A, homeGoalie, awayGoalie };
-
-    const finalPred = enrichPrediction(ctx, gameForEnrich, base);
-    enriched.push(finalPred);
-  }
-
-  return enriched;
 }
 
 // =================================================================
@@ -1877,15 +1875,28 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'Public', 'index.html'));
 });
 
-// --- Server Startup ---
-app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`);
-  try {
-    await hydrateIndexes(); // This will now call the corrected goalie hydration
-  } catch (e) {
-    console.error("Startup init failed:", e);
-  }
-});
+// =================================================================
+// SECTION 8: SERVER STARTUP
+// =================================================================
+
+async function startServer() {
+    try {
+        console.log('[INIT] Connecting to MongoDB...');
+        await connectToDb();
+        console.log('[INIT] MongoDB connection successful.');
+
+        // Hydrate indexes now that the DB connection is established
+        await hydrateIndexes();
+
+        app.listen(PORT, () => {
+            console.log(`✅ Server is now running on port ${PORT} and ready for requests.`);
+        });
+
+    } catch (e) {
+        console.error("[FATAL] Could not start the server due to an initialization error:", e);
+        process.exit(1); // Exit the process if essential startup tasks fail
+    }
+}
 
 // Global error middleware (must be AFTER all other app.use and routes)
 app.use((err, req, res, next) => {
@@ -1893,3 +1904,6 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'internal_error', message: err?.message || 'Internal Server Error' });
 });
+
+// Launch the server
+startServer();
