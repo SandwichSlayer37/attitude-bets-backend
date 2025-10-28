@@ -14,10 +14,7 @@ const manualAliases = {
 let goalieAliasMap = new Map();
 
 async function buildGoalieAliasMap(mongo) {
-  if (!mongo) {
-    throw new Error("[GOALIE ALIAS MAP] ❌ Mongo client not provided.");
-  }
-
+  console.log("[GOALIE ALIAS MAP] Building alias map...");
   const { index } = await getGoalieIndex(mongo);
   goalieAliasMap = new Map();
 
@@ -31,7 +28,7 @@ async function buildGoalieAliasMap(mongo) {
     });
   }
 
-  console.log(`[GOALIE ALIAS MAP] ✅ Built ${goalieAliasMap.size} goalie aliases`);
+  console.log(`[GOALIE ALIAS MAP] ✅ Built ${goalieAliasMap.size} aliases.`);
   return goalieAliasMap;
 }
 
