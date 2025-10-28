@@ -514,9 +514,15 @@ async function getGoalieStats() {
 // NEW: Resilient function to fetch live team stats with a fallback
 async function getLiveTeamStats() {
     try {
-        // First, try the more detailed but sometimes unstable API
-        const { data: teamStatsData } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All');
-        if (!teamStatsData || teamStatsData.length === 0) throw new Error("Club stats returned empty.");
+        // FIX: Added a User-Agent header to the primary API call to prevent 404 errors.
+        const { data: teamStatsData } = await axios.get('https://api-web.nhle.com/v1/club-stats/now/All', {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+            }
+        });
+        if (!teamStatsData || !Array.isArray(teamStatsData) || teamStatsData.length === 0) {
+            throw new Error("Primary club stats API returned empty or invalid data.");
+        }
 
         const fusedTeamData = teamStatsData.reduce((acc, team) => {
             acc[team.abbreviation] = {
@@ -524,20 +530,19 @@ async function getLiveTeamStats() {
                 streak: `${team.streakCode}${team.streakCount}`,
                 goalsForPerGame: team.goalsForPerGame,
                 goalsAgainstPerGame: team.goalsAgainstPerGame,
-                faceoffWinPct: team.faceoffWinPct,
+                faceoffWinPct: team.faceoffWinPct * 100, // Convert decimal to percentage
             };
             return acc;
         }, {});
         console.log(`✅ Successfully fetched live stats from primary club-stats API.`);
         return fusedTeamData;
     } catch (e) {
-        // If it fails, fall back to the simpler but more reliable standings API
-        console.warn(`[WARN] Primary club-stats API failed. Falling back to standings API.`);
+        console.warn(`[WARN] Primary club-stats API failed (${e.message}). Falling back to standings API.`);
         const { data: standingsDataResponse } = await axios.get('https://api-web.nhle.com/v1/standings/now');
         if (!standingsDataResponse || !standingsDataResponse.standings) throw new Error("Fallback standings API also failed.");
         
         return (standingsDataResponse.standings).reduce((acc, team) => {
-            const abbr = team.teamAbbrev.default;
+            const abbr = normalizeTeamAbbrev(team.teamAbbrev.default);
             if (abbr) {
                 const gamesPlayed = safeNum(team.gamesPlayed);
                 acc[abbr] = {
