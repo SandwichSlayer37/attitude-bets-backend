@@ -1,5 +1,5 @@
-// src/Utils/goalieIndex.js
-const { translateGoalieKey } = require("./goalieAliasMap");
+// Index of goalie metrics from Mongo (Moneypuck historical).
+// Expect a collection 'goalies' with docs like: { name, teamAbbr, season, gsax, rollingForm (0..5) ... }
 
 let cachedMongo = null;
 
@@ -15,20 +15,23 @@ function safeNum(val) {
 
 async function getGoalieIndex(mongo) {
   const db = mongo || cachedMongo;
-  if (!db) throw new Error("[GOALIE INDEX] ❌ No Mongo client provided or registered.");
+  if (!db) {
+    throw new Error("[GOALIE INDEX] ❌ No Mongo client provided or registered.");
+  }
+
   console.log("[GOALIE INDEX] Starting hydration from nhl_goalie_stats_historical...");
 
+  // More flexible query for both string and numeric season values
   const seasonFilter = { $in: ["2023", "2024", 2023, 2024, "2023-24", "2024-25"] };
   const data = await db.collection("nhl_goalie_stats_historical").find({ season: seasonFilter }).toArray();
 
   if (!data.length) {
     console.warn("[GOALIE INDEX] ⚠️ No goalie data found in Mongo collection.");
-    return { index: new Map(), byTeam: new Map(), byName: new Map() };
+    return { index: new Map(), byTeam: new Map() };
   }
 
-  const index = new Map(); // By Player ID
-  const byTeam = new Map(); // By Team Abbreviation
-  const byName = new Map(); // By Canonical Name
+  const index = new Map();
+  const byTeam = new Map();
 
   for (const g of data) {
     const gsax = safeNum(g.xGoals) - safeNum(g.goals);
@@ -38,37 +41,35 @@ async function getGoalieIndex(mongo) {
       team: g.team,
       gsax,
       season: g.season,
-      // FIX: Add the missing games_played property
-      games_played: safeNum(g.games_played), 
     };
-
     index.set(goalie.playerId, goalie);
-
     if (!byTeam.has(goalie.team)) byTeam.set(goalie.team, []);
     byTeam.get(goalie.team).push(goalie);
-
-    const canonicalName = translateGoalieKey(goalie.name);
-    if (canonicalName && !byName.has(canonicalName)) {
-        byName.set(canonicalName, goalie);
-    }
   }
 
-  // FIX: Add the pre-sorting logic for the fallback system
-  for (const [team, goalies] of byTeam.entries()) {
-    goalies.sort((a, b) => b.games_played - a.games_played);
-  }
+  console.log(`[GOALIE INDEX] ✅ Hydrated ${data.length} goalies from recent seasons`);
+  console.log("[GOALIE INDEX] Sample data preview:",
+    data.slice(0, 3).map(g => `${g.name} (${g.team}) - GSAx: ${safeNum(g.xGoals) - safeNum(g.goals)}`)
+  );
 
-  console.log(`[GOALIE INDEX] ✅ Hydrated ${index.size} goalies by ID, ${byName.size} by name.`);
-  return { index, byTeam, byName };
-}
-
-function findByPlayerId(playerId, goalieData) {
-    if (!playerId || !goalieData || !goalieData.index) return null;
-    return goalieData.index.get(String(playerId)) || null;
+  return { index, byTeam };
 }
 
 module.exports = {
     getGoalieIndex,
     registerMongoClient,
-    findByPlayerId
+    findByPlayerId // <-- Add this export
 };
+
+/**
+ * Finds a goalie by their player ID from a hydrated index.
+ * @param {string|number} playerId The ID of the player to find.
+ * @param {object} goalieData The hydrated goalie index object.
+ * @returns {object|null} The goalie object or null if not found.
+ */
+function findByPlayerId(playerId, goalieData) {
+    if (!playerId || !goalieData || !goalieData.index) {
+        return null;
+    }
+    return goalieData.index.get(String(playerId)) || null;
+}
