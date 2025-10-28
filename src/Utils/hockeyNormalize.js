@@ -1,46 +1,43 @@
-const teamToAbbrMap = {
+// teamMap.js
+const canonicalTeamNameMap = {
   "montreal canadiens": "MTL",
   "montréal canadiens": "MTL",
   "utah mammoth": "UTA",
-  "utah hockey club": "UTA",
-  "tampa bay lightning": "TBL",
   "st louis blues": "STL",
   "st. louis blues": "STL",
   "los angeles kings": "LAK",
-  "new jersey devils": "NJD",
+  "tampa bay lightning": "TBL",
   "vegas golden knights": "VGK",
-  "new york rangers": "NYR",
   "new york islanders": "NYI",
-  "anaheim ducks": "ANA",
-  "arizona coyotes": "ARI",
-  "boston bruins": "BOS",
-  "buffalo sabres": "BUF",
-  "calgary flames": "CGY",
-  "carolina hurricanes": "CAR",
-  "chicago blackhawks": "CHI",
-  "colorado avalanche": "COL",
-  "columbus blue jackets": "CBJ",
-  "dallas stars": "DAL",
-  "detroit red wings": "DET",
-  "edmonton oilers": "EDM",
-  "florida panthers": "FLA",
-  "minnesota wild": "MIN",
-  "nashville predators": "NSH",
-  "ottawa senators": "OTT",
+  "new york rangers": "NYR",
   "philadelphia flyers": "PHI",
   "pittsburgh penguins": "PIT",
-  "san jose sharks": "SJS",
-  "seattle kraken": "SEA",
-  "toronto maple leafs": "TOR",
-  "vancouver canucks": "VAN",
+  "calgary flames": "CGY",
+  "ottawa senators": "OTT",
+  "winnipeg jets": "WPG",
+  "boston bruins": "BOS",
+  "columbus blue jackets": "CBJ",
   "washington capitals": "WSH",
-  "winnipeg jets": "WPG"
+  "florida panthers": "FLA",
+  "anaheim ducks": "ANA",
+  "arizona coyotes": "ARI",
+  "edmonton oilers": "EDM",
+  "san jose sharks": "SJS",
+  "minnesota wild": "MIN",
+  "detroit red wings": "DET",
+  "chicago blackhawks": "CHI",
+  "nashville predators": "NSH",
+  "buffalo sabres": "BUF",
+  "toronto maple leafs": "TOR",
+  "carolina hurricanes": "CAR",
+  "colorado avalanche": "COL",
+  "dallas stars": "DAL",
+  "seattle kraken": "SEA",
 };
 
 function normalizeTeamAbbrev(name = "") {
-  if (!name) return "";
-  const cleanedName = name.toLowerCase().replace(/[^\w\s]/gi, "").trim();
-  return teamToAbbrMap[cleanedName] || cleanedName.toUpperCase().slice(0, 3);
+  const key = name.toLowerCase().replace(/[^\w\s]/gi, "").trim();
+  return canonicalTeamNameMap[key] || key.slice(0, 3).toUpperCase();
 };
 
 // FIX: Create and export the missing normalizeGoalieName function
@@ -51,6 +48,5 @@ const normalizeGoalieName = (name) => {
 
 module.exports = {
     normalizeTeamAbbrev,
-    teamToAbbrMap,
     normalizeGoalieName // Export the new function
 };

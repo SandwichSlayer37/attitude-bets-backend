@@ -1,3 +1,26 @@
+// goalieAliasMap.js
+export const goalieAliasMap = {
+  "Igor Shesterkin": { playerId: "8477361", aliases: ["Shesterkin, Igor"] },
+  "Jake Oettinger": { playerId: "8480947", aliases: ["Oettinger, Jake"] },
+  "Alex Nedeljkovic": { playerId: "8478483", aliases: ["Nedeljkovic, Alex"] },
+  "Connor Hellebuyck": { playerId: "8476945", aliases: ["Hellebuyck, Connor"] },
+  "Juuse Saros": { playerId: "8477424", aliases: ["Saros, Juuse"] },
+  "Andrei Vasilevskiy": { playerId: "8476883", aliases: ["Vasilevskiy, Andrei"] },
+  // Add common mismatches here as they appear in logs
+};
+
+export function translateGoalieKey(nameOrId) {
+  if (!nameOrId) return null;
+  const str = String(nameOrId).trim();
+  for (const [canonicalName, data] of Object.entries(goalieAliasMap)) {
+    if (data.playerId === str) return canonicalName;
+    if (data.aliases.map(a => a.toLowerCase()).includes(str.toLowerCase()))
+      return canonicalName;
+  }
+  return str;
+}
+
+
 const axios = require("axios");
 const { getCache, setCache } = require("./simpleCache");
 const { normalizeGoalieName, normalizeTeamAbbrev } = require("./hockeyNormalize");
