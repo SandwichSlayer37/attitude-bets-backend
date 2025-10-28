@@ -57,5 +57,19 @@ async function getGoalieIndex(mongo) {
 
 module.exports = {
     getGoalieIndex,
-    registerMongoClient
+    registerMongoClient,
+    findByPlayerId // <-- Add this export
 };
+
+/**
+ * Finds a goalie by their player ID from a hydrated index.
+ * @param {string|number} playerId The ID of the player to find.
+ * @param {object} goalieData The hydrated goalie index object.
+ * @returns {object|null} The goalie object or null if not found.
+ */
+function findByPlayerId(playerId, goalieData) {
+    if (!playerId || !goalieData || !goalieData.index) {
+        return null;
+    }
+    return goalieData.index.get(String(playerId)) || null;
+}
