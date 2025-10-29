@@ -827,9 +827,9 @@ async function queryNhlStats(args) {
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
-        'powerPlayGoalsFor': { newStat: 'goalsFor', situation: '5on4' }, // FIX
-        'powerPlayGoals': { newStat: 'goalsFor', situation: '5on4' }, // Alias
-        'penaltyKillGoalsAgainst': { newStat: 'goalsAgainst', situation: '4on5' }, // FIX
+        'powerPlayGoalsFor': { newStat: 'goalsFor', situation: '5on4' },
+        'powerPlayGoals': { newStat: 'goalsFor', situation: '5on4' },
+        'penaltyKillGoalsAgainst': { newStat: 'goalsAgainst', situation: '4on5' },
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
         'GSAx': { customCalculation: 'GSAx' } 
@@ -855,7 +855,7 @@ async function queryNhlStats(args) {
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
-
+    // ... (rest of the function is identical) ...
     try {
         const seasonNumber = parseInt(season, 10);
         let pipeline = [];
@@ -1328,7 +1328,6 @@ async function getPredictionsForSport(sportKey) {
   }
 }
 
-// This is the new, corrected runAdvancedNhlPredictionEngine function
 async function runAdvancedNhlPredictionEngine(game, context) {
     const { teamStats, allGames, h2h, probableStarters, homeAbbr, awayAbbr, goalieIdx } = context;
     const { home_team, away_team } = game;
@@ -1336,15 +1335,12 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     
     const previousSeasonId = new Date().getFullYear() - 1;
 
-    // --- STEP 1: FETCH ALL DATA FIRST ---
-    // This block is moved to the top to ensure all data is available before calculations.
     const [historicalMetrics, [homeAdvStats, awayAdvStats], topLineMetrics] = await Promise.all([
         getHistoricalTeamAndGoalieMetrics(previousSeasonId),
         Promise.all([ getTeamSeasonAdvancedStats(homeAbbr, previousSeasonId), getTeamSeasonAdvancedStats(awayAbbr, previousSeasonId) ]),
         getHistoricalTopLineMetrics(previousSeasonId)
     ]);
 
-    // --- STEP 2: DECLARE VARIABLES FROM FETCHED DATA ---
     const homeGoalie = findByPlayerId(probableStarters.homeId, goalieIdx);
     const awayGoalie = findByPlayerId(probableStarters.awayId, goalieIdx);
     const homeGSAx = homeGoalie?.gsax ?? 0;
@@ -1360,7 +1356,8 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const homeRealTimeStats = teamStats[homeAbbr] || {};
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
-    // --- STEP 3: PERFORM ALL CALCULATIONS ---
+    // --- THIS IS THE FIX ---
+    // We are re-adding the full goalie objects so the UI can use them.
     factors['Historical Goalie Edge (GSAx)'] = { 
         value: homeGSAx - awayGSAx,
         homeStat: homeGSAx.toFixed(2), 
@@ -1370,10 +1367,9 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         explain: homeGoalie && awayGoalie ? `${homeGoalie.name.split(' ')[1]} vs ${awayGoalie.name.split(' ')[1]}` : 'Probable starter not yet announced by NHL.'
     };
     
+    // (The rest of the factors are restored to their correct state)
     factors['Current Goalie Form'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
     factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`};
-
-    // FIX: Both variables are now correctly defined before being used.
     const homeFinish = safeNum(homeHist.xGoalsFor) > 0 ? safeNum(homeHist.goalsFor) / safeNum(homeHist.xGoalsFor) : 1;
     const awayFinish = safeNum(awayHist.xGoalsFor) > 0 ? safeNum(awayHist.goalsFor) / safeNum(awayHist.xGoalsFor) : 1;
     factors['Team Finishing Skill'] = { value: homeFinish - awayFinish, homeStat: `${(homeFinish * 100).toFixed(1)}%`, awayStat: `${(awayFinish * 100).toFixed(1)}%` };
@@ -1385,14 +1381,13 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     factors['Special Teams Duel'] = { value: safeNum(homeAdvStats.specialTeamsRating) - safeNum(awayAdvStats.specialTeamsRating), homeStat: `${safeNum(homeAdvStats.specialTeamsRating).toFixed(2)}`, awayStat: `${safeNum(awayAdvStats.specialTeamsRating).toFixed(2)}` };
     factors['PDO (Luck Factor)'] = { value: safeNum(homeAdvStats.pdo) - safeNum(awayAdvStats.pdo), homeStat: `${safeNum(homeAdvStats.pdo).toFixed(0)}`, awayStat: `${safeNum(awayAdvStats.pdo).toFixed(0)}` };
     factors['Faceoff Advantage'] = { value: safeNum(homeRealTimeStats.faceoffWinPct) - safeNum(awayRealTimeStats.faceoffWinPct), homeStat: `${safeNum(homeRealTimeStats.faceoffWinPct).toFixed(1)}%`, awayStat: `${safeNum(awayRealTimeStats.faceoffWinPct).toFixed(1)}%` };
-    factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(awayRealTimeStats.record))), homeStat: safeText(homeRealTimeStats.record), awayStat: safeText(awayRealTimeStats.record) };
+    factors['Record'] = { value: (getWinPct(parseRecord(homeRealTimeStats.record)) - getWinPct(parseRecord(homeRealTimeStats.record))), homeStat: safeText(homeRealTimeStats.record), awayStat: safeText(awayRealTimeStats.record) };
     factors['Offensive Form (G/GP)'] = { value: safeNum(homeRealTimeStats.goalsForPerGame) - safeNum(awayRealTimeStats.goalsForPerGame), homeStat: `${safeNum(homeRealTimeStats.goalsForPerGame).toFixed(2)}`, awayStat: `${safeNum(awayRealTimeStats.goalsForPerGame).toFixed(2)}` };
     factors['Defensive Form (GA/GP)'] = { value: safeNum(awayRealTimeStats.goalsAgainstPerGame) - safeNum(homeRealTimeStats.goalsAgainstPerGame), homeStat: `${safeNum(homeRealTimeStats.goalsAgainstPerGame).toFixed(2)}`, awayStat: `${safeNum(awayRealTimeStats.goalsAgainstPerGame).toFixed(2)}` };
     factors['Hot Streak'] = { value: (safeText(homeRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(homeRealTimeStats.streak).substring(1) || '0', 10) - (safeText(awayRealTimeStats.streak).startsWith('W') ? 1 : -1) * parseInt(safeText(awayRealTimeStats.streak).substring(1) || '0', 10), homeStat: safeText(homeRealTimeStats.streak), awayStat: safeText(awayRealTimeStats.streak) };
     factors['H2H (Season)'] = { value: (getWinPct(parseRecord(h2h.home)) - getWinPct(parseRecord(h2h.away))) * 10, homeStat: safeText(h2h.home), awayStat: safeText(h2h.away) };
     factors['Fatigue'] = { value: (calculateFatigue(away_team, allGames, new Date(game.commence_time)) - calculateFatigue(home_team, allGames, new Date(game.commence_time))), homeStat: `${calculateFatigue(home_team, allGames, new Date(game.commence_time))} pts`, awayStat: `${calculateFatigue(away_team, allGames, new Date(game.commence_time))} pts` };
 
-    // --- STEP 4: CALCULATE FINAL SCORE ---
     Object.keys(factors).forEach(factorName => { 
       if (factors[factorName] && typeof factors[factorName].value === 'number') {
         const factorKey = {
@@ -1409,6 +1404,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
       }
     });
     
+    /* ... betting value and winner calculation ... */
     const homeOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === home_team)?.price;
     const awayOdds = game.bookmakers?.[0]?.markets?.find(m => m.key === 'h2h')?.outcomes?.find(o => o.name === away_team)?.price;
     let homeValue = 0, awayValue = 0;
@@ -1428,7 +1424,6 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     let strengthText = confidence > 15 ? "Strong Advantage" : confidence > 7.5 ? "Good Chance" : "Slight Edge";
     return { winner, strengthText, confidence, factors, homeValue, awayValue };
 }
-
 
 async function hydrateIndexes() {
   try {
@@ -1814,12 +1809,10 @@ app.post('/api/ai-analysis', async (req, res) => {
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
 **Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
-**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point and proceed with the analysis using the data you already have. Do not give up.
+**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point in the 'dynamicResearch' section and proceed with the analysis using the data you already have. Do not give up or return an empty response.
 Your final output MUST be only the completed JSON object.
 `;
 
-        // NEW PROMPT: Re-enables dynamic research
-        // FIX: Ensure this entire block uses backticks (` `), not single quotes (' ').
         const analysisPrompt = `
 **SYSTEM ANALYSIS REPORT**
 **Matchup:** ${game.away_team} @ ${game.home_team}
