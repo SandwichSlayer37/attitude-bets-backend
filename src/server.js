@@ -26,7 +26,6 @@ try {
 const { normalizeTeamAbbrev } = require("./Utils/teamMap.js");
 const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
-const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
 const { getGoalieIndex, registerMongoClient, findByPlayerId } = require("./Utils/goalieIndex.js");
 const { resolveGoalies } = require('./Utils/goalieResolver.js');
 
@@ -1789,9 +1788,6 @@ app.post('/api/ai-analysis', async (req, res) => {
         // FIX: The instruction is now a direct command to NOT use tools.
         // NEW INSTRUCTION: Encourage tool use
         const instruction = `
-You are an expert sports betting analyst. You have been provided with all the necessary data in the 'Pre-Fetched Historical Data' and 'Prediction Model Factors' sections.
-**Do not use your \`queryNhlStats\` tool.** Your sole task is to synthesize the data provided below and generate the final JSON object.
-`;
             You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
             **Crucially, you must use your available tools (\`queryNhlStats\` and \`searchSportsbookReddit\`) to find unique, non-obvious insights.** Look for historical trends, player performance under specific conditions, or real-time public sentiment that could contradict or reinforce the base prediction.
             Your final output MUST be only the completed JSON object.
@@ -1799,22 +1795,6 @@ You are an expert sports betting analyst. You have been provided with all the ne
 
         // NEW PROMPT: Re-enables dynamic research
         const analysisPrompt = `
-**SYSTEM ANALYSIS REPORT**
-**Matchup:** ${game.away_team} @ ${game.home_team}
-
-${preFetchedDataSummary}
-
-**Prediction Model Factors (Current Season):**
-${factorsList || 'No valid live factors available.'}
-
-**TASK:**
-${instruction}
-
-**JSON TO COMPLETE:**
-${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
-
-**IMPORTANT: You MUST return ONLY the completed JSON object. Do not include any extra text, explanations, or markdown formatting.**
-`;
             **SYSTEM ANALYSIS REPORT**
             **Matchup:** ${game.away_team} @ ${game.home_team}
             
