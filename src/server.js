@@ -340,7 +340,7 @@ const aiTools = {
 
 // This replaces your old chatModel initialization
 const chatModel = genAI ? genAI.getGenerativeModel({
-    model: "gemini-1.5-flash", // Using 1.5 Flash for better tool use
+    model: "gemini-2.5-flash", // Using 2.5 Flash for better tool use
     tools: [aiTools],
 }) : null;
 
