@@ -823,13 +823,16 @@ async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
 
+    // EXPANDED MAP: Make the tool smarter to prevent AI errors
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
-        'powerPlayGoals': { newStat: 'goals', situation: '5on4'},
+        'powerPlayGoalsFor': { newStat: 'goalsFor', situation: '5on4' }, // FIX
+        'powerPlayGoals': { newStat: 'goalsFor', situation: '5on4' }, // Alias
+        'penaltyKillGoalsAgainst': { newStat: 'goalsAgainst', situation: '4on5' }, // FIX
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
-        'GSAx': { customCalculation: 'GSAx' } // Goals Saved Above Expected
+        'GSAx': { customCalculation: 'GSAx' } 
     };
 
     let situationOverride = null;
@@ -1810,7 +1813,8 @@ app.post('/api/ai-analysis', async (req, res) => {
         // NEW INSTRUCTION: Encourage tool use
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
-**Crucially, you must use your available tools (\`queryNhlStats\` and \`searchSportsbookReddit\`) to find unique, non-obvious insights.** Look for historical trends, player performance under specific conditions, or real-time public sentiment that could contradict or reinforce the base prediction.
+**Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
+**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point and proceed with the analysis using the data you already have. Do not give up.
 Your final output MUST be only the completed JSON object.
 `;
 
