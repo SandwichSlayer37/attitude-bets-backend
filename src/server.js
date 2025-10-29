@@ -1774,42 +1774,32 @@ app.post('/api/ai-analysis', async (req, res) => {
   - Goals Against: ${homeHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${homeHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
 - ${game.away_team}:
   - Goals For: ${awayHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${awayHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
-  - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
-`;
-            **Pre-Fetched Historical Data (${lastCompletedSeasonYear} Season):**
-            - ${game.home_team}: 
-              - Goals For: ${homeHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${homeHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
-              - Goals Against: ${homeHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${homeHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
-            - ${game.away_team}:
-              - Goals For: ${awayHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${awayHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
-              - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
-            `;
+  - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}`;
         
-        // FIX: The instruction is now a direct command to NOT use tools.
         // NEW INSTRUCTION: Encourage tool use
         const instruction = `
-            You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
-            **Crucially, you must use your available tools (\`queryNhlStats\` and \`searchSportsbookReddit\`) to find unique, non-obvious insights.** Look for historical trends, player performance under specific conditions, or real-time public sentiment that could contradict or reinforce the base prediction.
-            Your final output MUST be only the completed JSON object.
-            `;
+You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
+**Crucially, you must use your available tools (\`queryNhlStats\` and \`searchSportsbookReddit\`) to find unique, non-obvious insights.** Look for historical trends, player performance under specific conditions, or real-time public sentiment that could contradict or reinforce the base prediction.
+Your final output MUST be only the completed JSON object.
+`;
 
         // NEW PROMPT: Re-enables dynamic research
+        // FIX: Ensure this entire block uses backticks (` `), not single quotes (' ').
         const analysisPrompt = `
-            **SYSTEM ANALYSIS REPORT**
-            **Matchup:** ${game.away_team} @ ${game.home_team}
-            
-            ${preFetchedDataSummary}
-            
-            **Prediction Model Factors (Current Season):**
-            ${factorsList || 'No valid live factors available.'}
-            
-            **TASK:**
-            ${instruction}
-            
-            **JSON TO COMPLETE:**
-            ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
-            `;
-        // We no longer need the logging now that the prompt is stable.
+**SYSTEM ANALYSIS REPORT**
+**Matchup:** ${game.away_team} @ ${game.home_team}
+
+${preFetchedDataSummary}
+
+**Prediction Model Factors (Current Season):**
+${factorsList || 'No valid live factors available.'}
+
+**TASK:**
+${instruction}
+
+**JSON TO COMPLETE:**
+${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
+`;
         const analysisData = await runAiChatWithTools(analysisPrompt);
 
         if (!analysisData || !analysisData.finalPick) {
