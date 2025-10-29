@@ -953,9 +953,9 @@ async function queryNhlStats(args) {
         }
 
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-        // FIX: Explicitly return an error on no results
+        // THIS IS THE FIX: Return a clear message instead of an error.
         if (results.length === 0) {
-            return { error: `No data was found for the specified criteria.` };
+            return { results: [{ finding: `No data was found in the database for ${stat} in the ${season} season.` }] };
         }
         return { results };
     } catch (error) {
