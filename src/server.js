@@ -953,8 +953,10 @@ async function queryNhlStats(args) {
         }
 
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
-        if (results.length === 0) return { error: `No data was found for the specified criteria.` };
-
+        // FIX: Explicitly return an error on no results
+        if (results.length === 0) {
+            return { error: `No data was found for the specified criteria.` };
+        }
         return { results };
     } catch (error) {
         console.error("Error during Unified NHL stats query:", error);
@@ -1357,7 +1359,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
     const awayRealTimeStats = teamStats[awayAbbr] || {};
 
     // --- THIS IS THE FIX ---
-    // We are re-adding the full goalie objects so the UI can use them.
+    // Re-adding the full goalie objects for the UI to use.
     factors['Historical Goalie Edge (GSAx)'] = { 
         value: homeGSAx - awayGSAx,
         homeStat: homeGSAx.toFixed(2), 
@@ -1367,7 +1369,7 @@ async function runAdvancedNhlPredictionEngine(game, context) {
         explain: homeGoalie && awayGoalie ? `${homeGoalie.name.split(' ')[1]} vs ${awayGoalie.name.split(' ')[1]}` : 'Probable starter not yet announced by NHL.'
     };
     
-    // (The rest of the factors are restored to their correct state)
+    // (The rest of the factors remain the same)
     factors['Current Goalie Form'] = { value: 0, homeStat: 'N/A', awayStat: 'N/A' };
     factors['Injury Impact'] = { value: 0, homeStat: `0 players`, awayStat: `0 players`};
     const homeFinish = safeNum(homeHist.xGoalsFor) > 0 ? safeNum(homeHist.goalsFor) / safeNum(homeHist.xGoalsFor) : 1;
@@ -1809,7 +1811,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
 **Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
-**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point in the 'dynamicResearch' section and proceed with the analysis using the data you already have. Do not give up or return an empty response.
+**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point in the 'dynamicResearch' section (e.g., 'Searched for power play percentage but found no data') and proceed with the analysis using the data you already have. Do not give up or return an empty response.
 Your final output MUST be only the completed JSON object.
 `;
 
