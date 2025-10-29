@@ -27,6 +27,7 @@ const { normalizeTeamAbbrev } = require("./Utils/teamMap.js");
 const { buildGoalieAliasMap, translateGoalieKey } = require("./Utils/goalieAliasMap.js");
 const { enrichGoalieData } = require("./Utils/enrichPrediction.js");
 const { getGoalieIndex, registerMongoClient } = require("./Utils/goalieIndex.js");
+const { getGoalieIndex, registerMongoClient, findByPlayerId } = require("./Utils/goalieIndex.js");
 const { resolveGoalies } = require('./Utils/goalieResolver.js');
 
 const app = express();
@@ -242,6 +243,37 @@ function mergeHistoricalCurrent(historical, current) {
   return out;
 }
 
+async function searchSportsbookReddit(homeTeam, awayTeam) {
+    try {
+        const r = new Snoowrap({
+            userAgent: REDDIT_USER_AGENT,
+            clientId: REDDIT_CLIENT_ID,
+            clientSecret: REDDIT_CLIENT_SECRET,
+            username: REDDIT_USERNAME,
+            password: REDDIT_PASSWORD
+        });
+        
+        // Construct a search query for the specific matchup
+        const query = `(${homeTeam} OR ${awayTeam}) AND NHL`;
+        const submissions = await r.getSubreddit('sportsbook').search({
+            query: query,
+            sort: 'new',
+            time: 'day' // Limit search to the last 24 hours
+        });
+
+        if (submissions.length === 0) {
+            return "No specific chatter found on /r/sportsbook for this game in the last 24 hours.";
+        }
+
+        // Format a concise summary for the AI
+        const summary = submissions.slice(0, 3).map(post => `- "${post.title}"`).join('\n');
+        return `Recent /r/sportsbook sentiment:\n${summary}`;
+
+    } catch (error) {
+        console.error(`[REDDIT TOOL] Error searching for ${homeTeam} vs ${awayTeam}:`, error.message);
+        return "Could not fetch Reddit sentiment due to an error.";
+    }
+}
 // =================================================================
 // SECTION 2: GEMINI AI CONFIGURATION & TOOLS
 // =================================================================
@@ -251,7 +283,8 @@ if (GoogleGenerativeAI && GEMINI_API_KEY) {
 }
 const analysisModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.5-flash" }) : null;
 
-const queryNhlStatsTool = {
+// This replaces your old queryNhlStatsTool
+const aiTools = {
   functionDeclarations: [
     {
       name: "queryNhlStats",
@@ -290,13 +323,26 @@ const queryNhlStatsTool = {
         },
         required: ["season", "dataType", "stat"]
       }
+    },
+    {
+      name: "searchSportsbookReddit",
+      description: "Searches the /r/sportsbook subreddit for recent posts about a specific NHL matchup to gauge public betting sentiment and find any breaking news.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          homeTeam: { type: "STRING", description: "The full name of the home team, e.g., 'Buffalo Sabres'." },
+          awayTeam: { type: "STRING", description: "The full name of the away team, e.g., 'Columbus Blue Jackets'." }
+        },
+        required: ["homeTeam", "awayTeam"]
+      }
     }
   ]
 };
 
+// This replaces your old chatModel initialization
 const chatModel = genAI ? genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    tools: [queryNhlStatsTool],
+    model: "gemini-1.5-flash", // Using 1.5 Flash for better tool use
+    tools: [aiTools],
 }) : null;
 
 async function connectToDb() {
@@ -733,6 +779,38 @@ async function getTeamNewsFromReddit(teamName) {
     } catch (error) {
         console.error(`Could not fetch Reddit news for ${teamName}:`, error.message);
         return "Could not fetch news.";
+    }
+}
+
+async function searchSportsbookReddit(homeTeam, awayTeam) {
+    try {
+        const r = new Snoowrap({
+            userAgent: REDDIT_USER_AGENT,
+            clientId: REDDIT_CLIENT_ID,
+            clientSecret: REDDIT_CLIENT_SECRET,
+            username: REDDIT_USERNAME,
+            password: REDDIT_PASSWORD
+        });
+        
+        // Construct a search query for the specific matchup
+        const query = `(${homeTeam} OR ${awayTeam}) AND NHL`;
+        const submissions = await r.getSubreddit('sportsbook').search({
+            query: query,
+            sort: 'new',
+            time: 'day' // Limit search to the last 24 hours
+        });
+
+        if (submissions.length === 0) {
+            return "No specific chatter found on /r/sportsbook for this game in the last 24 hours.";
+        }
+
+        // Format a concise summary for the AI
+        const summary = submissions.slice(0, 3).map(post => `- "${post.title}"`).join('\n');
+        return `Recent /r/sportsbook sentiment:\n${summary}`;
+
+    } catch (error) {
+        console.error(`[REDDIT TOOL] Error searching for ${homeTeam} vs ${awayTeam}:`, error.message);
+        return "Could not fetch Reddit sentiment due to an error.";
     }
 }
 
@@ -1699,13 +1777,27 @@ app.post('/api/ai-analysis', async (req, res) => {
   - Goals For: ${awayHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${awayHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
   - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
 `;
+            **Pre-Fetched Historical Data (${lastCompletedSeasonYear} Season):**
+            - ${game.home_team}: 
+              - Goals For: ${homeHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${homeHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
+              - Goals Against: ${homeHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${homeHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
+            - ${game.away_team}:
+              - Goals For: ${awayHistData?.goalsFor ?? 'N/A'}, Expected Goals For: ${awayHistData?.xGoalsFor?.toFixed(2) ?? 'N/A'}
+              - Goals Against: ${awayHistData?.goalsAgainst ?? 'N/A'}, Expected Goals Against: ${awayHistData?.xGoalsAgainst?.toFixed(2) ?? 'N/A'}
+            `;
         
         // FIX: The instruction is now a direct command to NOT use tools.
+        // NEW INSTRUCTION: Encourage tool use
         const instruction = `
 You are an expert sports betting analyst. You have been provided with all the necessary data in the 'Pre-Fetched Historical Data' and 'Prediction Model Factors' sections.
 **Do not use your \`queryNhlStats\` tool.** Your sole task is to synthesize the data provided below and generate the final JSON object.
 `;
+            You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
+            **Crucially, you must use your available tools (\`queryNhlStats\` and \`searchSportsbookReddit\`) to find unique, non-obvious insights.** Look for historical trends, player performance under specific conditions, or real-time public sentiment that could contradict or reinforce the base prediction.
+            Your final output MUST be only the completed JSON object.
+            `;
 
+        // NEW PROMPT: Re-enables dynamic research
         const analysisPrompt = `
 **SYSTEM ANALYSIS REPORT**
 **Matchup:** ${game.away_team} @ ${game.home_team}
@@ -1723,6 +1815,20 @@ ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
 
 **IMPORTANT: You MUST return ONLY the completed JSON object. Do not include any extra text, explanations, or markdown formatting.**
 `;
+            **SYSTEM ANALYSIS REPORT**
+            **Matchup:** ${game.away_team} @ ${game.home_team}
+            
+            ${preFetchedDataSummary}
+            
+            **Prediction Model Factors (Current Season):**
+            ${factorsList || 'No valid live factors available.'}
+            
+            **TASK:**
+            ${instruction}
+            
+            **JSON TO COMPLETE:**
+            ${JSON.stringify(V3_ANALYSIS_SCHEMA, null, 2)}
+            `;
         // We no longer need the logging now that the prompt is stable.
         const analysisData = await runAiChatWithTools(analysisPrompt);
 
