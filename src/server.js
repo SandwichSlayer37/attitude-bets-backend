@@ -866,6 +866,7 @@ async function queryNhlStats(args) {
             pipeline.push({ $match: { team: teamAbbr } });
         }
         
+        // (All custom calculation logic...)
         if (customCalculation === 'GSAx' && dataType === 'goalie') {
             pipeline.push({ $match: { position: 'G', situation: 'all' } });
             if (playerName) pipeline.push({ $match: { name: playerName } });
@@ -1770,7 +1771,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
 **Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
-**If a tool call returns an error or a 'finding' that 'No data was found', you MUST continue.** State that your research was inconclusive for that specific point in the 'dynamicResearch' section (e.g., set the 'finding' to 'No data was found for 2024'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
+**If a tool call returns an error or a 'finding' that 'No data was found', you MUST continue.** State that your research was inconclusive for that specific point in the 'dynamicResearch' section (e.Example, set the 'finding' to 'No data was found for 2024'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
 Your final output MUST be only the completed JSON object.
 `;
 
