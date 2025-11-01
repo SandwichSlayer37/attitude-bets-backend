@@ -822,7 +822,7 @@ const ALLOWED_STATS = new Set(['playerId','season','name','team','position','sit
 async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
-
+ 
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
@@ -833,10 +833,10 @@ async function queryNhlStats(args) {
         'savePercentage': { customCalculation: 'savePercentage' },
         'GSAx': { customCalculation: 'GSAx' } 
     };
-
+ 
     let situationOverride = null;
     let customCalculation = null;
-
+ 
     if (statTranslationMap[stat]) {
         const translation = statTranslationMap[stat];
         console.log(`Translating conceptual stat '${stat}'...`);
@@ -847,27 +847,68 @@ async function queryNhlStats(args) {
             stat = translation.newStat; 
         }
     }
-
+ 
     if (!season || !dataType || (!stat && !customCalculation)) {
         return { error: "A season, dataType, and a stat are required." };
     }
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
-
+ 
     try {
         const seasonNumber = parseInt(season, 10);
         let pipeline = [];
         pipeline.push({ $match: { season: seasonNumber } });
-
+ 
         if (teamName) {
             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
             const teamAbbr = canonicalName ? teamToAbbrMap[canonicalName] : teamName.toUpperCase();
             pipeline.push({ $match: { team: teamAbbr } });
         }
         
-        // (All custom calculation logic remains here...)
-
+        if (customCalculation === 'GSAx' && dataType === 'goalie') {
+            pipeline.push({ $match: { position: 'G', situation: 'all' } });
+            if (playerName) pipeline.push({ $match: { name: playerName } });
+            pipeline.push({ $project: { _id: 0, name: 1, team: 1, statValue: { $subtract: [ { $toDouble: "$xGoals" }, { $toDouble: "$goals" } ] } } });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+        } else if (customCalculation === 'shootingPercentage' && dataType === 'team') {
+            pipeline.push({ $group: { _id: "$name", totalGoalsFor: { $sum: { $toDouble: "$goalsFor" } }, totalShotsOnGoalFor: { $sum: { $toDouble: "$shotsOnGoalFor" } } } });
+            pipeline.push({ $project: { _id: 0, team: "$_id", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalFor", 0] }, 0, { $divide: ["$totalGoalsFor", "$totalShotsOnGoalFor"] }] } } });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+        } else if (customCalculation === 'savePercentage' && dataType === 'team') {
+            pipeline.push({ $group: { _id: "$name", totalGoalsAgainst: { $sum: { $toDouble: "$goalsAgainst" } }, totalShotsOnGoalAgainst: { $sum: { $toDouble: "$shotsOnGoalAgainst" } } } });
+            pipeline.push({ $project: { _id: 0, team: "$_id", statValue: { $cond: [{ $eq: ["$totalShotsOnGoalAgainst", 0] }, 0, { $subtract: [1, { $divide: ["$totalGoalsAgainst", "$totalShotsOnGoalAgainst"] }] }] } } });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+        } else if (customCalculation === 'savePercentage' && dataType === 'goalie') {
+            pipeline.push({ $match: { position: 'G', situation: 'all' } });
+            if (playerName) pipeline.push({ $match: { name: playerName } });
+            pipeline.push({ $project: { _id: 0, name: 1, team: 1, statValue: { $cond: [ { $eq: [{ $toDouble: "$unblocked_shot_attempts" }, 0] }, 0, { $subtract: [1, { $divide: [{ $toDouble: "$goals" }, { $toDouble: "$unblocked_shot_attempts" }] }] } ] } } });
+            pipeline.push({ $sort: { statValue: -1 } });
+            pipeline.push({ $limit: parseInt(limit, 10) });
+        } 
+        else {
+            if (situationOverride) pipeline.push({ $match: { situation: situationOverride } });
+            else if (dataType !== 'team') pipeline.push({ $match: { situation: 'all' } });
+            if (dataType === 'skater') pipeline.push({ $match: { position: { $in: ['C', 'L', 'R', 'D'] } } });
+            else if (dataType === 'goalie') pipeline.push({ $match: { position: 'G' } });
+            else if (dataType !== 'team') return { error: "Invalid dataType." };
+            if (playerName) pipeline.push({ $match: { name: playerName } });
+            if (dataType === 'team') {
+                pipeline.push({ $group: { _id: "$name", statValue: { $sum: { $toDouble: `$${stat}` } } } });
+                pipeline.push({ $sort: { statValue: -1 } });
+                pipeline.push({ $limit: parseInt(limit, 10) });
+                pipeline.push({ $project: { _id: 0, team: "$_id", statValue: 1 } });
+            } else {
+                pipeline.push({ $set: { numericStat: { $toDouble: `$${stat}` } } });
+                pipeline.push({ $sort: { numericStat: -1 } });
+                pipeline.push({ $limit: parseInt(limit, 10) });
+                pipeline.push({ $project: { _id: 0, name: 1, team: 1, position: 1, statValue: "$numericStat" } });
+            }
+        }
+ 
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
         
         // THIS IS THE FIX: Return a clear message instead of an error.
@@ -1729,7 +1770,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
 **Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
-**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point in the 'dynamicResearch' section (e.g., set the 'finding' to the error message like 'No data was found'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
+**If a tool call returns an error or a 'finding' that 'No data was found', you MUST continue.** State that your research was inconclusive for that specific point in the 'dynamicResearch' section (e.g., set the 'finding' to 'No data was found for 2024'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
 Your final output MUST be only the completed JSON object.
 `;
 
