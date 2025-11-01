@@ -854,7 +854,7 @@ async function queryNhlStats(args) {
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
- 
+ D
     try {
         const seasonNumber = parseInt(season, 10);
         let pipeline = [];
