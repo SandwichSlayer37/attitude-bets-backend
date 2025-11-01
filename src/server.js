@@ -862,7 +862,7 @@ async function queryNhlStats(args) {
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
- D
+ 
     try {
         const seasonNumber = parseInt(season, 10);
         let pipeline = [];
@@ -920,7 +920,6 @@ async function queryNhlStats(args) {
  
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
         
-        // THIS IS THE FIX: Return a clear message instead of an error.
         if (results.length === 0) {
             return { results: [{ finding: `No data was found in the database for ${stat} in the ${season} season.` }] };
         }
