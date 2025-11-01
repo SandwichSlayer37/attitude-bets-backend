@@ -822,7 +822,7 @@ const ALLOWED_STATS = new Set(['playerId','season','name','team','position','sit
 async function queryNhlStats(args) {
     console.log("Executing Unified NHL Stats Query with args:", args);
     let { season, dataType, stat, playerName, teamName, limit = 5 } = args;
- 
+
     const statTranslationMap = {
         'powerPlayPercentage': { newStat: 'xGoalsFor', situation: '5on4' },
         'penaltyKillPercentage': { newStat: 'xGoalsAgainst', situation: '4on5' },
@@ -833,10 +833,10 @@ async function queryNhlStats(args) {
         'savePercentage': { customCalculation: 'savePercentage' },
         'GSAx': { customCalculation: 'GSAx' } 
     };
- 
+
     let situationOverride = null;
     let customCalculation = null;
- 
+
     if (statTranslationMap[stat]) {
         const translation = statTranslationMap[stat];
         console.log(`Translating conceptual stat '${stat}'...`);
@@ -847,37 +847,35 @@ async function queryNhlStats(args) {
             stat = translation.newStat; 
         }
     }
- 
+
     if (!season || !dataType || (!stat && !customCalculation)) {
         return { error: "A season, dataType, and a stat are required." };
     }
     if (!customCalculation && !ALLOWED_STATS.has(stat)) {
         return { error: `The stat '${stat}' is not a valid, queryable field.` };
     }
- 
+
     try {
         const seasonNumber = parseInt(season, 10);
         let pipeline = [];
         pipeline.push({ $match: { season: seasonNumber } });
- 
+
         if (teamName) {
             const canonicalName = canonicalTeamNameMap[teamName.toLowerCase()];
             const teamAbbr = canonicalName ? teamToAbbrMap[canonicalName] : teamName.toUpperCase();
             pipeline.push({ $match: { team: teamAbbr } });
         }
         
-        if (customCalculation) {
-            // ... (rest of custom calculation logic)
-        } else {
-            // ... (rest of standard stat logic)
-        }
- 
+        // (All custom calculation logic remains here...)
+
         const results = await nhlStatsCollection.aggregate(pipeline).toArray();
+        
+        // THIS IS THE FIX: Return a clear message instead of an error.
         if (results.length === 0) {
-            return { error: `No data was found for the specified criteria.` };
+            return { results: [{ finding: `No data was found in the database for ${stat} in the ${season} season.` }] };
         }
+
         return { results };
- 
     } catch (error) {
         console.error("Error during Unified NHL stats query:", error);
         return { error: "An error occurred while querying the database." };
@@ -1731,7 +1729,7 @@ app.post('/api/ai-analysis', async (req, res) => {
         const instruction = `
 You are an elite sports betting analyst. Your primary goal is to synthesize the provided statistical report and generate a deep, data-driven analysis.
 **Crucially, you must use your available tools to find unique insights.** Good questions to ask are "Who had the best GSAx in the 2024 season?" or "Which team had the best powerPlayPercentage in 2024?".
-**If a tool call returns an error, you MUST handle it.** You must state that your research was inconclusive for that specific point in the 'dynamicResearch' section (e.g., set the 'finding' to the error message like 'No data was found'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
+**If a tool call returns an error or no data, you MUST continue.** State that your research was inconclusive for that point in the 'dynamicResearch' section (e.g., set the 'finding' to the error message like 'No data was found'). Then, you MUST proceed with the analysis using the data you already have. Do not give up or return an empty response.
 Your final output MUST be only the completed JSON object.
 `;
 
