@@ -630,59 +630,42 @@ async function getOdds(sportKey) {
     }, 300000); // Cache for 5 minutes
 }
 
+// src/server.js
+
 async function runAiChatWithTools(userPrompt) {
-    // FIX: Updated prompt to force JSON output and prevent data regurgitation
     // 1. STRICT SYSTEM PROMPT
     const systemPrompt = `
-    You are a master sports betting analyst. 
-    1. Receive the user's game context.
-    2. Use your tools ('queryNhlStats', etc.) to find specific data points (e.g., "powerPlayPercentage", "GSAx").
-    3. Once you receive the tool data, DO NOT repeat the data back to the user.
-    4. IMMEDIATELY synthesize the data and generate your analysis in the required JSON format.
-    5. Your final output MUST be a valid JSON object starting with '{' and ending with '}'.
     You are an expert sports betting analyst AI. 
     Your Goal: Analyze the matchup and produce a JSON object with a 'finalPick'.
 
     PROTOCOL:
     1. RECEIVE the user's game context.
-    2. USE TOOLS (like 'queryNhlStats') to fetch specific missing data (e.g. "GSAx", "powerPlayPercentage").
-    3. RECEIVE TOOL DATA. Do NOT output this data as text. Do NOT summarize it.
+    2. USE TOOLS (like 'queryNhlStats') to fetch specific missing data.
+    3. RECEIVE TOOL DATA. 
     4. SYNTHESIZE the data immediately into the required JSON format.
     
-    CRITICAL: 
-    - Your final output MUST be a VALID JSON object starting with '{' and ending with '}'.
-    - It MUST contain the key "finalPick".
-    - Do not include markdown formatting like \`\`\`json. Just the raw JSON.
+    CRITICAL OUTPUT RULES: 
+    - Output ONLY valid JSON.
+    - Start with '{' and end with '}'.
+    - Your output must match the V3_ANALYSIS_SCHEMA provided in the prompt.
     `;
-    const chat = chatModel.startChat({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-    });
 
-    const result1 = await chat.sendMessage(userPrompt);
-    const response1 = result1.response;
     try {
         const chat = chatModel.startChat({
             systemInstruction: { parts: [{ text: systemPrompt }] },
         });
 
-    const responseText = response1.text();
-    console.log("----------- RAW AI RESPONSE (Attempt 1) -----------");
-    console.log(responseText);
-    console.log("-------------------------------------------------");
         // 2. INITIAL MESSAGE
         const result1 = await chat.sendMessage(userPrompt);
         const response1 = result1.response;
-        const functionCalls = response1.functionCalls() || [];
+        // FIX: Renamed variable to prevent 'already declared' errors if code is messy
+        const callList = response1.functionCalls() || []; 
 
-    const functionCalls = response1.functionCalls() || [];
         // 3. HANDLE TOOL CALLS
-        if (functionCalls.length > 0) {
-            const call = functionCalls[0];
+        if (callList.length > 0) {
+            const call = callList[0];
             console.log(`AI invoking tool: ${call.name}`);
 
-    if (functionCalls && functionCalls.length > 0) {
-        const call = functionCalls[0];
-        console.log(`AI is requesting to call function: ${call.name} with args:`, call.args);
             let apiResponse;
             if (call.name === 'queryNhlStats') {
                 apiResponse = await queryNhlStats(call.args);
@@ -692,40 +675,23 @@ async function runAiChatWithTools(userPrompt) {
                 apiResponse = { error: `Unknown function ${call.name}` };
             }
 
-        let apiResponse;
-        
-        // --- THIS IS THE FIX ---
-        // Added logic to handle both tool calls
-        if (call.name === 'queryNhlStats') {
-            apiResponse = await queryNhlStats(call.args);
-        } else if (call.name === 'searchSportsbookReddit') {
-            apiResponse = await searchSportsbookReddit(call.args.homeTeam, call.args.awayTeam);
-        } else {
-            apiResponse = { error: `Unknown function ${call.name}` };
-        }
-        // -----------------------
-
-        if (apiResponse.error || !apiResponse.results || (Array.isArray(apiResponse.results) && apiResponse.results.length === 0)) {
-            console.error(`Tool call to ${call.name} returned no data or an error:`, apiResponse.error || "No results found.");
-            const errorResponse = { error: apiResponse.error || "No data was found for the specified criteria." };
-            // 4. SEND BACK TOOL RESULTS & FORCE JSON
+            // 4. SEND BACK TOOL RESULTS
             // We verify the tool result is valid, then send it back
-            const toolResult = {
-                functionResponse: {
-                    name: call.name,
-                    response: apiResponse
+            const toolResult = [
+                {
+                    functionResponse: {
+                        name: call.name,
+                        // Ensure response is an object, not just a string/array
+                        response: { result: apiResponse } 
+                    }
                 }
-            };
+            ];
             
-            const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: errorResponse } }]);
-            const result2 = await chat.sendMessage([toolResult]);
+            const result2 = await chat.sendMessage(toolResult);
             const responseText2 = result2.response.text();
-            console.log("----------- RAW AI RESPONSE (After Tool Error) -----------");
-            console.log(responseText2);
-            console.log("----------------------------------------------------------");
             
             console.log("--- AI FINAL RESPONSE ---");
-            console.log(responseText2.substring(0, 200) + "..."); // Log first 200 chars for debugging
+            console.log(responseText2.substring(0, 200) + "..."); 
 
             return cleanAndParseJson(responseText2);
         }
@@ -733,18 +699,11 @@ async function runAiChatWithTools(userPrompt) {
         // No tool called, return initial response
         return cleanAndParseJson(response1.text());
 
-        const result2 = await chat.sendMessage([{ functionResponse: { name: call.name, response: apiResponse } }]);
-        const responseText2 = result2.response.text();
-        console.log("----------- RAW AI RESPONSE (After Tool Success) -----------");
-        console.log(responseText2);
-        console.log("------------------------------------------------------------");
-        return cleanAndParseJson(responseText2);
     } catch (e) {
         console.error("AI Chat execution failed:", e);
+        // Fallback: Return null so the UI shows a generic error rather than crashing
         return null;
     }
-    
-    return cleanAndParseJson(responseText);
 }
 
 async function getHistoricalTopLineMetrics(season) {
