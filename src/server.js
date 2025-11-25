@@ -631,7 +631,15 @@ async function getOdds(sportKey) {
 }
 
 async function runAiChatWithTools(userPrompt) {
-    const systemPrompt = `You are a master sports betting analyst. Your task is to synthesize the provided statistical report and news to produce a detailed, data-driven strategic breakdown. Use your 'queryNhlStats' tool to find deeper historical stats that could influence the outcome. You must always return your final analysis in the specified JSON format. If your tool call returns an error or no data, you must indicate that in your final analysis.`;
+    // FIX: Updated prompt to force JSON output and prevent data regurgitation
+    const systemPrompt = `
+    You are a master sports betting analyst. 
+    1. Receive the user's game context.
+    2. Use your tools ('queryNhlStats', etc.) to find specific data points (e.g., "powerPlayPercentage", "GSAx").
+    3. Once you receive the tool data, DO NOT repeat the data back to the user.
+    4. IMMEDIATELY synthesize the data and generate your analysis in the required JSON format.
+    5. Your final output MUST be a valid JSON object starting with '{' and ending with '}'.
+    `;
     const chat = chatModel.startChat({
         systemInstruction: { parts: [{ text: systemPrompt }] },
     });
