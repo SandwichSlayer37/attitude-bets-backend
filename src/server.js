@@ -494,44 +494,29 @@ async function getAiContextualData(teamName, season) {
 // 1. ROBUST JSON PARSER (Fixes AI 500 Crash)
 // =================================================================
 function cleanAndParseJson(text) {
-    if (!text || typeof text !== 'string') {
-        return null;
-    }
+    if (!text || typeof text !== 'string') return null;
 
-    // 1. Try finding a Markdown block first (most reliable)
-    const markdownMatch = text.match(/```json\s*({[\s\S]*?})\s*```/);
+    // 1. Try Markdown block first
+    const markdownMatch = text.match(/```json\s*({[\s\S]*?\})\s*```/);
     if (markdownMatch && markdownMatch[1]) {
-        try {
-            return JSON.parse(markdownMatch[1]);
-        } catch (e) {
-            // If markdown parsing fails, fall through to regex search
-        }
+        try { return JSON.parse(markdownMatch[1]); } catch (e) {}
     }
 
-    // 2. Fallback: Find ALL JSON-like blocks in the text
-    // This regex matches any block starting with { and ending with }
-    // It is non-greedy to avoid merging two separate JSON blocks.
+    // 2. Fallback: Find ALL JSON-like blocks (non-greedy)
     const jsonBlockRegex = /\{[\s\S]*?\}/g;
     const matches = text.match(jsonBlockRegex);
 
     if (matches) {
-        // Iterate backwards (the final answer is usually the last block)
+        // Search backwards to find the final answer, ignoring tool logs
         for (let i = matches.length - 1; i >= 0; i--) {
             try {
                 const parsed = JSON.parse(matches[i]);
-                
-                // VALIDATION: Ensure this is the "Final Answer" and not a tool output
-                // Check for keys specific to our schemas
                 if (parsed.finalPick || parsed.arbitrationData || parsed.answer || parsed.bestBet) {
                     return parsed;
                 }
-            } catch (e) {
-                // Continue checking other blocks
-            }
+            } catch (e) {}
         }
     }
-
-    console.error("cleanAndParseJson: No valid target JSON found in response.");
     return null;
 }
 
@@ -859,7 +844,8 @@ async function queryNhlStats(args) {
         'penaltyKillGoalsAgainst': { newStat: 'goalsAgainst', situation: '4on5' },
         'shootingPercentage': { customCalculation: 'shootingPercentage' },
         'savePercentage': { customCalculation: 'savePercentage' },
-        'GSAx': { customCalculation: 'GSAx' } 
+        'GSAx': { customCalculation: 'GSAx' },
+        'goalsSavedAboveExpected': { customCalculation: 'GSAx' } // <--- ADD THIS LINE
     };
  
     let situationOverride = null;
@@ -1629,138 +1615,66 @@ app.post('/api/hockey-chat', async (req, res) => {
 // =================================================================
 app.get('/api/reconcile-results', async (req, res) => {
     const { password } = req.query;
-    if (password !== RECONCILE_PASSWORD) {
-        return res.status(401).json({ error: "Unauthorized" });
-    }
+    if (password !== RECONCILE_PASSWORD) return res.status(401).json({ error: "Unauthorized" });
+
     try {
         if (!predictionsCollection || !recordsCollection) await connectToDb();
+        
+        // Fetch ALL pending bets (no date filter)
+        const pendingPredictions = await predictionsCollection.find({ status: 'pending' }).toArray();
+        if (pendingPredictions.length === 0) return res.json({ message: "No pending predictions found." });
 
-        console.log("[RECONCILE] Starting catch-up reconciliation...");
-
-        // FIX: Remove the date filter to catch ALL old pending bets (e.g., Oct 12)
-        const pendingPredictions = await predictionsCollection.find({
-            status: 'pending'
-        }).toArray();
-
-        if (pendingPredictions.length === 0) {
-            return res.json({ message: "No pending predictions found to reconcile." });
-        }
-
-        console.log(`[RECONCILE] Found ${pendingPredictions.length} pending bets. Fetching scores...`);
-
-        // 1. Identify unique dates we need to check
+        // Collect unique dates from the pending bets
         const datesToCheck = new Set();
         pendingPredictions.forEach(p => {
             if (p.gameDate) {
                 const d = new Date(p.gameDate);
-                // Format YYYYMMDD for ESPN API
                 const dateStr = `${d.getFullYear()}${(d.getMonth() + 1).toString().padStart(2, '0')}${d.getDate().toString().padStart(2, '0')}`;
                 datesToCheck.add(dateStr);
             }
         });
 
-        // 2. Fetch ESPN data ONLY for those specific dates
-        let allRecentEvents = [];
-        const uniqueDates = Array.from(datesToCheck);
-        
-        // Safety cap: Don't fetch more than 15 unique days at once to prevent timeouts
-        const datesToProcess = uniqueDates.slice(0, 15); 
-        
-        for (const dateStr of datesToProcess) {
-            console.log(`[RECONCILE] Fetching ESPN data for ${dateStr}...`);
-            // Fetch for all supported sports
-            const sports = [
-                { sport: 'baseball', league: 'mlb' },
-                { sport: 'hockey', league: 'nhl' },
-                { sport: 'football', league: 'nfl' }
-            ];
+        const allRecentEvents = [];
+        // Limit to 15 dates max to prevent timeout
+        const uniqueDates = Array.from(datesToCheck).slice(0, 15);
 
+        for (const dateStr of uniqueDates) {
+            console.log(`[RECONCILE] Fetching ESPN data for ${dateStr}...`);
+            const sports = [{ sport: 'baseball', league: 'mlb' }, { sport: 'hockey', league: 'nhl' }, { sport: 'football', league: 'nfl' }];
             for (const s of sports) {
                 try {
                     const url = `https://site.api.espn.com/apis/site/v2/sports/${s.sport}/${s.league}/scoreboard?dates=${dateStr}`;
-                    const { data: espnData } = await axios.get(url);
-                    if (espnData.events) {
-                        allRecentEvents.push(...espnData.events);
-                    }
-                } catch (err) {
-                    console.error(`[RECONCILE] Failed to fetch ${s.league} for ${dateStr}: ${err.message}`);
-                }
+                    const { data } = await axios.get(url);
+                    if (data?.events) allRecentEvents.push(...data.events);
+                } catch (e) { console.error(`Failed to fetch ${dateStr}: ${e.message}`); }
             }
         }
 
         let reconciledCount = 0;
-        let wins = 0;
-        let losses = 0;
-
         for (const prediction of pendingPredictions) {
-            // Find the matching game in our fetched events
             const gameEvent = allRecentEvents.find(e => {
-                const homeCanonical = canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] || prediction.homeTeam;
-                const awayCanonical = canonicalTeamNameMap[prediction.awayTeam.toLowerCase()] || prediction.awayTeam;
-
-                const competitors = e.competitions?.[0]?.competitors;
-                if (!competitors) return false;
-
-                const eventHome = competitors.find(c => c.homeAway === 'home');
-                const eventAway = competitors.find(c => c.homeAway === 'away');
-
-                if (!eventHome?.team?.displayName || !eventAway?.team?.displayName) return false;
-                
-                const eventHomeCanonical = canonicalTeamNameMap[eventHome.team.displayName.toLowerCase()];
-                const eventAwayCanonical = canonicalTeamNameMap[eventAway.team.displayName.toLowerCase()];
-                
-                return homeCanonical === eventHomeCanonical && awayCanonical === eventAwayCanonical;
+                const home = e.competitions?.[0]?.competitors?.find(c => c.homeAway === 'home')?.team?.displayName || '';
+                const away = e.competitions?.[0]?.competitors?.find(c => c.homeAway === 'away')?.team?.displayName || '';
+                return (canonicalTeamNameMap[home.toLowerCase()] === canonicalTeamNameMap[prediction.homeTeam.toLowerCase()] &&
+                        canonicalTeamNameMap[away.toLowerCase()] === canonicalTeamNameMap[prediction.awayTeam.toLowerCase()]);
             });
 
             if (gameEvent && gameEvent.status.type.completed) {
-                const competition = gameEvent.competitions[0];
-                const winnerData = competition.competitors.find(c => c.winner === true);
-                
-                // If draw or no winner data, skip
-                if (!winnerData) continue;
+                const winner = gameEvent.competitions[0].competitors.find(c => c.winner)?.team?.displayName;
+                if (!winner) continue;
 
-                const actualWinner = canonicalTeamNameMap[winnerData.team.displayName.toLowerCase()];
-                const predictedWinnerCanonical = canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()];
-                
-                const result = actualWinner === predictedWinnerCanonical ? 'win' : 'loss';
-                
-                let profit = 0;
-                if (result === 'win') {
-                    // Calculate profit based on decimal odds (stake $10)
-                    // If prediction.odds is 1.95, return (10 * 1.95) - 10 = 9.50
-                    // Fallback to 9.10 if odds missing
-                    profit = prediction.odds ? (10 * prediction.odds) - 10 : 9.10;
-                    wins++;
-                } else {
-                    profit = -10;
-                    losses++;
-                }
+                const result = canonicalTeamNameMap[winner.toLowerCase()] === canonicalTeamNameMap[prediction.predictedWinner.toLowerCase()] ? 'win' : 'loss';
+                const profit = result === 'win' ? (prediction.odds ? (10 * prediction.odds) - 10 : 9.10) : -10;
 
-                // Update Prediction
                 await predictionsCollection.updateOne({ _id: prediction._id }, { $set: { status: result, profit: profit } });
-                
-                // Update Global Record
-                const updateField = result === 'win'
-                    ? { $inc: { wins: 1, totalProfit: profit } }
-                    : { $inc: { losses: 1, totalProfit: profit } };
-                
-                await recordsCollection.updateOne(
-                    { sport: prediction.sportKey },
-                    updateField,
-                    { upsert: true }
-                );
+                await recordsCollection.updateOne({ sport: prediction.sportKey }, { $inc: { [result === 'win' ? 'wins' : 'losses']: 1, totalProfit: profit } }, { upsert: true });
                 reconciledCount++;
             }
         }
 
-        res.json({ 
-            message: `Reconciliation complete. Processed ${reconciledCount} bets (${wins} Wins, ${losses} Losses).`,
-            details: `Checked ${datesToProcess.length} dates.`
-        });
-
+        res.json({ message: `Reconciliation complete. Processed ${reconciledCount} bets across ${uniqueDates.length} dates.` });
     } catch (error) {
-        console.error("Reconciliation Error:", error);
-        res.status(500).json({ error: "Failed to reconcile results.", details: error.message });
+        res.status(500).json({ error: error.message });
     }
 });
 
